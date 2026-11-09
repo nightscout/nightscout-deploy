@@ -4,87 +4,279 @@
   "title": "Nightscout deployment plan (draft, read-derived from cgm-remote-monitor ed2ced00 deploy/multitenant/config.js)",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "deployment", "profile", "core", "images", "roles", "tenants", "trustedPeers", "secretRefs", "providers"],
+  "required": [
+    "version",
+    "deployment",
+    "profile",
+    "core",
+    "images",
+    "roles",
+    "tenants",
+    "trustedPeers",
+    "secretRefs",
+    "providers",
+    "naming"
+  ],
   "properties": {
-    "version": { "const": 1 },
+    "version": {
+      "const": 1
+    },
     "deployment": {
-      "type": "object", "additionalProperties": false, "required": ["id", "prefix"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "prefix"
+      ],
       "properties": {
-        "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$" },
-        "prefix": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,23}$", "description": "PostgreSQL schema/role prefix; config.js layout()" }
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,62}$"
+        },
+        "prefix": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,23}$",
+          "description": "PostgreSQL schema/role prefix; config.js layout()"
+        },
+        "baseDomain": {
+          "type": "string",
+          "description": "Suffix under which a tenant's generated label becomes its default permanent primary alias."
+        }
       }
     },
-    "profile": { "enum": ["single", "multitenant"], "description": "single: one `nightscout single` process on MongoDB. multitenant: the fixed application cohort on PostgreSQL and a secrets provider." },
+    "profile": {
+      "enum": [
+        "single",
+        "multitenant"
+      ],
+      "description": "single: one `nightscout single` process on MongoDB. multitenant: the fixed application cohort on PostgreSQL and a secrets provider."
+    },
     "core": {
-      "type": "object", "additionalProperties": false, "required": ["commit"],
-      "properties": { "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" } }
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commit"
+      ],
+      "properties": {
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        }
+      }
     },
     "images": {
       "type": "object",
-      "additionalProperties": { "type": "object", "additionalProperties": false, "required": ["ref", "digest"],
-        "properties": { "ref": { "type": "string" }, "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" } } }
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ref",
+          "digest"
+        ],
+        "properties": {
+          "ref": {
+            "type": "string"
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        }
+      }
     },
     "roles": {
-      "type": "array", "uniqueItems": true, "minItems": 1,
-      "items": { "enum": ["single", "api", "realtime", "evaluator", "tenant-admin", "ui", "edge"] }
+      "type": "array",
+      "uniqueItems": true,
+      "minItems": 1,
+      "items": {
+        "enum": [
+          "single",
+          "api",
+          "realtime",
+          "evaluator",
+          "tenant-admin",
+          "ui",
+          "edge"
+        ]
+      }
     },
     "endpoints": {
-      "type": "object", "additionalProperties": false,
+      "type": "object",
+      "additionalProperties": false,
       "properties": {
-        "publicBind": { "type": "string", "description": "Where the edge publishes; the only published address." },
-        "privateTransport": { "enum": ["unix", "tcp"], "default": "unix", "description": "The cohort's private participant transport. tcp is MT-ENDPOINT-TRANSPORT and is not accepted yet." }
+        "publicBind": {
+          "type": "string",
+          "description": "Where the edge publishes; the only published address."
+        },
+        "privateTransport": {
+          "enum": [
+            "unix",
+            "tcp"
+          ],
+          "default": "unix",
+          "description": "The cohort's private participant transport. tcp is MT-ENDPOINT-TRANSPORT and is not accepted yet."
+        }
       }
     },
     "trustedPeers": {
-      "type": "array", "items": { "type": "string" },
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
       "description": "Immediate peers whose Host/forwarded headers the app may trust, and TRUST_PROXY. Empty refuses to start a multitenant role (decisions.md, peer-list trust). Configuration, never a provider."
     },
-    "reservedNames": { "type": "array", "items": { "type": "string" }, "description": "Operator additions to the project's reserved-name floor." },
+    "reservedNames": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Operator additions to the project's reserved-name floor."
+    },
     "tenants": {
       "type": "array",
       "items": {
-        "type": "object", "additionalProperties": false, "required": ["id", "aliases"],
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "aliases"
+        ],
         "properties": {
-          "id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$", "description": "Stable tenant identity (lib/tenant-resolution tenantId)." },
-          "internalName": { "type": "string", "description": "Operator-controlled resolution label for canonical-internal mode. Not a URL, not a credential." },
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "description": "Stable tenant identity (lib/tenant-resolution tenantId)."
+          },
+          "internalName": {
+            "type": "string",
+            "description": "Operator-controlled resolution label for canonical-internal mode. Not a URL, not a credential."
+          },
           "aliases": {
-            "type": "array", "minItems": 1,
+            "type": "array",
+            "minItems": 1,
             "items": {
-              "type": "object", "additionalProperties": false, "required": ["host", "kind"],
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "host",
+                "kind"
+              ],
               "properties": {
-                "host": { "type": "string", "description": "ASCII DNS name, no port (lib/tenant-resolution hostname rules)." },
-                "kind": { "enum": ["claimed", "ephemeral"] },
-                "expiresAt": { "type": "string", "format": "date-time", "description": "ephemeral only; expiry changes reachability, never ownership." },
-                "policy": { "enum": ["anonymous-floor", "human-required"], "default": "anonymous-floor", "description": "Alias policy binding. The native device credential path is unaffected (D17)." }
+                "host": {
+                  "type": "string",
+                  "description": "ASCII DNS name, no port (lib/tenant-resolution hostname rules)."
+                },
+                "kind": {
+                  "enum": [
+                    "claimed",
+                    "ephemeral"
+                  ]
+                },
+                "expiresAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "ephemeral only; expiry changes reachability, never ownership."
+                },
+                "policy": {
+                  "enum": [
+                    "anonymous-floor",
+                    "human-required"
+                  ],
+                  "default": "anonymous-floor",
+                  "description": "Alias policy binding. The native device credential path is unaffected (D17)."
+                }
               }
             }
           },
-          "settings": { "type": "object", "description": "Operator-visible non-secret settings projection; owner values live in the tenant database." },
-          "theme": { "enum": ["default", "modern"] }
+          "settings": {
+            "type": "object",
+            "description": "Operator-visible non-secret settings projection; owner values live in the tenant database."
+          },
+          "theme": {
+            "enum": [
+              "default",
+              "modern"
+            ]
+          }
         }
       }
     },
     "secretRefs": {
-      "type": "object", "additionalProperties": { "type": "string" },
-      "description": "Name → reference understood by the secrets provider or the binding's secret store (file path, mount, key name). Never a value."
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Name \u2192 reference understood by the secrets provider or the binding's secret store (file path, mount, key name). Never a value."
     },
     "providers": {
-      "type": "object", "additionalProperties": false,
+      "type": "object",
+      "additionalProperties": false,
       "properties": {
-        "secrets":   { "$ref": "#/$defs/provider", "description": "Interface: core lib/secrets createSecrets providerFor. Reference: vault-transit." },
-        "registry":  { "$ref": "#/$defs/provider", "description": "Interface: resolver snapshot source. Reference: registry-postgres." },
-        "identity":  { "$ref": "#/$defs/provider", "description": "Interface: core generic OIDC adapter. Reference profiles: authentik, kratos." },
-        "aliasIssuer": { "$ref": "#/$defs/provider", "description": "Interface: ephemeral alias issuance behind the registry contract." }
+        "secrets": {
+          "$ref": "#/$defs/provider",
+          "description": "Interface: core lib/secrets createSecrets providerFor. Reference: vault-transit."
+        },
+        "registry": {
+          "$ref": "#/$defs/provider",
+          "description": "Interface: resolver snapshot source. Reference: registry-postgres."
+        },
+        "identity": {
+          "$ref": "#/$defs/provider",
+          "description": "Interface: core generic OIDC adapter. Reference profiles: authentik, kratos."
+        },
+        "aliasIssuer": {
+          "$ref": "#/$defs/provider",
+          "description": "Interface: ephemeral alias issuance behind the registry contract."
+        },
+        "aliasPolicy": {
+          "$ref": "#/$defs/provider",
+          "description": "Interface: may an owner claim or choose a name (pattern, length, reserved list, cooling-off on release). Default: owner claims disabled, generated label only."
+        }
+      }
+    },
+    "naming": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "scheme": {
+          "const": "generated-two-letter",
+          "description": "Built-in default: DNS-safe lowercase label from a CSPRNG, two leading letters, fixed length, checked against the reserved list; used as the internal name and the default primary alias label."
+        },
+        "length": {
+          "type": "integer",
+          "minimum": 6,
+          "maximum": 32
+        },
+        "renameTransitionDays": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "After an owner claim, the previous label stays as an ephemeral alias for this many days so configured uploaders keep working."
+        }
       }
     }
   },
   "$defs": {
     "provider": {
-      "type": "object", "additionalProperties": false, "required": ["name", "version"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version"
+      ],
       "properties": {
-        "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$", "description": "A registered provider name. Never a module path." },
-        "version": { "type": "string", "description": "Exact installed package version." },
-        "config": { "type": "object", "description": "Provider-specific non-secret configuration." }
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,62}$",
+          "description": "A registered provider name. Never a module path."
+        },
+        "version": {
+          "type": "string",
+          "description": "Exact installed package version."
+        },
+        "config": {
+          "type": "object",
+          "description": "Provider-specific non-secret configuration."
+        }
       }
     }
   }
