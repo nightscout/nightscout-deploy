@@ -57,5 +57,9 @@ claim read-derived or measured, and a check that has never gone red is not yet e
 
 ## Licence
 
-To be decided with the maintainers before any release; the intent is the same licence family as
-cgm-remote-monitor.
+AGPL-3.0-only, the same licence as cgm-remote-monitor and nightscout-connect, and the licence the
+imported `bindings/compose/multitenant` tree already carries. The provider and plan **interface
+contracts** are intended to be published as a small separate package under MIT (as
+nightscout-roles-gateway is), so that a hosting operator's private providers implementing those
+interfaces are not derivative works of this repository. Intended home: the nightscout organisation
+on GitHub. Recommendation pending the maintainers' confirmation; see `LICENSE`.

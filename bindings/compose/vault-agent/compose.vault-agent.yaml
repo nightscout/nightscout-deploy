@@ -1,0 +1,92 @@
+# Vault Agent sidecar overlay for the imported one-host Compose tree.
+#
+#   docker compose --project-directory <core-tree>/deploy/multitenant \
+#     --env-file <core-tree>/deploy/multitenant/.env \
+#     -f <core-tree>/deploy/multitenant/compose.yaml -f compose.vault-agent.yaml ...
+#
+# `vault-agent.sh` issues exactly that. NS_VAULT_AGENT_DIR is this directory (absolute);
+# relative paths in an override are resolved against the first file, so it is passed in.
+# The imported tree is not edited: this file adds a service, a one-shot provisioning step
+# and one read-only mount per application role.
+#
+# Same Vault image digest as the imported compose.yaml. Pins, not tags.
+
+x-agent-sink: &agent-sink ${NS_DEMO_STATE:?Run prepare.js first}/vault-agent/sink:/run/ns-vault:ro
+
+services:
+  vault-agent:
+    image: hashicorp/vault@sha256:962a92876e168d68eaaa24b0b8b49bbce1cb63024060a67bba95cd158a366fc2
+    # The image entrypoint execs vault directly for a non-root user. The runtime uid owns the
+    # private state files (0600), so the Agent runs as that uid and the sink it writes (0600)
+    # is readable by the application containers, which run as the same uid.
+    user: "${NS_RUNTIME_UID:-1000}:${NS_RUNTIME_GID:-1000}"
+    command: [vault, agent, -config=/vault/config/agent.hcl]
+    init: true
+    restart: "no"
+    depends_on:
+      vault: {condition: service_healthy}
+    environment:
+      VAULT_ADDR: https://vault:8200
+      VAULT_CACERT: /run/ns-ca/ca.crt
+      SKIP_SETCAP: "1"
+    volumes:
+      - ${NS_VAULT_AGENT_DIR:?Run vault-agent.sh}/agent.hcl:/vault/config/agent.hcl:ro
+      - ${NS_DEMO_STATE}/vault-agent/creds:/run/ns-vault-creds
+      - ${NS_DEMO_STATE}/vault-agent/sink:/run/ns-vault
+      - ${NS_DEMO_STATE}/tls/ca.crt:/run/ns-ca/ca.crt:ro
+    healthcheck:
+      # Healthy once the sink holds a token. Renewal and re-authentication are the Agent's.
+      test: [CMD-SHELL, test -s /run/ns-vault/token]
+      interval: 2s
+      timeout: 2s
+      retries: 45
+    networks: [backend]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs: [/tmp:mode=1777]
+
+  # One-shot step after the imported bootstrap: enable AppRole, write the Transit policy,
+  # create the role, write role_id/secret_id into the private state (0600), and point the
+  # api document at the sink. Runs the application image so it carries no extra tooling.
+  vault-agent-bootstrap:
+    image: ${NS_DEMO_IMAGE:-nightscout-multitenant-demo:local}
+    profiles: [ops]
+    user: "${NS_RUNTIME_UID:-1000}:${NS_RUNTIME_GID:-1000}"
+    command: [node, /run/ns-overlay/vault-agent-bootstrap.js, provision]
+    init: true
+    restart: "no"
+    depends_on:
+      vault: {condition: service_healthy}
+    environment:
+      NODE_EXTRA_CA_CERTS: /run/ns-ca/ca.crt
+      VAULT_ADDR: https://vault:8200
+      NS_VAULT_AGENT_BOOTSTRAP: "1"
+      NS_BOOTSTRAP_OUTPUT: /state
+      NS_VAULT_AGENT_TOKEN_TTL: ${NS_VAULT_AGENT_TOKEN_TTL:-1h}
+      NS_VAULT_AGENT_TOKEN_MAX_TTL: ${NS_VAULT_AGENT_TOKEN_MAX_TTL:-24h}
+      NS_VAULT_AGENT_KEEP_ENV_TOKENS: ${NS_VAULT_AGENT_KEEP_ENV_TOKENS:-0}
+    volumes:
+      - ${NS_DEMO_STATE}:/state
+      - ${NS_DEMO_STATE}/tls/ca.crt:/run/ns-ca/ca.crt:ro
+      - ${NS_VAULT_AGENT_DIR}/vault-agent-bootstrap.js:/run/ns-overlay/vault-agent-bootstrap.js:ro
+    networks: [backend]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs: [/tmp:mode=1777]
+
+  api:
+    depends_on:
+      vault-agent: {condition: service_healthy}
+    volumes:
+      - *agent-sink
+  realtime:
+    volumes:
+      - *agent-sink
+  evaluator:
+    volumes:
+      - *agent-sink
+  tenant-admin:
+    volumes:
+      - *agent-sink
