@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nightscout.github.io/nightscout-deploy/plan/deployment-plan.schema.json",
+  "title": "Nightscout deployment plan (draft, read-derived from cgm-remote-monitor ed2ced00 deploy/multitenant/config.js)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "deployment", "profile", "core", "images", "roles", "tenants", "trustedPeers", "secretRefs", "providers"],
+  "properties": {
+    "version": { "const": 1 },
+    "deployment": {
+      "type": "object", "additionalProperties": false, "required": ["id", "prefix"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$" },
+        "prefix": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,23}$", "description": "PostgreSQL schema/role prefix; config.js layout()" }
+      }
+    },
+    "profile": { "enum": ["single", "multitenant"], "description": "single: one `nightscout single` process on MongoDB. multitenant: the fixed application cohort on PostgreSQL and a secrets provider." },
+    "core": {
+      "type": "object", "additionalProperties": false, "required": ["commit"],
+      "properties": { "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" } }
+    },
+    "images": {
+      "type": "object",
+      "additionalProperties": { "type": "object", "additionalProperties": false, "required": ["ref", "digest"],
+        "properties": { "ref": { "type": "string" }, "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" } } }
+    },
+    "roles": {
+      "type": "array", "uniqueItems": true, "minItems": 1,
+      "items": { "enum": ["single", "api", "realtime", "evaluator", "tenant-admin", "ui", "edge"] }
+    },
+    "endpoints": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "publicBind": { "type": "string", "description": "Where the edge publishes; the only published address." },
+        "privateTransport": { "enum": ["unix", "tcp"], "default": "unix", "description": "The cohort's private participant transport. tcp is MT-ENDPOINT-TRANSPORT and is not accepted yet." }
+      }
+    },
+    "trustedPeers": {
+      "type": "array", "items": { "type": "string" },
+      "description": "Immediate peers whose Host/forwarded headers the app may trust, and TRUST_PROXY. Empty refuses to start a multitenant role (decisions.md, peer-list trust). Configuration, never a provider."
+    },
+    "reservedNames": { "type": "array", "items": { "type": "string" }, "description": "Operator additions to the project's reserved-name floor." },
+    "tenants": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["id", "aliases"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$", "description": "Stable tenant identity (lib/tenant-resolution tenantId)." },
+          "internalName": { "type": "string", "description": "Operator-controlled resolution label for canonical-internal mode. Not a URL, not a credential." },
+          "aliases": {
+            "type": "array", "minItems": 1,
+            "items": {
+              "type": "object", "additionalProperties": false, "required": ["host", "kind"],
+              "properties": {
+                "host": { "type": "string", "description": "ASCII DNS name, no port (lib/tenant-resolution hostname rules)." },
+                "kind": { "enum": ["claimed", "ephemeral"] },
+                "expiresAt": { "type": "string", "format": "date-time", "description": "ephemeral only; expiry changes reachability, never ownership." },
+                "policy": { "enum": ["anonymous-floor", "human-required"], "default": "anonymous-floor", "description": "Alias policy binding. The native device credential path is unaffected (D17)." }
+              }
+            }
+          },
+          "settings": { "type": "object", "description": "Operator-visible non-secret settings projection; owner values live in the tenant database." },
+          "theme": { "enum": ["default", "modern"] }
+        }
+      }
+    },
+    "secretRefs": {
+      "type": "object", "additionalProperties": { "type": "string" },
+      "description": "Name → reference understood by the secrets provider or the binding's secret store (file path, mount, key name). Never a value."
+    },
+    "providers": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "secrets":   { "$ref": "#/$defs/provider", "description": "Interface: core lib/secrets createSecrets providerFor. Reference: vault-transit." },
+        "registry":  { "$ref": "#/$defs/provider", "description": "Interface: resolver snapshot source. Reference: registry-postgres." },
+        "identity":  { "$ref": "#/$defs/provider", "description": "Interface: core generic OIDC adapter. Reference profiles: authentik, kratos." },
+        "aliasIssuer": { "$ref": "#/$defs/provider", "description": "Interface: ephemeral alias issuance behind the registry contract." }
+      }
+    }
+  },
+  "$defs": {
+    "provider": {
+      "type": "object", "additionalProperties": false, "required": ["name", "version"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$", "description": "A registered provider name. Never a module path." },
+        "version": { "type": "string", "description": "Exact installed package version." },
+        "config": { "type": "object", "description": "Provider-specific non-secret configuration." }
+      }
+    }
+  }
+}

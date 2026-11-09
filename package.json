@@ -1,0 +1,11 @@
+{
+  "name": "nightscout-deploy",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Deployment companion for cgm-remote-monitor: plan, bindings, providers, conformance kits, edge and operator tooling",
+  "license": "SEE LICENSE IN README.md",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "node tools/targets-check.js bindings/single/targets.json"
+  }
+}
