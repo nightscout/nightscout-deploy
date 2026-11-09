@@ -245,12 +245,9 @@
         "length": {
           "type": "integer",
           "minimum": 6,
-          "maximum": 32
-        },
-        "renameTransitionDays": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "After an owner claim, the previous label stays as an ephemeral alias for this many days so configured uploaders keep working."
+          "maximum": 32,
+          "default": 10,
+          "description": "Provisional default 10 (two letters plus eight from a 32-symbol lowercase alphabet); to be measured against collision and typing comfort."
         }
       }
     }

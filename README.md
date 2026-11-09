@@ -5,7 +5,7 @@ one deployment plan, several renderers (Compose, Kubernetes, DIY single-tenant t
 providers a hosting operator installs behind core's interfaces, the conformance kits those
 providers must pass, the reference edge, the operator CLI and the operations material.
 
-**Status: scaffold, 2026-11-09. Nothing here runs yet.** Layout, interfaces and the roadmap are
+**Status: scaffold, 2026-11-09, in flux.** Work lands directly on `main` while the shape settles; gates tighten as pieces stabilise. The Compose tree runs (see `bindings/compose/`); the rest is notes. Layout, interfaces and the roadmap are
 written; code lands wave by wave (see [docs/roadmap.md](docs/roadmap.md)). Rationale and the scope
 split between this repository, core and a hoster's private adapters are recorded in the alignment
 workspace: [claimed public names and the deploy companion](https://github.com/bewest/rag-nightscout-ecosystem-alignment/blob/main/docs/30-design/tenancy/claimed-public-names-and-deploy-companion-2026-11-09.md).
