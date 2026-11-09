@@ -92,14 +92,28 @@ This README states the mechanism; the decision belongs in the release record.
 
 ## What is measured
 
-Record at the time of writing, 2026-11-09; the alignment report
-`reports/tenancy/vault-agent-2026-11-09/README.md` carries the figures from output.
+Figures from output, 2026-11-09, core head `0c5479584a39f68edb6b1eb2e1228129eb9722ac` (branch
+`codex/vault-token-file-20261109`, `ed2ced00` + one commit) overlaid with this tree; Compose
+project `nightscout-multitenant-vault-agent`, public port 18090, `NS_VAULT_AGENT_TOKEN_TTL=2m`,
+`NS_VAULT_AGENT_KEEP_ENV_TOKENS=1`. The alignment report
+`reports/tenancy/vault-agent-2026-11-09/README.md` carries the full log excerpts.
 
-| check | state |
+| check | result |
 |---|---|
-| `tokenFile` unit tests (core): rewritten sink picked up by the next call; both/neither refuse at load; unreadable or empty sink fails closed with the env token set and unused | measured, 5 passing; two ablations go red (cached-at-load, env fallback) |
-| `tools/compose-identity-check.sh`: imported tree untouched by this overlay | measured, see the report |
-| Compose smoke with the overlay, short TTL: Transit call succeeds after the TTL has passed (renewal) | see the report |
-| Control: Agent stopped, TTL passed, next Transit call fails closed with env tokens present; `secret-id` + `agent start` recovers | see the report |
+| core unit tests `tests/preview-vault-token-file.test.js` | 5 passing; ablation "cache the sink at load" fails 2 of 5, ablation "fall back to the environment" fails 1 of 5 (`Missing expected rejection`) |
+| `npm run test:affected -- --since ed2ced00` (3 changed files, 28 test files selected) | unit 191 passing, harness 27 passing, integration 24 passing / 69 pending opt-ins / 0 failing, against a MongoDB 7.0.43 container (the first run against the host's MongoDB 3.6 failed 17 boot-path tests on the driver's wire-version refusal; unrelated to this change) |
+| `tools/compose-identity-check.sh <core>`: imported tree untouched | ok, tree `8be3d761cbe592428357d6cee29612affafe4122` on both sides |
+| Agent provisioned; `secret_id` file removed after the first read; sink 0600 uid 1000 | `vault-agent-provisioned`; creds dir holds `role_id` only; sink 95 bytes |
+| renewal: Transit-backed call (legacy token exchange via nginx) after the TTL has passed | token issued 20:03:41Z, `renewed auth token` at 20:03:41Z and 20:05:08Z, sink hash unchanged, both tenants HTTP 200 at 20:06:22Z (2 m 41 s after issue) |
+| control: Agent stopped at 20:06:22Z, env tokens `NS_VAULT_0`/`NS_VAULT_1` left in `api/env.json` | at 20:08:52Z (token expired 20:07:08Z) both tenants HTTP 503, sink hash unchanged: the api failed closed on the expired sink token and did not use the environment tokens |
+| recovery | `secret-id` re-issued, `agent start`, healthy in 4 s, sink hash changed, both tenants HTTP 200 at 20:08:56Z |
+| imported restore demo (`vault-agent.sh demo`) through the overlay | `{"demo":"tenant-local-logical-restore","state":"passed"}`, exit 0 (tenant A restored, B unaffected) |
 
-A check that has never gone red is not evidence; the controls above are the red half.
+One finding from the first run: with `token_no_default_policy`, the Agent's token could not
+call `auth/token/renew-self` (403), so the Agent fell back to re-authentication at every TTL
+with its cached `secret_id` (still correct, but not renewal). The policy now grants exactly
+`auth/token/renew-self` (update) and `auth/token/lookup-self` (read); the renewal row above is
+from the second run.
+
+A check that has never gone red is not evidence; the ablations and the stopped-Agent control
+are the red half.

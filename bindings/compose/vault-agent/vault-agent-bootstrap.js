@@ -72,6 +72,10 @@ async function run (command, options) {
     if (typeof policy?.data?.policy !== 'string' || !policy.data.policy) throw fail('IMPORTED_TENANT_POLICY_MISSING');
     rules.push('# tenant ' + i + ' (imported policy ' + layout.prefix + '_tenant_' + i + ')', policy.data.policy);
   }
+  // The Agent renews its own token; without the default policy (which this role does not
+  // carry) renew-self and lookup-self are refused with 403 and the Agent falls back to
+  // re-authentication at every TTL (measured 2026-11-09). Grant exactly those two paths.
+  rules.push('# Vault Agent token self-management', 'path "auth/token/renew-self" { capabilities = ["update"] }', 'path "auth/token/lookup-self" { capabilities = ["read"] }');
   // 400 "path is already in use" when a previous partial run enabled the method.
   await request('sys/auth/approle', { type: 'approle' }, 'POST', { accept: [400] });
   await request('sys/policies/acl/' + policyName, { policy: rules.join('\n') }, 'PUT');
