@@ -7,7 +7,7 @@ refuses a name that is not registered. **No module paths in configuration.**
 | interface | core contract (at `ed2ced00`) | reference provider | hoster examples |
 |---|---|---|---|
 | secrets | `lib/secrets/component.js` `createSecrets({providerFor, …})`: `encrypt`, `decrypt`, key version, rewrap | `vault-transit` (moves here from core at the sibling's first release) | cloud key services |
-| registry (resolver snapshot source) | `lib/tenant-resolution` resolver constructed from a snapshot; "construct a new resolver to replace the mapping" | `registry-postgres` reading core's registry tables | a hoster's existing name records during transition |
+| registry (resolver snapshot source) | `lib/tenant-resolution` resolver constructed from a snapshot; "construct a new resolver to replace the mapping". Private names and public aliases are core records; core exposes a read-only resolution endpoint on the private plane | `registry-postgres` reading that endpoint | a hoster's existing name records during transition |
 | identity | generic OIDC adapter: issuer, audience, subject and session claims, optional back-channel logout | configuration profiles `authentik` (intended reference) and `kratos` (measured fallback) | any conforming provider |
 | alias issuer | ephemeral alias issuance behind the registry contract: kind, lifetime, reassignment | a reference issuer for the Compose and Kubernetes bindings | a hoster's own issuance and distribution |
 
