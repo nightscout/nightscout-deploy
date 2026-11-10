@@ -1,65 +1,89 @@
 # nightscout-deploy
 
-Deployment companion for [cgm-remote-monitor](https://github.com/nightscout/cgm-remote-monitor):
-one deployment plan, several renderers (Compose, Kubernetes, DIY single-tenant targets), the
-providers a hosting operator installs behind core's interfaces, the conformance kits those
-providers must pass, the reference edge, the operator CLI and the operations material.
+Deployment companion for [cgm-remote-monitor](https://github.com/nightscout/cgm-remote-monitor),
+the Nightscout server. It holds the one-host Compose deployment of multitenant Nightscout (several
+tenants behind one edge, PostgreSQL, Vault) and the overlays that extend it, with places reserved for
+Kubernetes, single-tenant targets, an operator CLI and conformance kits. Home:
+[github.com/nightscout/nightscout-deploy](https://github.com/nightscout/nightscout-deploy). Licence: AGPL-3.0-only.
 
-**Status: scaffold, 2026-11-09, in flux.** Work lands directly on `main` while the shape settles; gates tighten as pieces stabilise. The Compose tree runs (see `bindings/compose/`); the rest is notes. Layout, interfaces and the roadmap are
-written; code lands wave by wave (see [docs/roadmap.md](docs/roadmap.md)). Rationale and the scope
-split between this repository, core and a hoster's private adapters are recorded in the alignment
-workspace: [claimed public names and the deploy companion](https://github.com/bewest/rag-nightscout-ecosystem-alignment/blob/main/docs/30-design/tenancy/claimed-public-names-and-deploy-companion-2026-11-09.md).
+## What runs today
 
-Anchors at the time of writing: cgm-remote-monitor draft PR #8898 candidate `ed2ced00`
-(the one-host Compose reference this repository will consume), alignment `main` `9029fb6dd`.
-
-## What this repository is for
-
-- **Lower the cost of running Nightscout**, single-tenant or multitenant, by giving every
-  deployment shape the same plan and the same checks.
-- **Keep vendor details out of core.** Pricing and availability change; a target here has an
-  owner and an expiry date, and an expired target fails CI instead of going stale in a guide.
-- **Let a hosting operator inject adapters, not forks.** Secrets providers, identity-provider
-  profiles, an ephemeral alias issuer and a registry snapshot source are installed packages that
-  pass the kits in `conformance/`. Config names a registered provider; it never names a module path.
-
-## What it is not
-
-- Not a place for authority or identity rules. The registry schema, the resolver, the OIDC
-  adapter contract, owner authority and the headless owner/operator APIs live in core.
-- Not a login UI. Identity providers bring their own.
-- Not billing, signup, marketing or support tooling.
-
-## Layout
-
-| path | holds | state |
+| what | where | what it does |
 |---|---|---|
-| `plan/` | the deployment-plan schema and the reference renderer inputs | schema draft |
-| `bindings/compose/` | the Compose binding; consumes core's `deploy/multitenant` at a pinned commit | notes |
-| `bindings/kubernetes/` | one Pod per application cohort, private socket volume, no-overlap update | notes |
-| `bindings/single/` | DIY single-tenant targets (`single` role, MongoDB) with owner and expiry | registry, empty |
-| `providers/` | provider interfaces, naming and registration rule | notes |
-| `conformance/` | kits with red controls: secrets, resolver, OIDC, edge, binding | notes |
-| `edge/` | reference nginx, trust-record template, probes | template |
-| `operator/` | CLI over core's headless operator API | notes |
-| `console/` | read-mostly operator console over the same API | deferred |
-| `observability/` | Grafana mixin, alert rules, runbook skeletons | notes |
-| `tools/` | repository checks (`targets-check.js`) | runs |
+| Compose binding | [`bindings/compose/`](bindings/compose/) | one host: API, realtime, evaluator, tenant-admin, web pages, nginx, PostgreSQL and TLS-enabled Vault, with synthetic tenants and generated credentials |
+| Vault Agent overlay | [`bindings/compose/vault-agent/`](bindings/compose/vault-agent/) | a Vault Agent sidecar logs in and renews the token the application reads for Transit calls |
+| Ownership-operations overlay | [`bindings/compose/ownership-admin/`](bindings/compose/ownership-admin/) | the `admin` service and the `ownership_operator` database identity with its grants |
+
+The Compose tree is core's `deploy/multitenant`, imported unchanged. It builds from a core checkout,
+so it runs overlaid on core at the recorded commit.
+
+**Core commit pinned:** `ed2ced00c80bd0a6a7d75f834d2c6e2af8c71364`, the accepted one-host candidate of
+core's draft pull request [#8898](https://github.com/nightscout/cgm-remote-monitor/pull/8898). The
+pull request has moved on since; this tree has not been re-imported. The source, tree hash and
+import method are in [`bindings/compose/SOURCE.md`](bindings/compose/SOURCE.md).
+
+## Run the Compose binding
+
+Needs Docker Engine with Compose v2, Node.js 22 or newer, OpenSSL, and a host user with uid and gid 1000.
+From this repository:
 
 ```bash
-npm test   # runs the repository checks; today: the targets registry
+tools/compose-identity-check.sh /path/to/cgm-remote-monitor        # the tree matches core at the pinned commit
+tools/compose-overlay.sh /path/to/cgm-remote-monitor /tmp/ns-core   # a core worktree with this tree in place
+cd /tmp/ns-core/deploy/multitenant
+./demo.sh prepare       # then build, bootstrap, up and demo, as bindings/compose/multitenant/README.md says
 ```
 
-## Working rules
+Everything it creates is synthetic. Keep real records and identities out of it.
 
-See [AGENTS.md](AGENTS.md). In one line: synthetic data only, no credentials anywhere, label every
-claim read-derived or measured, and a check that has never gone red is not yet evidence.
+## Run the Vault Agent overlay
+
+Requires a core checkout that accepts a token file for Vault (`tokenFile`; core branch
+`codex/vault-token-file-20261109`). From [`bindings/compose/vault-agent/`](bindings/compose/vault-agent/):
+
+```bash
+./vault-agent.sh <core-tree> up        # imported bootstrap, agent provisioning, then every role
+./vault-agent.sh <core-tree> demo      # the restore demonstration through the overlay
+./vault-agent.sh <core-tree> destroy   # down -v
+```
+
+The overlay's README has the full steps (prepare, build, token lifetime variables), the credential
+locations and the measured results. The ownership-operations overlay runs the same way with
+`ownership-admin.sh`; it needs a core checkout that has the `admin` role.
+
+## Not started
+
+Each directory holds a short note on what it will contain.
+
+| directory | what it will hold | state |
+|---|---|---|
+| [`plan/`](plan/) | the deployment-plan schema every binding renders from | draft schema only |
+| [`bindings/kubernetes/`](bindings/kubernetes/) | Kubernetes binding | not started |
+| [`bindings/single/`](bindings/single/) | single-tenant targets, each with an owner and expiry date | registry and checker, no targets |
+| [`providers/`](providers/) | provider interfaces and naming rule | not started |
+| [`conformance/`](conformance/) | checks each provider and binding must pass | not started |
+| [`edge/`](edge/) | reference nginx, trust-record template, probes | template only |
+| [`operator/`](operator/) | operator command-line client | not started |
+| [`console/`](console/) | read-mostly operator console | not started |
+| [`observability/`](observability/) | dashboards, alert rules, runbooks | not started |
+
+Order of work: [docs/roadmap.md](docs/roadmap.md). Split between this repository, core and a hosting
+operator's private adapters: [docs/scope-split.md](docs/scope-split.md).
+
+## Checks
+
+```bash
+npm test    # the single-target registry check and the Compose identity check
+```
+
+## Working on it
+
+[AGENTS.md](AGENTS.md) has the rules: synthetic data only, no credentials in files, every claim
+labelled read-derived or measured, a check proves something only after it has gone red once.
+Rationale and decisions live in the alignment workspace, linked from where they apply, for example
+[claimed public names and the deploy companion](https://github.com/bewest/rag-nightscout-ecosystem-alignment/blob/main/docs/30-design/tenancy/claimed-public-names-and-deploy-companion-2026-11-09.md).
 
 ## Licence
 
-AGPL-3.0-only, the same licence as cgm-remote-monitor and nightscout-connect, and the licence the
-imported `bindings/compose/multitenant` tree already carries. The provider and plan **interface
-contracts** are intended to be published as a small separate package under MIT (as
-nightscout-roles-gateway is), so that a hosting operator's private providers implementing those
-interfaces are not derivative works of this repository. Intended home: the nightscout organisation
-on GitHub. Recommendation pending the maintainers' confirmation; see `LICENSE`.
+AGPL-3.0-only, the same as cgm-remote-monitor, nightscout-connect and the imported Compose tree. See
+[LICENSE](LICENSE).
