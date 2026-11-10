@@ -10,7 +10,7 @@ renewal and re-authentication all belong to the Agent. The application reads the
 call (`tokenFile` in the tenant's `vault` block, the alternative to `tokenEnv`).
 
 - Compose: [`bindings/compose/vault-agent/`](../../../bindings/compose/vault-agent/README.md),
-  the wave 3 "Vault service login" deliverable on the [roadmap](../../../docs/roadmap.md).
+  the Vault service login step on the [roadmap](../../../docs/roadmap.md).
 - Kubernetes: the same `agent.hcl` as a native sidecar (init container with
   `restartPolicy: Always`) sharing an `emptyDir` with the application containers; the AppRole
   method is replaced by the Kubernetes auth method. Not started; see `bindings/kubernetes/`.

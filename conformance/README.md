@@ -1,8 +1,7 @@
 # Conformance kits
 
-A kit is the set of checks a provider or a binding must pass, each with a **red control**: a
-deliberate break that must make the check fail, with its exact symptom recorded. A kit that has
-never gone red is not yet evidence.
+Not started. A kit is the set of checks a provider or binding must pass, each with a red control: a
+deliberate break that must make the check fail, with the exact symptom recorded.
 
 | kit | checks (from the alignment decisions and proofs) | state |
 |---|---|---|

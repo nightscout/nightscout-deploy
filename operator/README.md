@@ -1,7 +1,5 @@
 # Operator CLI
 
-A thin client over core's headless operator API on the private plane. Verbs follow the lifecycle
-library and the alias registry: `provision`, `suspend`, `resume`, `export`, `delete` (request,
-confirm, cancel), `restore`, `bind-alias`, `rename-alias`, `revoke-alias`, `rotate`. The CLI holds
-no authority of its own; every verb is refused or admitted by core's current-authority checks.
-Not started; depends on the registry API and operator verbs landing in core (wave 1–2).
+Not started. Will hold a command-line client for core's operator API: provision, suspend, resume,
+export, delete, restore, bind, rename and revoke aliases, rotate. The client has no authority of its
+own; core admits or refuses every request.
