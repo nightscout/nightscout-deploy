@@ -1,0 +1,63 @@
+# Ownership-operations overlay for the imported one-host Compose tree.
+#
+#   docker compose --project-directory <core-tree>/deploy/multitenant \
+#     --env-file <core-tree>/deploy/multitenant/.env \
+#     -f <core-tree>/deploy/multitenant/compose.yaml -f compose.ownership-admin.yaml ...
+#
+# `ownership-admin.sh` issues exactly that. NS_OWNERSHIP_ADMIN_DIR is this directory (absolute).
+# The imported tree is not edited. Two additions:
+#   ownership-grants  one-shot step (profile ops) after the imported bootstrap: the
+#                     <prefix>_ownership_operator database identity, its grants and the admin
+#                     configuration
+#   admin             `nightscout multitenant admin` on the private network
+# The admin listener has no credential of its own (core decision internal-service-contracts):
+# access policy is the deployment's. No nginx route points at it and no port is published.
+
+x-ownership-private: &private
+  user: "${NS_RUNTIME_UID:-1000}:${NS_RUNTIME_GID:-1000}"
+  init: true
+  restart: "no"
+  networks: [backend]
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  read_only: true
+  tmpfs: [/tmp:mode=1777]
+
+services:
+  ownership-grants:
+    <<: *private
+    image: ${NS_DEMO_IMAGE:-nightscout-multitenant-demo:local}
+    profiles: [ops]
+    command: [node, /run/ns-overlay/ownership-grants.js, provision]
+    depends_on:
+      postgres: {condition: service_healthy}
+    environment:
+      NS_OWNERSHIP_GRANTS: "1"
+      NS_BOOTSTRAP_OUTPUT: /state
+      NS_POSTGRES_PASSWORD_FILE: /state/bootstrap/postgres-password
+    volumes:
+      - ${NS_DEMO_STATE:?Run prepare.js first}:/state
+      - ${NS_OWNERSHIP_ADMIN_DIR:?Run ownership-admin.sh}/ownership-grants.js:/run/ns-overlay/ownership-grants.js:ro
+
+  admin:
+    <<: *private
+    image: ${NS_DEMO_IMAGE:-nightscout-multitenant-demo:local}
+    command: [node, /run/ns-overlay/admin-entrypoint.js]
+    depends_on:
+      postgres: {condition: service_healthy}
+    environment:
+      # The service name resolves to the container's own address on the private network. The plane
+      # rule refuses a wildcard bind and the consumer listener's address, and a non-loopback bind
+      # needs the acknowledgement: this address is not published and no edge route reaches it.
+      ADMIN_HOSTNAME: admin
+      ADMIN_PORT: "1342"
+      ADMIN_INSECURE_BIND_ACKNOWLEDGED: "true"
+      MULTITENANT_ADMIN_CONFIG: /run/ns-config/admin.json
+    healthcheck:
+      test: [CMD, node, -e, "const s=require('node:net').connect({host:'admin',port:1342});s.setTimeout(1500);s.once('connect',()=>{s.end();process.exit(0)});s.once('timeout',()=>process.exit(1));s.once('error',()=>process.exit(1))"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - ${NS_DEMO_STATE}/ownership-admin:/run/ns-config:ro
+      - ${NS_OWNERSHIP_ADMIN_DIR}/admin-entrypoint.js:/run/ns-overlay/admin-entrypoint.js:ro
