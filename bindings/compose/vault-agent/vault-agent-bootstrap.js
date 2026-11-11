@@ -94,8 +94,8 @@ async function run (command, options) {
   const envKeys = apiConfig.tenants.map(tenant => tenant.vault.tokenEnv);
   for (const tenant of apiConfig.tenants) { delete tenant.vault.tokenEnv; tenant.vault.tokenFile = SINK; }
   if (!keepEnvTokens) for (const key of envKeys) delete apiEnv[key];
-  writePrivate(path.join(apiDir, 'config.json'), JSON.stringify(apiConfig, null, 2) + '\n', { flag: 'w' });
-  writePrivate(path.join(apiDir, 'env.json'), JSON.stringify(apiEnv, null, 2) + '\n', { flag: 'w' });
+  writePrivate(path.join(apiDir, 'config.json'), JSON.stringify(apiConfig) + '\n', { flag: 'w' }); // compact, as the bootstrap writes it
+  writePrivate(path.join(apiDir, 'env.json'), JSON.stringify(apiEnv) + '\n', { flag: 'w' });
   writePrivate(completeFile, JSON.stringify({ version: 1, role: roleName, policy: policyName, tokenTtl: ttl, tokenMaxTtl: maxTtl, sink: SINK, envTokensKept: keepEnvTokens, tenants: apiConfig.tenants.length }, null, 2) + '\n');
   return { state: 'vault-agent-provisioned', role: roleName, policy: policyName, tokenTtl: ttl, tokenMaxTtl: maxTtl, credentials: '/state/vault-agent/creds/{role_id,secret_id}', sink: SINK, envTokensKept: keepEnvTokens };
 }

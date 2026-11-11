@@ -22,15 +22,23 @@ function input(env=process.env) {
   if(vault.protocol!=='https:'||vault.username||vault.password||vault.pathname!=='/'||vault.search||vault.hash)throw fail('BOOTSTRAP_VAULT_HTTPS_REQUIRED');
   const uid=Number(env.NS_RUNTIME_UID||1000),gid=Number(env.NS_RUNTIME_GID||1000);
   if(!Number.isSafeInteger(uid)||uid<1||!Number.isSafeInteger(gid)||gid<1)throw fail('BOOTSTRAP_RUNTIME_ID_REQUIRED');
-  return {pg,vault,output:path.resolve(env.NS_BOOTSTRAP_OUTPUT),sourceCommit:env.NS_SOURCE_COMMIT,uid,gid};
+  // Off by default. For large tenant counts the generated role documents can exceed core's 1 MiB
+  // configuration cap; when set, every role environment and this process carry the cap variable
+  // (core's name assumed: MULTITENANT_CONFIG_MAX_BYTES; core at the recorded commit ignores it).
+  const capRaw=env.NS_BOOTSTRAP_CONFIG_MAX_BYTES||'';
+  if(capRaw&&(!/^[1-9][0-9]{0,9}$/.test(capRaw)||Number(capRaw)>268435456))throw fail('BOOTSTRAP_CONFIG_MAX_BYTES_INVALID');
+  return {pg,vault,output:path.resolve(env.NS_BOOTSTRAP_OUTPUT),sourceCommit:env.NS_SOURCE_COMMIT,uid,gid,configMaxBytes:capRaw?Number(capRaw):undefined};
 }
-function writePrivate(filename,value,{uid,gid}={}) {
+// Generated machine documents (role config, env, admission) are written compact: about a third
+// smaller, which matters against the configuration byte cap at large tenant counts. Bootstrap
+// custody and operator files stay indented for the people who read them.
+function writePrivate(filename,value,{uid,gid}={},{compact=false}={}) {
   fs.mkdirSync(path.dirname(filename),{recursive:true,mode:0o700});
-  fs.writeFileSync(filename,JSON.stringify(value,null,2)+'\n',{mode:0o600,flag:'wx'});
+  fs.writeFileSync(filename,(compact?JSON.stringify(value):JSON.stringify(value,null,2))+'\n',{mode:0o600,flag:'wx'});
   if(uid!==undefined){fs.chownSync(path.dirname(filename),uid,gid);fs.chownSync(filename,uid,gid);}
 }
 async function bootstrap(options) {
-  const {pg,vault,output,sourceCommit,uid,gid}=options;
+  const {pg,vault,output,sourceCommit,uid,gid,configMaxBytes}=options;
   const privateDirectory=path.join(output,'bootstrap');fs.mkdirSync(privateDirectory,{recursive:true,mode:0o700});
   const initFile=path.join(privateDirectory,'vault-init.json'),completeFile=path.join(privateDirectory,'complete.json'),startedFile=path.join(privateDirectory,'started.json');
   async function request(resource,body,token,method=body===undefined?'GET':'POST'){
@@ -158,15 +166,19 @@ async function bootstrap(options) {
       const signature=(await request(l.mount+'/sign/tenant-'+i+'-management',{input:Buffer.from(payload).toString('base64'),key_version:1},rootToken)).data.signature;
       managementTokens.push(payload+'.'+Buffer.from(signature.split(':')[2],'base64').toString('base64url'));
     }
-    const own={uid,gid};
+    const own={uid,gid},compact={compact:true};
+    if(configMaxBytes!==undefined){
+      for(const role of plan.serviceRoles)docs.environments[role].MULTITENANT_CONFIG_MAX_BYTES=String(configMaxBytes);
+      process.env.MULTITENANT_CONFIG_MAX_BYTES=String(configMaxBytes);
+    }
     for(const role of plan.serviceRoles){
-      const directory=path.join(output,role);writePrivate(path.join(directory,'env.json'),docs.environments[role],own);
-      writePrivate(path.join(directory,'config.json'),docs.configs[role],own);writePrivate(path.join(directory,'operation.json'),docs.operations[role],own);
-      if(role==='api'){writePrivate(path.join(directory,'evaluator-metadata.json'),docs.configs.evaluator,own);writePrivate(path.join(directory,'admission.json'),docs.admission,own);}
-      if(role==='realtime')writePrivate(path.join(directory,'admission.json'),docs.admission,own);
+      const directory=path.join(output,role);writePrivate(path.join(directory,'env.json'),docs.environments[role],own,compact);
+      writePrivate(path.join(directory,'config.json'),docs.configs[role],own,compact);writePrivate(path.join(directory,'operation.json'),docs.operations[role],own,compact);
+      if(role==='api'){writePrivate(path.join(directory,'evaluator-metadata.json'),docs.configs.evaluator,own,compact);writePrivate(path.join(directory,'admission.json'),docs.admission,own,compact);}
+      if(role==='realtime')writePrivate(path.join(directory,'admission.json'),docs.admission,own,compact);
     }
     plan.validateFiles(output,docs);
-    writePrivate(path.join(output,'ui','config.json'),docs.ui,own);
+    writePrivate(path.join(output,'ui','config.json'),docs.ui,own,compact);
     const lifecycle=plan.lifecycle(l);
     const operatorConfig={version:1,drainTimeoutMs:10000,tenants:ids.map((id,i)=>({id,host:docs.configs.api.tenants[i].aliases[0],tokenEnv:i===0?'NS_DEMO_TOKEN_A':i===1?'NS_DEMO_TOKEN_B':'NS_DEMO_TOKEN_'+i})),
       apiOrigin:'http://api:1337',control:{namespace:ns.control,locks:docs.locks,participants:docs.remote},...lifecycle};
@@ -178,5 +190,27 @@ async function bootstrap(options) {
     return {state:'synthetic-demo-provisioned',sourceCommit};
   }finally{await admin.end();}
 }
-if(require.main===module){Promise.resolve().then(()=>bootstrap(input())).then(result=>process.stdout.write(JSON.stringify(result)+'\n')).catch(error=>{process.stderr.write(JSON.stringify({error:/^[A-Z0-9_]{1,80}$/.test(error?.code||'')?error.code:'COMPOSE_BOOTSTRAP_FAILED'})+'\n');process.exitCode=1;});}
-module.exports={input,writePrivate,bootstrap};
+// Failure report: the stable code first (unchanged contract), then the underlying message and the
+// top stack frames so an uncoded refusal (for example a core config loader's size limit) is
+// diagnosable from the bootstrap output alone. Credentials never appear: URL userinfo, password
+// clauses, Vault tokens, JWT-shaped strings and long hex runs (generated passwords) are redacted.
+function redact(text){
+  return String(text).slice(0,2000)
+    .replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@'"]*@/gi,'$1<redacted>@')
+    .replace(/\b(password|passwd|pwd|secret|token)(\s*[=:]\s*)('[^']*'|"[^"]*"|[^\s,;&)]+)/gi,'$1$2<redacted>')
+    .replace(/\b(password)(\s+)('[^']*'|"[^"]*")/gi,'$1$2<redacted>')
+    .replace(/\bhv[sbr]\.[A-Za-z0-9_-]{8,}/g,'<redacted-vault-token>')
+    .replace(/\beyJ[A-Za-z0-9_-]{8,}(\.[A-Za-z0-9_-]*){1,2}/g,'<redacted-jwt>')
+    .replace(/\b[a-f0-9]{32,}\b/gi,'<redacted-hex>');
+}
+function report(error){
+  const code=/^[A-Z0-9_]{1,80}$/.test(error?.code||'')?error.code:'COMPOSE_BOOTSTRAP_FAILED';
+  const frames=String(error?.stack||'').split('\n').filter(line=>/^\s+at /.test(line)).slice(0,3)
+    .map(line=>redact(line.trim().slice(3).replace(/(\(|^)\/opt\/app\//,'$1')));
+  const out={error:code,detail:redact((error?.name&&error.name!=='Error'?error.name+': ':'')+(error?.message??String(error)))};
+  if(frames.length)out.at=frames;
+  if(error?.cause)out.cause=redact(error.cause?.message??String(error.cause));
+  return out;
+}
+if(require.main===module){Promise.resolve().then(()=>bootstrap(input())).then(result=>process.stdout.write(JSON.stringify(result)+'\n')).catch(error=>{process.stderr.write(JSON.stringify(report(error))+'\n');process.exitCode=1;});}
+module.exports={input,writePrivate,bootstrap,redact,report};

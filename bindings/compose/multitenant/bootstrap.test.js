@@ -42,3 +42,34 @@ test('private output refuses overwrite and never inherits readable permissions',
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'ns-compose-output-')),file=path.join(directory,'secret.json');
   try{bootstrap.writePrivate(file,{synthetic:'secret'});assert.equal(fs.statSync(file).mode&0o777,0o600);assert.throws(()=>bootstrap.writePrivate(file,{changed:true}),/EEXIST/);}finally{fs.rmSync(directory,{recursive:true});}
 });
+test('failure report keeps the stable code and adds redacted detail and location',()=>{
+  const uncoded=new TypeError('preview configuration is too large');
+  const r=bootstrap.report(uncoded);
+  assert.equal(r.error,'COMPOSE_BOOTSTRAP_FAILED');assert.equal(r.detail,'TypeError: preview configuration is too large');
+  assert(Array.isArray(r.at)&&r.at.length>0&&/bootstrap\.test\.js:\d+:\d+/.test(r.at[0]));
+  const coded=Object.assign(new Error('BOOTSTRAP_VAULT_REFUSED'),{code:'BOOTSTRAP_VAULT_REFUSED'});
+  assert.equal(bootstrap.report(coded).error,'BOOTSTRAP_VAULT_REFUSED');
+  const hex='ab'.repeat(32);
+  const vaultToken=['hv'+'s','synthetic-vault-0123456789'].join('.'),jwt=['ey'+'JhbGciOiJFZERTQSJ9','ey'+'J0aWQiOiJ4In0','c2ln'].join('.');const leaky=new Error(`connect postgres://nsdemo_api:${hex}@postgres:5432/nightscout_compose_test failed; PASSWORD '${hex}'; password=hunter2 vault said ${vaultToken} ${jwt}`);
+  const text=JSON.stringify(bootstrap.report(leaky));
+  for(const secret of [hex,'hunter2',vaultToken,jwt.split('.')[0],'nsdemo_api:'])assert(!text.includes(secret),'leaked '+secret);
+  assert(text.includes('postgres://<redacted>@postgres:5432/nightscout_compose_test'));
+  assert.equal(bootstrap.redact('duplicate key value violates unique constraint'),'duplicate key value violates unique constraint');
+});
+test('generated role documents are compact; custody files stay indented',()=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'ns-compose-compact-'));
+  try{
+    const value={tenants:[{id:'a',aliases:['one.example.test']}]};
+    bootstrap.writePrivate(path.join(directory,'role.json'),value,{},{compact:true});
+    bootstrap.writePrivate(path.join(directory,'custody.json'),value);
+    assert.equal(fs.readFileSync(path.join(directory,'role.json'),'utf8'),JSON.stringify(value)+'\n');
+    assert.equal(fs.readFileSync(path.join(directory,'custody.json'),'utf8'),JSON.stringify(value,null,2)+'\n');
+  }finally{fs.rmSync(directory,{recursive:true});}
+});
+test('config cap option is off by default and bounded when set',()=>{
+  const env={NS_COMPOSE_BOOTSTRAP:'1',NS_BOOTSTRAP_OUTPUT:'/tmp/state',NS_SOURCE_COMMIT:'a'.repeat(40),NS_BOOTSTRAP_POSTGRES_URL:'postgres://postgres:synthetic-only@postgres:5432/nightscout_compose_test',VAULT_ADDR:'https://vault:8200'};
+  assert.equal(bootstrap.input(env).configMaxBytes,undefined);
+  assert.equal(bootstrap.input({...env,NS_BOOTSTRAP_CONFIG_MAX_BYTES:''}).configMaxBytes,undefined);
+  assert.equal(bootstrap.input({...env,NS_BOOTSTRAP_CONFIG_MAX_BYTES:'4194304'}).configMaxBytes,4194304);
+  assert.throws(()=>bootstrap.input({...env,NS_BOOTSTRAP_CONFIG_MAX_BYTES:'4MiB'}),/BOOTSTRAP_CONFIG_MAX_BYTES_INVALID/);
+});
