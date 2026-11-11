@@ -108,6 +108,13 @@ so a long warm under `NS_TENANT_READINESS=all` is not judged by the 60 s readine
 default `serve` it passes once the role's own dependencies are up. Not yet applied to a cluster
 (rendered only).
 
+The Compose binding orders startup with `depends_on: service_healthy` (postgres and vault, api,
+realtime, evaluator and tenant-admin, edge last) and mounts `nginx.compose.conf`, which re-resolves
+the upstreams through Docker's DNS so a restarted role is reached again without an edge restart.
+This binding needs neither, and keeps importing the resolver-free `nginx.conf`: readiness probes keep a role out of its Service until it is ready, startup probes and
+in-place container restarts cover the start order, and the edge reaches roles through Service
+names, whose ClusterIP does not change when a Pod restarts.
+
 ## Checks
 
 ```bash

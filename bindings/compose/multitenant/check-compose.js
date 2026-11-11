@@ -17,6 +17,40 @@ function checkNetworks (config) {
   }
   return true;
 }
+// Start order: each runtime role waits for its dependencies' healthchecks; the edge starts last.
+const ORDER = {api: ['postgres', 'vault'], realtime: ['api'], evaluator: ['realtime'], 'tenant-admin': ['api'],
+  nginx: ['api', 'realtime', 'evaluator', 'tenant-admin', 'ui']};
+function checkOrder (config) {
+  for (const [name, needs] of Object.entries(ORDER)) {
+    const depends = config.services[name].depends_on || {};
+    for (const need of needs) {
+      assert(depends[need]?.condition === 'service_healthy', name + ' must wait for ' + need + ' to be healthy');
+      assert(config.services[need].healthcheck?.test, need + ' needs a healthcheck to be waited on');
+    }
+  }
+  return true;
+}
+// The edge re-resolves upstream names (a restarted role may come back on a new address).
+function checkEdgeResolve (text) {
+  assert(/^\s*resolver\s+127\.0\.0\.11\b[^;]*valid=\d+s/m.test(text), 'nginx must use Docker DNS with a bounded validity');
+  const servers = [...text.matchAll(/^\s*upstream\s+(\S+)\s*\{([^}]*)\}/gm)];
+  assert(servers.length >= 3, 'nginx upstreams missing');
+  for (const [, name, body] of servers) {
+    assert(/\bzone\s+\S+\s+\d+k;/.test(body) && /\bserver\s+\S+\s+resolve;/.test(body), 'nginx upstream ' + name + ' must re-resolve (zone + resolve)');
+  }
+  return true;
+}
+// nginx.compose.conf is nginx.conf (which the Kubernetes binding imports byte for byte, and whose
+// Service names need no re-resolution) plus the re-resolution lines and nothing else.
+function sharedEdge (composeText) {
+  return composeText.split('\n').filter(line => !/^\s*(resolver|resolver_timeout)\s/.test(line) && !/^# (Compose edge|of the upstream|apart from)/.test(line) &&
+    !/^\s*# (Upstream names are re-resolved|container that restarts|the edge \(nginx|Without it nginx resolves)/.test(line)).join('\n')
+    .replace(/\{ zone \S+ \d+k; (server \S+) resolve; \}/g, '{ $1; }');
+}
+function checkEdgeSame (sharedText, composeText) {
+  assert(sharedEdge(composeText) === sharedText, 'nginx.compose.conf must equal nginx.conf apart from upstream re-resolution');
+  return true;
+}
 function check (config) {
   checkNetworks(config);
   const runtime = ['api', 'realtime', 'evaluator', 'tenant-admin', 'ui', 'nginx'];
@@ -39,6 +73,7 @@ function check (config) {
   }
   assert(config.services.bootstrap.profiles.includes('ops'), 'Bootstrap must remain explicit');
   assert(config.services.demo.profiles.includes('ops'), 'Restore demonstration must remain explicit');
+  checkOrder(config);
   const ports = config.services.nginx.ports;
   assert(ports.length === 1 && ['127.0.0.1', '169.254.1.1'].includes(ports[0].host_ip), 'Demo ingress must bind the selected local address');
   return true;
@@ -63,11 +98,20 @@ if (require.main === module) {
     const edgeExposure = structuredClone(config);
     edgeExposure.services.api.networks.edge = null;
     assert.throws(() => check(edgeExposure), /api must remain on backend only/, 'Private-service edge control must fail');
+    const unordered = structuredClone(config);
+    delete unordered.services.nginx.depends_on.evaluator;
+    assert.throws(() => check(unordered), /nginx must wait for evaluator/, 'Start-order control must fail');
+    const read = name => require('node:fs').readFileSync(require('node:path').join(__dirname, name), 'utf8');
+    const nginx = read('nginx.compose.conf'), shared = read('nginx.conf');
+    assert(config.services.nginx.volumes.some(v => v.target === '/etc/nginx/nginx.conf' && v.source.endsWith('/nginx.compose.conf')), 'Compose edge must mount nginx.compose.conf');
+    checkEdgeResolve(nginx); checkEdgeSame(shared, nginx);
+    assert.throws(() => checkEdgeResolve(nginx.replace('server api:1337 resolve;', 'server api:1337;')), /upstream api must re-resolve/, 'Edge re-resolve control must fail');
+    assert.throws(() => checkEdgeSame(shared, nginx.replace("proxy_set_header Cookie '';", '')), /must equal nginx.conf/, 'Edge drift control must fail');
     check(config);
-    process.stdout.write('Compose boundaries pass; credential, private-listener and ingress-network controls rejected; restored configuration passes. Runtime UNMEASURED.\n');
+    process.stdout.write('Compose boundaries, start order, edge re-resolution and edge equivalence pass; credential, private-listener, ingress-network, start-order, re-resolve and edge-drift controls rejected; restored configuration passes. Runtime UNMEASURED.\n');
   } catch (error) {
     // Authored assertion messages name only a service/property, never values.
     process.stderr.write('Compose boundary check failed: ' + (error.code === 'ERR_ASSERTION' ? error.message : error.code || 'configuration expansion') + '\n'); process.exitCode = 1;
   }
 }
-module.exports = {check, checkNetworks};
+module.exports = {check, checkNetworks, checkOrder, checkEdgeResolve, checkEdgeSame};
