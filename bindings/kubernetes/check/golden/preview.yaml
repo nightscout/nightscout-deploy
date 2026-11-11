@@ -719,6 +719,7 @@ spec:
         - mountPath: /run/ns-config
           name: config-admin
           readOnly: true
+          subPath: d
         - mountPath: /tmp
           name: tmp
       enableServiceLinks: false
@@ -726,8 +727,9 @@ spec:
       - command:
         - sh
         - -c
-        - set -eu; umask 077; for r in "$@"; do cp /run/ns-secret/"$r"/*.json /run/ns-config/"$r"/;
-          done
+        - set -eu; umask 077; if [ -d /run/ns-ipc-volume ]; then mkdir -m 0700 -p
+          /run/ns-ipc-volume/d; fi; for r in "$@"; do mkdir -m 0700 -p /run/ns-config/"$r"/d;
+          cp /run/ns-secret/"$r"/*.json /run/ns-config/"$r"/d/; done
         - install-config
         - admin
         image: nightscout-multitenant-demo:16a1fc2d45e59602eb6ec3e3bf6f506f35bcc5b1
@@ -880,6 +882,7 @@ spec:
         - mountPath: /run/ns-config
           name: config-ui
           readOnly: true
+          subPath: d
         - mountPath: /tmp
           name: tmp
       enableServiceLinks: false
@@ -887,8 +890,9 @@ spec:
       - command:
         - sh
         - -c
-        - set -eu; umask 077; for r in "$@"; do cp /run/ns-secret/"$r"/*.json /run/ns-config/"$r"/;
-          done
+        - set -eu; umask 077; if [ -d /run/ns-ipc-volume ]; then mkdir -m 0700 -p
+          /run/ns-ipc-volume/d; fi; for r in "$@"; do mkdir -m 0700 -p /run/ns-config/"$r"/d;
+          cp /run/ns-secret/"$r"/*.json /run/ns-config/"$r"/d/; done
         - install-config
         - ui
         image: nightscout-multitenant-demo:16a1fc2d45e59602eb6ec3e3bf6f506f35bcc5b1
@@ -989,8 +993,10 @@ spec:
         - mountPath: /run/ns-config
           name: config-api
           readOnly: true
+          subPath: d
         - mountPath: /run/ns-ipc
           name: ns-ipc
+          subPath: d
         - mountPath: /run/ns-ca
           name: ns-ca
           readOnly: true
@@ -1034,8 +1040,10 @@ spec:
         - mountPath: /run/ns-config
           name: config-realtime
           readOnly: true
+          subPath: d
         - mountPath: /run/ns-ipc
           name: ns-ipc
+          subPath: d
         - mountPath: /run/ns-ca
           name: ns-ca
           readOnly: true
@@ -1051,12 +1059,6 @@ spec:
         env:
         - name: NODE_EXTRA_CA_CERTS
           value: /run/ns-ca/ca.crt
-        - name: NS_EVALUATOR_POOL_MEMBERS
-          value: "1"
-        - name: NS_EVALUATOR_POOL_ORDINAL
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.labels['apps.kubernetes.io/pod-index']
         image: nightscout-multitenant-demo:16a1fc2d45e59602eb6ec3e3bf6f506f35bcc5b1
         imagePullPolicy: IfNotPresent
         name: evaluator
@@ -1083,8 +1085,10 @@ spec:
         - mountPath: /run/ns-config
           name: config-evaluator
           readOnly: true
+          subPath: d
         - mountPath: /run/ns-ipc
           name: ns-ipc
+          subPath: d
         - mountPath: /run/ns-ca
           name: ns-ca
           readOnly: true
@@ -1128,8 +1132,10 @@ spec:
         - mountPath: /run/ns-config
           name: config-tenant-admin
           readOnly: true
+          subPath: d
         - mountPath: /run/ns-ipc
           name: ns-ipc
+          subPath: d
         - mountPath: /run/ns-ca
           name: ns-ca
           readOnly: true
@@ -1143,8 +1149,9 @@ spec:
       - command:
         - sh
         - -c
-        - set -eu; umask 077; for r in "$@"; do cp /run/ns-secret/"$r"/*.json /run/ns-config/"$r"/;
-          done
+        - set -eu; umask 077; if [ -d /run/ns-ipc-volume ]; then mkdir -m 0700 -p
+          /run/ns-ipc-volume/d; fi; for r in "$@"; do mkdir -m 0700 -p /run/ns-config/"$r"/d;
+          cp /run/ns-secret/"$r"/*.json /run/ns-config/"$r"/d/; done
         - install-config
         - api
         - realtime
@@ -1183,6 +1190,8 @@ spec:
           readOnly: true
         - mountPath: /run/ns-config/tenant-admin
           name: config-tenant-admin
+        - mountPath: /run/ns-ipc-volume
+          name: ns-ipc
       - args:
         - vault
         - agent
@@ -1411,8 +1420,9 @@ spec:
             command:
             - sh
             - -c
-            - vault status -address=https://vault:8200 -ca-cert=/run/ns-ca/ca.crt
-              >/dev/null 2>&1; r=$?; [ "$r" -eq 0 ] || [ "$r" -eq 2 ]
+            - vault status -address=https://127.0.0.1:8200 -tls-server-name=vault
+              -ca-cert=/run/ns-ca/ca.crt >/dev/null 2>&1; r=$?; [ "$r" -eq 0 ] ||
+              [ "$r" -eq 2 ]
           failureThreshold: 30
           periodSeconds: 2
           timeoutSeconds: 2
