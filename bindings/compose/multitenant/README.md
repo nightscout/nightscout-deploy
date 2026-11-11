@@ -49,8 +49,9 @@ instead of adopting unknown existing schemas.
 
 Start order: `up` runs the bootstrap first, then Compose starts the roles in
 dependency order, each waiting for the previous one's healthcheck: PostgreSQL
-and Vault, then api, then realtime, then evaluator and tenant-admin; nginx starts
-last. The edge therefore waits for the evaluator too. The Compose edge mounts
+and Vault, then api, then realtime and tenant-admin, then evaluator. nginx waits
+only for the services it routes to (api, realtime, ui), so an unhealthy evaluator
+or tenant-admin does not keep the site down. The Compose edge mounts
 `nginx.compose.conf`: `nginx.conf` (which the Kubernetes binding imports) plus
 re-resolution of the upstream names through Docker's DNS (10 s validity), so a
 role container restarted on its own is reached again without an edge restart.
@@ -61,9 +62,12 @@ underlying `detail` message and the top stack frames (`at`). Connection-string
 credentials, password clauses, Vault tokens, JWT-shaped strings and long hex
 runs are redacted from both. Generated role documents (configuration,
 environment, admission) are written as compact JSON. For large tenant counts,
-`NS_BOOTSTRAP_CONFIG_MAX_BYTES` (off when empty) puts
-`MULTITENANT_CONFIG_MAX_BYTES` into every role environment and the bootstrap's
-own validation; it takes effect only with a core that reads that variable.
+`NS_BOOTSTRAP_CONFIG_MAX_BYTES` (off when empty; 65,536 to 67,108,864) is passed
+by Compose to every role container, and to the ownership overlay's admin, as
+core's `MULTITENANT_CONFIG_MAX_BYTES`, and the bootstrap validates the files it
+writes against the same value. It never enters `env.json`. `load-env.js` takes its
+bound on `env.json` from core's reader (`lib/server/serve/config-file.js`), and
+keeps the fixed 1 MiB bound with a core that has no such module.
 
 The default public binding is `127.0.0.1:18080`. Add local name resolution for
 the synthetic aliases declared in the generated public UI config, then use that

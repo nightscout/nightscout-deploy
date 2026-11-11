@@ -8,7 +8,7 @@
 | upstream tree hash of that path | `8e2d9a1d6c3cbb12ad5b0bc59a47f1a43eeb7842` (core's reduced fixture: `config.js`, `demo.js`, `health.js`, `restore.js`, `ui.js`, `README.md`) |
 | import method | the 2026-11-11 sync: core's changes to `deploy/multitenant` between `16a1fc2d` and `0392acf9` applied by hand, including the lane hunks core resolved as deleted (perf-realtime `50f209e6` `bootstrap.js`, perf-db `a52bc33b` `compose.yaml`) |
 | local delta | [`SOURCE.delta.patch`](SOURCE.delta.patch), against core's fixture `config.js` only: the plan leaves out the `ownership_operator` identity, which [`ownership-admin/`](ownership-admin/) adds; `NS_DEMO_TENANTS` selects the synthetic tenant count (bench fix 2, now 1..10000) |
-| tree hash here | `ee7927af16001e29100b9fdb8f9cab9ac4594d15` |
+| tree hash here | `865f3cae1d4d86af6c4400b8b13ca3216431b3de` |
 | imported on | 2026-11-11 |
 
 History: first imported 2026-11-09 from `ed2ced00c80bd0a6a7d75f834d2c6e2af8c71364` (tree
@@ -86,11 +86,14 @@ the delta is unchanged.
 2. **Compact role documents.** Role configuration, environment, operation, admission and UI files
    are compact JSON (35.5% smaller at 1,000 to 5,000 synthetic tenants, measured offline); with
    core's 1 MiB cap the api `config.json` limit moves from under 2,000 to between 2,500 and 2,600
-   tenants. `NS_BOOTSTRAP_CONFIG_MAX_BYTES` (off by default) passes `MULTITENANT_CONFIG_MAX_BYTES`
-   (name assumed from the peer core lane) to the roles for counts beyond that.
+   tenants. `NS_BOOTSTRAP_CONFIG_MAX_BYTES` (off by default) reaches the role containers through the
+   Compose environment as `MULTITENANT_CONFIG_MAX_BYTES` (core lane `workspace/capacity-fixes-20261111`
+   `5517cb6c`, `lib/server/serve/config-file.js`), and `load-env.js` takes its `env.json` bound from
+   that reader (fixed 1 MiB with a core that lacks it, such as the recorded commit).
 3. **Edge after a role restart.** `nginx.compose.conf` = `nginx.conf` plus re-resolution through
    Docker's DNS; `nginx.conf` stays resolver-free for the Kubernetes binding.
-4. **Start order.** `depends_on: service_healthy` from postgres and vault through the roles to nginx.
+4. **Start order.** `depends_on: service_healthy` from postgres and vault through the roles; nginx waits
+   for api, realtime and ui only.
 5. **Overlay build.** `tools/compose-overlay.sh` writes `.overlay.json`; `prepare.js`/`build.js`
    check and build core HEAD plus the deploy commit instead of refusing every overlay as
    `BUILD_INPUTS_DIRTY`.

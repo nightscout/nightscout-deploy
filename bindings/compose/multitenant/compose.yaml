@@ -11,6 +11,9 @@ x-app: &app
   restart: "no"
   environment:
     NODE_EXTRA_CA_CERTS: /run/ns-ca/ca.crt
+    # Role configuration bound (core config-file.js; empty = core's 1 MiB default). Set with
+    # NS_BOOTSTRAP_CONFIG_MAX_BYTES so the bootstrap validates against the same value.
+    MULTITENANT_CONFIG_MAX_BYTES: ${NS_BOOTSTRAP_CONFIG_MAX_BYTES:-}
   networks: [backend]
   security_opt: [no-new-privileges:true]
   cap_drop: [ALL]
@@ -74,8 +77,9 @@ services:
       - ${NS_DEMO_STATE}/tls/ca.crt:/run/ns-ca/ca.crt:ro
 
   # Start order (bootstrap is the explicit one-shot step that `demo.sh up` runs first; it stays in
-  # profile ops): postgres and vault healthy -> api -> realtime -> evaluator and tenant-admin ->
-  # nginx last. Every edge is `service_healthy` on the healthchecks below.
+  # profile ops): postgres and vault healthy -> api -> realtime -> evaluator; tenant-admin after api.
+  # Every edge is `service_healthy` on the healthchecks below. nginx waits for the roles it serves
+  # (api, realtime, ui) only, so an unhealthy evaluator or tenant-admin never keeps the site down.
   api:
     <<: *app
     command: [node, deploy/multitenant/entrypoint.js, api]
@@ -171,8 +175,6 @@ services:
     depends_on:
       api: {condition: service_healthy}
       realtime: {condition: service_healthy}
-      evaluator: {condition: service_healthy}
-      tenant-admin: {condition: service_healthy}
       ui: {condition: service_healthy}
     ports:
       - ${NS_DEMO_BIND:-127.0.0.1}:${NS_DEMO_PORT:-18080}:8080

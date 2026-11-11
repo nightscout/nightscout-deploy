@@ -22,11 +22,12 @@ function input(env=process.env) {
   if(vault.protocol!=='https:'||vault.username||vault.password||vault.pathname!=='/'||vault.search||vault.hash)throw fail('BOOTSTRAP_VAULT_HTTPS_REQUIRED');
   const uid=Number(env.NS_RUNTIME_UID||1000),gid=Number(env.NS_RUNTIME_GID||1000);
   if(!Number.isSafeInteger(uid)||uid<1||!Number.isSafeInteger(gid)||gid<1)throw fail('BOOTSTRAP_RUNTIME_ID_REQUIRED');
-  // Off by default. For large tenant counts the generated role documents can exceed core's 1 MiB
-  // configuration cap; when set, every role environment and this process carry the cap variable
-  // (core's name assumed: MULTITENANT_CONFIG_MAX_BYTES; core at the recorded commit ignores it).
+  // Off by default. For large tenant counts the generated role documents exceed core's default 1 MiB
+  // configuration bound. compose.yaml passes this value to every role container as
+  // MULTITENANT_CONFIG_MAX_BYTES (core lib/server/serve/config-file.js, range 65,536..67,108,864);
+  // the bootstrap applies it to its own validation of the files. It is never written to env.json.
   const capRaw=env.NS_BOOTSTRAP_CONFIG_MAX_BYTES||'';
-  if(capRaw&&(!/^[1-9][0-9]{0,9}$/.test(capRaw)||Number(capRaw)>268435456))throw fail('BOOTSTRAP_CONFIG_MAX_BYTES_INVALID');
+  if(capRaw&&(!/^[1-9][0-9]{0,9}$/.test(capRaw)||Number(capRaw)<65536||Number(capRaw)>67108864))throw fail('BOOTSTRAP_CONFIG_MAX_BYTES_INVALID');
   return {pg,vault,output:path.resolve(env.NS_BOOTSTRAP_OUTPUT),sourceCommit:env.NS_SOURCE_COMMIT,uid,gid,configMaxBytes:capRaw?Number(capRaw):undefined};
 }
 // Generated machine documents (role config, env, admission) are written compact: about a third
@@ -167,17 +168,16 @@ async function bootstrap(options) {
       managementTokens.push(payload+'.'+Buffer.from(signature.split(':')[2],'base64').toString('base64url'));
     }
     const own={uid,gid},compact={compact:true};
-    if(configMaxBytes!==undefined){
-      for(const role of plan.serviceRoles)docs.environments[role].MULTITENANT_CONFIG_MAX_BYTES=String(configMaxBytes);
-      process.env.MULTITENANT_CONFIG_MAX_BYTES=String(configMaxBytes);
-    }
     for(const role of plan.serviceRoles){
       const directory=path.join(output,role);writePrivate(path.join(directory,'env.json'),docs.environments[role],own,compact);
       writePrivate(path.join(directory,'config.json'),docs.configs[role],own,compact);writePrivate(path.join(directory,'operation.json'),docs.operations[role],own,compact);
       if(role==='api'){writePrivate(path.join(directory,'evaluator-metadata.json'),docs.configs.evaluator,own,compact);writePrivate(path.join(directory,'admission.json'),docs.admission,own,compact);}
       if(role==='realtime')writePrivate(path.join(directory,'admission.json'),docs.admission,own,compact);
     }
-    plan.validateFiles(output,docs);
+    // Core's loaders take the bound from the environment they are given; the roles get it from
+    // Compose, so validation sees the same value without it entering the written env.json.
+    plan.validateFiles(output,configMaxBytes===undefined?docs:{...docs,environments:Object.fromEntries(plan.serviceRoles.map(role=>
+      [role,{...docs.environments[role],MULTITENANT_CONFIG_MAX_BYTES:String(configMaxBytes)}]))});
     writePrivate(path.join(output,'ui','config.json'),docs.ui,own,compact);
     const lifecycle=plan.lifecycle(l);
     const operatorConfig={version:1,drainTimeoutMs:10000,tenants:ids.map((id,i)=>({id,host:docs.configs.api.tenants[i].aliases[0],tokenEnv:i===0?'NS_DEMO_TOKEN_A':i===1?'NS_DEMO_TOKEN_B':'NS_DEMO_TOKEN_'+i})),

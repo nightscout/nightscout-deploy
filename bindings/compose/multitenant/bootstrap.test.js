@@ -72,4 +72,7 @@ test('config cap option is off by default and bounded when set',()=>{
   assert.equal(bootstrap.input({...env,NS_BOOTSTRAP_CONFIG_MAX_BYTES:''}).configMaxBytes,undefined);
   assert.equal(bootstrap.input({...env,NS_BOOTSTRAP_CONFIG_MAX_BYTES:'4194304'}).configMaxBytes,4194304);
   assert.throws(()=>bootstrap.input({...env,NS_BOOTSTRAP_CONFIG_MAX_BYTES:'4MiB'}),/BOOTSTRAP_CONFIG_MAX_BYTES_INVALID/);
+  assert.throws(()=>bootstrap.input({...env,NS_BOOTSTRAP_CONFIG_MAX_BYTES:'65535'}),/BOOTSTRAP_CONFIG_MAX_BYTES_INVALID/);
+  assert.throws(()=>bootstrap.input({...env,NS_BOOTSTRAP_CONFIG_MAX_BYTES:'67108865'}),/BOOTSTRAP_CONFIG_MAX_BYTES_INVALID/);
+  assert.equal(bootstrap.input({...env,NS_BOOTSTRAP_CONFIG_MAX_BYTES:'67108864'}).configMaxBytes,67108864);
 });

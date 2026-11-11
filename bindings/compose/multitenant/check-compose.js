@@ -17,9 +17,11 @@ function checkNetworks (config) {
   }
   return true;
 }
-// Start order: each runtime role waits for its dependencies' healthchecks; the edge starts last.
+// Start order: each runtime role waits for its dependencies' healthchecks. The edge waits only for
+// the roles it routes to; evaluator or tenant-admin health must never gate access to the site.
 const ORDER = {api: ['postgres', 'vault'], realtime: ['api'], evaluator: ['realtime'], 'tenant-admin': ['api'],
-  nginx: ['api', 'realtime', 'evaluator', 'tenant-admin', 'ui']};
+  nginx: ['api', 'realtime', 'ui']};
+const EDGE_INDEPENDENT = ['evaluator', 'tenant-admin'];
 function checkOrder (config) {
   for (const [name, needs] of Object.entries(ORDER)) {
     const depends = config.services[name].depends_on || {};
@@ -28,6 +30,7 @@ function checkOrder (config) {
       assert(config.services[need].healthcheck?.test, need + ' needs a healthcheck to be waited on');
     }
   }
+  for (const name of EDGE_INDEPENDENT) assert(!Object.hasOwn(config.services.nginx.depends_on || {}, name), 'nginx must not wait for ' + name);
   return true;
 }
 // The edge re-resolves upstream names (a restarted role may come back on a new address).
@@ -99,8 +102,11 @@ if (require.main === module) {
     edgeExposure.services.api.networks.edge = null;
     assert.throws(() => check(edgeExposure), /api must remain on backend only/, 'Private-service edge control must fail');
     const unordered = structuredClone(config);
-    delete unordered.services.nginx.depends_on.evaluator;
-    assert.throws(() => check(unordered), /nginx must wait for evaluator/, 'Start-order control must fail');
+    delete unordered.services.nginx.depends_on.realtime;
+    assert.throws(() => check(unordered), /nginx must wait for realtime/, 'Start-order control must fail');
+    const gated = structuredClone(config);
+    gated.services.nginx.depends_on.evaluator = {condition: 'service_healthy', required: true, restart: false};
+    assert.throws(() => check(gated), /nginx must not wait for evaluator/, 'Edge-gating control must fail');
     const read = name => require('node:fs').readFileSync(require('node:path').join(__dirname, name), 'utf8');
     const nginx = read('nginx.compose.conf'), shared = read('nginx.conf');
     assert(config.services.nginx.volumes.some(v => v.target === '/etc/nginx/nginx.conf' && v.source.endsWith('/nginx.compose.conf')), 'Compose edge must mount nginx.compose.conf');
@@ -108,7 +114,7 @@ if (require.main === module) {
     assert.throws(() => checkEdgeResolve(nginx.replace('server api:1337 resolve;', 'server api:1337;')), /upstream api must re-resolve/, 'Edge re-resolve control must fail');
     assert.throws(() => checkEdgeSame(shared, nginx.replace("proxy_set_header Cookie '';", '')), /must equal nginx.conf/, 'Edge drift control must fail');
     check(config);
-    process.stdout.write('Compose boundaries, start order, edge re-resolution and edge equivalence pass; credential, private-listener, ingress-network, start-order, re-resolve and edge-drift controls rejected; restored configuration passes. Runtime UNMEASURED.\n');
+    process.stdout.write('Compose boundaries, start order, edge re-resolution and edge equivalence pass; credential, private-listener, ingress-network, start-order, edge-gating, re-resolve and edge-drift controls rejected; restored configuration passes. Runtime UNMEASURED.\n');
   } catch (error) {
     // Authored assertion messages name only a service/property, never values.
     process.stderr.write('Compose boundary check failed: ' + (error.code === 'ERR_ASSERTION' ? error.message : error.code || 'configuration expansion') + '\n'); process.exitCode = 1;
