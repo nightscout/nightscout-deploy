@@ -10,8 +10,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const file = process.env.NS_ENV_FILE || '/run/ns-config/env.json';
 const reader = path.join(__dirname, '../../lib/server/serve/config-file.js');
+const coreBound = fs.existsSync(reader);
 function limit () {
-  if (!fs.existsSync(reader)) return 1048576;
+  if (!coreBound) return 1048576;
   try { return require(reader).maxBytes(process.env); } catch (error) {
     // The code and range are not secret; the value set is the operator's own.
     process.stderr.write('Private service environment bound is invalid (' + (error?.code === 'CONFIG_FILE_LIMIT_INVALID' ? error.code : 'CONFIG_FILE_READER_FAILED') + ')\n');
@@ -23,7 +24,7 @@ try {
   const stat = fs.lstatSync(file);
   if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077)) throw new Error();
   if (stat.size > maxBytes) {
-    process.stderr.write('Private service environment is too large (CONFIG_FILE_TOO_LARGE: ' + stat.size + ' bytes, over the limit of ' + maxBytes + ' bytes, MULTITENANT_CONFIG_MAX_BYTES)\n');
+    process.stderr.write('Private service environment is too large (CONFIG_FILE_TOO_LARGE: ' + stat.size + ' bytes, over the limit of ' + maxBytes + ' bytes, ' + (coreBound ? 'MULTITENANT_CONFIG_MAX_BYTES' : 'fixed: this core has no configurable bound') + ')\n');
     process.exit(78);
   }
   const values = JSON.parse(fs.readFileSync(file, 'utf8'));
