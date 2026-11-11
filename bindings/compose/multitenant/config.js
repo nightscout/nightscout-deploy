@@ -24,7 +24,7 @@ function catalogues() {
 function layout(prefix = 'nsdemo') {
   quote(prefix);
   if (prefix.length > 24) throw new TypeError('Deployment prefix too long');
-  const names = ['api','readiness','realtime','evaluator','alarm','suppression','outbox','owner_writer','owner_reader','root_writer','operator','ownership_operator',
+  const names = ['api','readiness','realtime','evaluator','alarm','suppression','outbox','owner_writer','owner_reader','root_writer','operator',
     ...serviceRoles.map(name=>'lifetime_'+name.replace('-','_'))];
   return {prefix,owner:prefix+'_owner',namespaces:Object.fromEntries(Object.keys(catalogues()).map(name=>[name,prefix+'_'+name])),
     roles:Object.fromEntries(names.map(name=>[name,prefix+'_'+name])),mount:prefix+'_transit'};
@@ -84,17 +84,7 @@ function grants(l) {
   grant('INSERT',table('authorization','tenant_subject_admin_audit'),'root_writer');
   for(const name of ['tenant_authorization_config','tenant_owner_policy'])grant('SELECT,UPDATE(owner_fence)',table('authorization',name),'root_writer');
   grant('SELECT',table('authorization','tenant_owner_actors'),'root_writer');
-  // The admin role's ownership-operations identity (lib/tenant-ownership/postgres.js SHAPE): reads
-  // authority rows, row-locks config/policy through UPDATE(owner_fence), changes only owner actor
-  // rows and appends audit. No DELETE, no table UPDATE. In the lifecycle control namespace it reads
-  // the tenant phase only (lib/tenant-lifecycle/tenant-phase.js): no operation registration, no
-  // window or ceremony write. No clinical table, so the restore census accepts its backends.
-  schema('authorization','ownership_operator');
-  for(const name of ['tenant_authorization_config','tenant_owner_policy'])grant('SELECT,UPDATE(owner_fence)',table('authorization',name),'ownership_operator');
-  grant('SELECT,INSERT,UPDATE(active,can_update,delegable)',table('authorization','tenant_owner_actors'),'ownership_operator');
-  grant('SELECT',table('authorization','tenant_authorization_subjects'),'ownership_operator');
-  grant('INSERT',table('authorization','tenant_subject_admin_audit'),'ownership_operator');
-  sql.push(...require('../../lib/tenant-lifecycle/tenant-phase').phaseGrants({namespace:ns.control,role:r.ownership_operator}));
+  // ownership_operator: added by ../ownership-admin/ownership-grants.js, not by this plan.
   for(const who of Object.keys(r).filter(name=>!['operator','root_writer','ownership_operator'].includes(name))){
     schema('control',who);for(const name of ['schema_migrations','tenant_lifecycle_windows','tenant_lifecycle_operations'])grant('SELECT',table('control',name),who);
     if(who.startsWith('lifetime_')){

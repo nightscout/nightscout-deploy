@@ -3,10 +3,10 @@
 
 // One-shot step after the imported deploy/multitenant/bootstrap.js, in the application image, on
 // the private network. It adds the `<prefix>_ownership_operator` database identity the `admin`
-// role connects as, with exactly the grants core's deployment plan carries from commit e6f6e248
-// (cgm-remote-monitor, deploy/multitenant/config.js: one role name in layout(), six GRANT
-// statements in grants()). The imported config.js is read, never edited: its layout() does not
-// name this role, so its per-role control-namespace loop never reaches it.
+// role connects as, with exactly the grants core's deployment plan carries at the commit
+// ../SOURCE.md records (cgm-remote-monitor deploy/multitenant/config.js: one role name in layout(),
+// six GRANT statements in grants() plus the tenant-phase read). This repository's config.js leaves
+// the role out, so its per-role control-namespace loop never reaches it.
 //
 // It never prints a credential. The identity's connection string is written to
 // /state/ownership-admin/env.json (0600); the admin configuration to admin.json (0600).
@@ -38,7 +38,10 @@ function grants (l) {
     ...['tenant_authorization_config', 'tenant_owner_policy'].map(name => 'GRANT SELECT,UPDATE(owner_fence) ON ' + table(name) + ' TO ' + who),
     'GRANT SELECT,INSERT,UPDATE(active,can_update,delegable) ON ' + table('tenant_owner_actors') + ' TO ' + who,
     'GRANT SELECT ON ' + table('tenant_authorization_subjects') + ' TO ' + who,
-    'GRANT INSERT ON ' + table('tenant_subject_admin_audit') + ' TO ' + who
+    'GRANT INSERT ON ' + table('tenant_subject_admin_audit') + ' TO ' + who,
+    // The tenant phase read only (lib/tenant-lifecycle/tenant-phase.js): no operation, window or
+    // ceremony write, no clinical table, so the restore census accepts its backends.
+    ...require('/opt/app/lib/tenant-lifecycle/tenant-phase').phaseGrants({ namespace: l.namespaces.control, role: l.prefix + '_' + ROLE })
   ];
 }
 
