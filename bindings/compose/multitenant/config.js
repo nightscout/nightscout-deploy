@@ -7,6 +7,18 @@ const ordered = Object.freeze(['entries','treatments','devicestatus','profile','
 const serviceRoles = Object.freeze(['api','realtime','evaluator','tenant-admin']);
 const A = '11111111-1111-4111-8111-111111111111', B = '22222222-2222-4222-8222-222222222222';
 const subject = '000000000000000000000001';
+// Synthetic tenant count: NS_DEMO_TENANTS (default 2 keeps the A/B demonstration
+// byte-identical). Tenants 0 and 1 are A and B; later ids are fixed synthetic UUIDs.
+function tenantCount(env = process.env) {
+  const raw = env.NS_DEMO_TENANTS === undefined ? '2' : env.NS_DEMO_TENANTS;
+  if (!/^[1-9][0-9]{0,3}$/.test(raw) || Number(raw) > 1000) throw new TypeError('NS_DEMO_TENANTS must be 1..1000');
+  return Number(raw);
+}
+function tenantIds(n = tenantCount()) {
+  return Array.from({length: n}, (_, i) => i === 0 ? A : i === 1 ? B
+    : (0x30000000 + i).toString(16) + '-3333-4333-8333-' + i.toString(16).padStart(12, '0'));
+}
+const tenantAlias = i => i === 0 ? 'one.example.test' : i === 1 ? 'two.example.test' : 't' + i + '.example.test';
 function quote(name) {
   if (typeof name !== 'string' || !/^[a-z][a-z0-9_]{0,62}$/.test(name) || name.startsWith('pg_')) throw new TypeError('Explicit deployment SQL identifier required');
   return '"' + name + '"';
@@ -85,7 +97,9 @@ function grants(l) {
   for(const name of ['tenant_authorization_config','tenant_owner_policy'])grant('SELECT,UPDATE(owner_fence)',table('authorization',name),'root_writer');
   grant('SELECT',table('authorization','tenant_owner_actors'),'root_writer');
   // ownership_operator: added by ../ownership-admin/ownership-grants.js, not by this plan.
-  for(const who of Object.keys(r).filter(name=>!['operator','root_writer','ownership_operator'].includes(name))){
+  // root_writer joins the lower-role window reads: the api composes its subject-admin store
+  // connection under the tenant operation window, whose admission reads these three tables.
+  for(const who of Object.keys(r).filter(name=>!['operator','ownership_operator'].includes(name))){
     schema('control',who);for(const name of ['schema_migrations','tenant_lifecycle_windows','tenant_lifecycle_operations'])grant('SELECT',table('control',name),who);
     if(who.startsWith('lifetime_')){
       grant('INSERT(tenant_id,operation_id,generation),UPDATE(finished)',table('control','tenant_lifecycle_operations'),who);
@@ -108,9 +122,10 @@ function grants(l) {
 function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress}) {
   const ns=l.namespaces, base='/run/ns-config',ipc='/run/ns-ipc';
   const domainNamespaces=Object.fromEntries(clinical.map(name=>[name,ns[name]]));
-  const tenants=[A,B].map(id=>({id,revision:'compose-demo-v1',settings:{enable:['bgnow','delta','direction','simplealarms','treatmentnotify']}}));
-  const aliases=[['one.example.test'],['two.example.test']];
-  const limits={pageSize:100,maxRows:10000,maxBytes:8388608,maxTenants:2,recoveryIntervalMs:1000};
+  const ids=tenantIds(),n=ids.length;
+  const tenants=ids.map(id=>({id,revision:'compose-demo-v1',settings:{enable:['bgnow','delta','direction','simplealarms','treatmentnotify']}}));
+  const aliases=ids.map((_,i)=>[tenantAlias(i)]);
+  const limits={pageSize:100,maxRows:10000,maxBytes:8388608,maxTenants:n,recoveryIntervalMs:1000};
   const pgAddress=new URL(urls.evaluator);
   const evaluator={version:1,datastore:{hostname:pgAddress.hostname,port:Number(pgAddress.port||5432),database:decodeURIComponent(pgAddress.pathname.slice(1))},postgres:{connectionEnv:'NS_EVALUATOR_PG',namespaces:{...domainNamespaces,clock:ns.clock,checkpoint:ns.eval_checkpoint}},
     consumer:'evaluator-compose-demo',...limits,timeIntervalMs:1000,socketOrderDomains:['treatments','devicestatus','profile'],tenants,
@@ -130,7 +145,7 @@ function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress}
     vault:{address:vaultAddress,mount:l.mount,timeoutMs:5000},resolution:{mode:'direct-alias'},tenants:tenants.map((tenant,i)=>({id:tenant.id,aliases:aliases[i],settings:tenant.settings,
       vault:{tokenEnv:'NS_VAULT_'+i,encryptionKey:'tenant-'+i+'-data',signingKey:'tenant-'+i+'-signing',signingVersion:1}})),
     accessTokens:{issuer:'nightscout-compose-demo',audience:'nightscout-data',keys:publicKeys},
-    socketForwarding:{admissionFileEnv:'NS_ADMISSION_FILE',maxTenants:2,maxMessageBytes:1048576,operationTimeoutMs:5000,
+    socketForwarding:{admissionFileEnv:'NS_ADMISSION_FILE',maxTenants:n,maxMessageBytes:1048576,operationTimeoutMs:5000,
       alarm:{connectionEnv:'NS_ALARM_PG',namespace:ns.alarm},consumerState:{evaluatorConfigEnv:'MULTITENANT_EVALUATOR_CONFIG'}}};
   const owner={version:1,postgres:{writerConnectionEnv:'NS_OWNER_WRITER_PG',accessConnectionEnv:'NS_OWNER_READER_PG',namespaces:{authorization:ns.authorization,credentials:ns.legacy,access:ns.access}},
     ownerPolicy:{catalogue:ownerCatalogue.slice()},resolution:{mode:'direct-alias'},tenants:api.tenants.map(({id,aliases})=>({id,aliases})),
@@ -141,13 +156,13 @@ function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress}
   const socketOf=role=>ipc+'/'+role+'.sock';
   const common={...Object.fromEntries(serviceRoles.map(role=>[require('../../lib/server/internal-api/listener-config').envName(role)+'SOCKET',socketOf(role)])),NODE_EXTRA_CA_CERTS:'/run/ns-ca/ca.crt'};
   const own=role=>({NS_SERVE_INTERNAL_SOCKET:socketOf(role)});
-  const environments={api:{...common,...own('api'),API_HOSTNAME:'0.0.0.0',API_PORT:'1337',MULTITENANT_PREVIEW_CONFIG:base+'/config.json',MULTITENANT_EVALUATOR_CONFIG:base+'/evaluator-metadata.json',NS_ADMISSION_FILE:base+'/admission.json',NS_API_PG:urls.api,NS_READINESS_PG:urls.readiness,NS_API_ROOT_WRITER_PG:urls.root_writer,NS_ALARM_PG:urls.alarm,NS_VAULT_0:tokens[0],NS_VAULT_1:tokens[1]},
+  const environments={api:{...common,...own('api'),API_HOSTNAME:'0.0.0.0',API_PORT:'1337',MULTITENANT_PREVIEW_CONFIG:base+'/config.json',MULTITENANT_EVALUATOR_CONFIG:base+'/evaluator-metadata.json',NS_ADMISSION_FILE:base+'/admission.json',NS_API_PG:urls.api,NS_READINESS_PG:urls.readiness,NS_API_ROOT_WRITER_PG:urls.root_writer,NS_ALARM_PG:urls.alarm,...Object.fromEntries(ids.map((_,i)=>['NS_VAULT_'+i,tokens[i]]))},
     realtime:{...common,...own('realtime'),REALTIME_HOSTNAME:'0.0.0.0',REALTIME_PORT:'1339',MULTITENANT_REALTIME_CONFIG:base+'/config.json',NS_ADMISSION_FILE:base+'/admission.json',NS_REALTIME_PG:urls.realtime},
     evaluator:{...common,...own('evaluator'),MULTITENANT_EVALUATOR_CONFIG:base+'/config.json',NS_EVALUATOR_PG:urls.evaluator,NS_OUTBOX_PG:urls.outbox,NS_SUPPRESSION_PG:urls.suppression},
     'tenant-admin':{...common,...own('tenant-admin'),TENANT_ADMIN_HOSTNAME:'0.0.0.0',TENANT_ADMIN_PORT:'1341',MULTITENANT_OWNER_PREVIEW_CONFIG:base+'/config.json',NS_OWNER_WRITER_PG:urls.owner_writer,NS_OWNER_READER_PG:urls.owner_reader}};
   const protectedNamespaces=require('../../lib/server/serve/operation-cohort').protectedNamespaces;
   const participants=serviceRoles.map(role=>({id:role,roles:[role],namespaces:[...new Set([...protectedNamespaces(configs[role]),...(role==='api'?[ns.outbox]:[])])].sort(),maxMessageBytes:1048576,timeoutMs:5000}));
-  const locks=[{tenant:A,key:'810001'},{tenant:B,key:'810002'}],operations={};
+  const locks=ids.map((tenant,i)=>({tenant,key:String(810001+i)})),operations={};
   for(const role of serviceRoles){operations[role]={version:2,namespace:ns.control,connectionEnv:'NS_LIFETIME_PG',locks,participantId:role,participants};Object.assign(environments[role],{NS_LIFETIME_PG:urls['lifetime_'+role.replace('-','_')],MULTITENANT_OPERATION_CONFIG:base+'/operation.json'});}
   const admission={version:1,mode:'preview-socket-allowlist',tenants:api.tenants.map(({id,aliases})=>({id,enabled:true,aliases}))};
   const remote=participants.map(peer=>({id:peer.id,roles:peer.roles,namespaces:peer.namespaces,endpoint:{socketPath:socketOf(peer.id),maxBytes:peer.maxMessageBytes,timeoutMs:peer.timeoutMs}}));
@@ -172,4 +187,4 @@ function validateFiles(directory, docs) {
     if(JSON.stringify(namespaces(parsed).sort())!==JSON.stringify(participant.namespaces))throw new TypeError('Deployment participant namespace mismatch');
   }
 }
-module.exports={A,B,subject,clinical,ordered,serviceRoles,quote,catalogues,layout,insertionGrants,grants,documents,lifecycle,validateFiles};
+module.exports={A,B,subject,tenantCount,tenantIds,tenantAlias,clinical,ordered,serviceRoles,quote,catalogues,layout,insertionGrants,grants,documents,lifecycle,validateFiles};
