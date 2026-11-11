@@ -33,11 +33,37 @@ node check-compose.js
 ./demo.sh demo
 ```
 
+Overlaid on a core checkout by nightscout-deploy's `tools/compose-overlay.sh`,
+this directory carries a marker (`.overlay.json`) naming the nightscout-deploy
+commit it came from. Preparation and build then check core HEAD for every other
+build input and that commit for this directory, byte for byte (only `.env`,
+`.state` and the marker are left out); any other difference is still refused as
+`BUILD_INPUTS_DIRTY`. The image is built from the two commits and labelled with
+both (`org.opencontainers.image.revision`, `org.nightscout.deploy.revision`).
+
 `bootstrap` is a deliberate one-shot operation, not an application startup hook.
 It prepares the schema, grants and synthetic tenant configuration before roles
 can pass their own read-only admission checks. `up` repeats the bootstrap entry
 point for its supported restart/unseal handling; it must refuse partial setup
 instead of adopting unknown existing schemas.
+
+Start order: `up` runs the bootstrap first, then Compose starts the roles in
+dependency order, each waiting for the previous one's healthcheck: PostgreSQL
+and Vault, then api, then realtime, then evaluator and tenant-admin; nginx starts
+last. The edge therefore waits for the evaluator too. The Compose edge mounts
+`nginx.compose.conf`: `nginx.conf` (which the Kubernetes binding imports) plus
+re-resolution of the upstream names through Docker's DNS (10 s validity), so a
+role container restarted on its own is reached again without an edge restart.
+`check-compose.js` holds the two files equal apart from those lines.
+
+A failed bootstrap prints one JSON line on stderr: the stable `error` code, the
+underlying `detail` message and the top stack frames (`at`). Connection-string
+credentials, password clauses, Vault tokens, JWT-shaped strings and long hex
+runs are redacted from both. Generated role documents (configuration,
+environment, admission) are written as compact JSON. For large tenant counts,
+`NS_BOOTSTRAP_CONFIG_MAX_BYTES` (off when empty) puts
+`MULTITENANT_CONFIG_MAX_BYTES` into every role environment and the bootstrap's
+own validation; it takes effect only with a core that reads that variable.
 
 The default public binding is `127.0.0.1:18080`. Add local name resolution for
 the synthetic aliases declared in the generated public UI config, then use that

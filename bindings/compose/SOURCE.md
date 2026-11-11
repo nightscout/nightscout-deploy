@@ -8,7 +8,7 @@
 | upstream tree hash of that path | `8e2d9a1d6c3cbb12ad5b0bc59a47f1a43eeb7842` (core's reduced fixture: `config.js`, `demo.js`, `health.js`, `restore.js`, `ui.js`, `README.md`) |
 | import method | the 2026-11-11 sync: core's changes to `deploy/multitenant` between `16a1fc2d` and `0392acf9` applied by hand, including the lane hunks core resolved as deleted (perf-realtime `50f209e6` `bootstrap.js`, perf-db `a52bc33b` `compose.yaml`) |
 | local delta | [`SOURCE.delta.patch`](SOURCE.delta.patch), against core's fixture `config.js` only: the plan leaves out the `ownership_operator` identity, which [`ownership-admin/`](ownership-admin/) adds; `NS_DEMO_TENANTS` selects the synthetic tenant count (bench fix 2, now 1..10000) |
-| tree hash here | `728d5d8e00cde4f90cfb668c8da0020571cdf236` |
+| tree hash here | `ee7927af16001e29100b9fdb8f9cab9ac4594d15` |
 | imported on | 2026-11-11 |
 
 History: first imported 2026-11-09 from `ed2ced00c80bd0a6a7d75f834d2c6e2af8c71364` (tree
