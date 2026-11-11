@@ -85,7 +85,9 @@ function grants(l) {
   for(const name of ['tenant_authorization_config','tenant_owner_policy'])grant('SELECT,UPDATE(owner_fence)',table('authorization',name),'root_writer');
   grant('SELECT',table('authorization','tenant_owner_actors'),'root_writer');
   // ownership_operator: added by ../ownership-admin/ownership-grants.js, not by this plan.
-  for(const who of Object.keys(r).filter(name=>!['operator','root_writer','ownership_operator'].includes(name))){
+  // root_writer joins the lower-role window reads: the api composes its subject-admin store
+  // connection under the tenant operation window, whose admission reads these three tables.
+  for(const who of Object.keys(r).filter(name=>!['operator','ownership_operator'].includes(name))){
     schema('control',who);for(const name of ['schema_migrations','tenant_lifecycle_windows','tenant_lifecycle_operations'])grant('SELECT',table('control',name),who);
     if(who.startsWith('lifetime_')){
       grant('INSERT(tenant_id,operation_id,generation),UPDATE(finished)',table('control','tenant_lifecycle_operations'),who);

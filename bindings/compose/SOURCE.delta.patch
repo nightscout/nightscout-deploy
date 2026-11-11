@@ -1,5 +1,5 @@
 diff --git a/config.js b/config.js
-index 2a80ca5..bc10006 100644
+index 2a80ca5..3bec7dc 100644
 --- a/config.js
 +++ b/config.js
 @@ -24,7 +24,7 @@ function catalogues() {
@@ -11,7 +11,7 @@ index 2a80ca5..bc10006 100644
      ...serviceRoles.map(name=>'lifetime_'+name.replace('-','_'))];
    return {prefix,owner:prefix+'_owner',namespaces:Object.fromEntries(Object.keys(catalogues()).map(name=>[name,prefix+'_'+name])),
      roles:Object.fromEntries(names.map(name=>[name,prefix+'_'+name])),mount:prefix+'_transit'};
-@@ -84,17 +84,7 @@ function grants(l) {
+@@ -84,18 +84,10 @@ function grants(l) {
    grant('INSERT',table('authorization','tenant_subject_admin_audit'),'root_writer');
    for(const name of ['tenant_authorization_config','tenant_owner_policy'])grant('SELECT,UPDATE(owner_fence)',table('authorization',name),'root_writer');
    grant('SELECT',table('authorization','tenant_owner_actors'),'root_writer');
@@ -26,7 +26,11 @@ index 2a80ca5..bc10006 100644
 -  grant('SELECT',table('authorization','tenant_authorization_subjects'),'ownership_operator');
 -  grant('INSERT',table('authorization','tenant_subject_admin_audit'),'ownership_operator');
 -  sql.push(...require('../../lib/tenant-lifecycle/tenant-phase').phaseGrants({namespace:ns.control,role:r.ownership_operator}));
+-  for(const who of Object.keys(r).filter(name=>!['operator','root_writer','ownership_operator'].includes(name))){
 +  // ownership_operator: added by ../ownership-admin/ownership-grants.js, not by this plan.
-   for(const who of Object.keys(r).filter(name=>!['operator','root_writer','ownership_operator'].includes(name))){
++  // root_writer joins the lower-role window reads: the api composes its subject-admin store
++  // connection under the tenant operation window, whose admission reads these three tables.
++  for(const who of Object.keys(r).filter(name=>!['operator','ownership_operator'].includes(name))){
      schema('control',who);for(const name of ['schema_migrations','tenant_lifecycle_windows','tenant_lifecycle_operations'])grant('SELECT',table('control',name),who);
      if(who.startsWith('lifetime_')){
+       grant('INSERT(tenant_id,operation_id,generation),UPDATE(finished)',table('control','tenant_lifecycle_operations'),who);
