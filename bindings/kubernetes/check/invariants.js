@@ -159,10 +159,19 @@ function checks (all, inventory, composeDir, envMain) {
     const w = hosts[0];
     if (w.kind !== 'StatefulSet') return fail('the evaluator runs in ' + id(w) + '; it must be a StatefulSet (the ordinal is the worker index)');
     if (w.spec.replicas !== 1) fail(id(w) + ' replicas is ' + w.spec.replicas + '; the preview runs one member');
-    const env = Object.fromEntries((podSpec(w).containers.find(c => c.name === 'evaluator').env || []).map(e => [e.name, e]));
-    const ordinal = env[inventory.evaluatorPool.ordinalEnv], members = env[inventory.evaluatorPool.membersEnv];
-    if (!ordinal || ordinal.valueFrom?.fieldRef?.fieldPath !== "metadata.labels['apps.kubernetes.io/pod-index']") fail('evaluator env ' + inventory.evaluatorPool.ordinalEnv + ' must come from the StatefulSet pod-index label');
-    if (!members || members.value !== String(w.spec.replicas)) fail('evaluator env ' + inventory.evaluatorPool.membersEnv + ' must equal the StatefulSet replicas (' + w.spec.replicas + '), found ' + (members ? members.value : 'none'));
+    const container = podSpec(w).containers.find(c => c.name === 'evaluator');
+    const env = Object.fromEntries((container.env || []).map(e => [e.name, e]));
+    const pool = inventory.evaluatorPool, poolKeys = Object.keys(env).filter(k => k.startsWith('MULTITENANT_POOL_EVALUATOR_'));
+    if (pool.partition === 'off') {
+      if (poolKeys.length) fail('partition is off but the evaluator sets ' + poolKeys.join(', ') + ' (core refuses a partitioned key with the partition off)');
+    } else {
+      if ((env[pool.partitionEnv] || {}).value !== 'on') fail('evaluator env ' + pool.partitionEnv + ' must be on');
+      const ordinal = env[pool.ordinalEnv];
+      if (!ordinal || ordinal.valueFrom?.fieldRef?.fieldPath !== "metadata.labels['apps.kubernetes.io/pod-index']") fail('evaluator env ' + pool.ordinalEnv + ' must come from the StatefulSet pod-index label');
+      if (env.MULTITENANT_POOL_EVALUATOR_MEMBERS) fail('evaluator env MULTITENANT_POOL_EVALUATOR_MEMBERS is rendered; the member count lives in the pool table');
+    }
+    const probe = JSON.stringify(container.readinessProbe || {});
+    if (probe !== JSON.stringify({ exec: { command: ['node', 'deploy/multitenant/health.js', 'evaluator'] }, failureThreshold: 30, periodSeconds: 2, timeoutSeconds: 3 })) fail('evaluator readiness must be the role health check only (never pool eligibility), found ' + probe);
   });
 
   run('no-overlap-update', fail => {
@@ -174,6 +183,25 @@ function checks (all, inventory, composeDir, envMain) {
         if (w.spec.replicas !== 1) fail(id(w) + ' replicas must be 1 for a delete-before-create update');
       }
       if (w.kind === 'Deployment' && (w.spec.strategy || {}).type !== 'Recreate') fail(id(w) + ' strategy must be Recreate (a RollingUpdate overlaps old and new Pods)');
+    }
+  });
+
+  run('cohort-single-replica', fail => {
+    // Decision cohort-pod-not-scaled: the one-Pod cohort is a monolith placement; the binding, not
+    // core, holds it to one replica (core does not refuse a second cohort: kind smoke 2026-11-10).
+    const cohorts = workloads.filter(w => (podSpec(w).volumes || []).some(v => v.name === 'ns-ipc'));
+    for (const w of cohorts) {
+      if (w.kind !== 'StatefulSet') fail(id(w) + ' carries the cohort but is a ' + w.kind + '; the cohort is a StatefulSet');
+      if (w.spec.replicas !== 1) fail(id(w) + ' replicas is ' + w.spec.replicas + '; the one-Pod cohort is a monolith and scales vertically only; for horizontal scale or HA use per-role placement (decision cohort-pod-not-scaled)');
+    }
+    for (const m of all) if (m.kind === 'HorizontalPodAutoscaler' && cohorts.some(w => ((m.spec || {}).scaleTargetRef || {}).name === w.metadata.name)) fail('HorizontalPodAutoscaler/' + m.metadata.name + ' targets the cohort');
+  });
+
+  run('private-directories', fail => {
+    // An emptyDir root is root-owned 3777 under fsGroup; core refuses it as the socket directory
+    // (transport.js SOCKET_IPC_DIRECTORY_REFUSED). Role containers mount the 0700 subdirectory.
+    for (const w of workloads) for (const c of (podSpec(w).containers || [])) for (const vm of c.volumeMounts || []) {
+      if ((vm.name === 'ns-ipc' || /^config-/.test(vm.name)) && vm.subPath !== 'd') fail(id(w) + ' container ' + c.name + ' mounts ' + vm.name + ' at its root; mount the 0700 subdirectory (subPath d)');
     }
   });
 

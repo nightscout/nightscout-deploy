@@ -32,20 +32,26 @@
       nginx: 'nginx@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10',
     },
     cohort: {
-      // One Pod per cohort. More than one is a second cohort, which the lifecycle locks must
-      // refuse (the DEPLOY-K8S-BINDING control); the preview never renders it.
+      // Decision cohort-pod-not-scaled: the one-Pod cohort is a monolith and scales vertically
+      // only (resources), never horizontally; this binding (not core) holds it to one replica.
+      // Core does not refuse a second cohort (kind smoke, 2026-11-10). For horizontal scale or
+      // high availability, deploy the roles as separate components (per-role placement).
       replicas: 1,
       // Above the serve.internal drain deadline (NS_SERVE_INTERNAL_SHUTDOWN_TIMEOUT_MS, default
       // 5000 ms, at most 60000 ms; decision internal-listener-graceful-shutdown).
       terminationGraceSeconds: 30,
     },
-    // decisions evaluator-static-partition and pool-primitive-shared: the StatefulSet ordinal is
-    // this worker's index, the renderer sets the member count. The core flag (MT-POOL-PRIMITIVE)
-    // is not built yet; the variable names are provisional and the preview stays at one member.
+    // decisions evaluator-static-partition and pool-primitive-shared, core MT-POOL-PRIMITIVE
+    // (lib/pool-membership/config.js): MULTITENANT_POOL_EVALUATOR_{PARTITION,MEMBERS,ORDINAL,
+    // LEASE_MS,DATABASE_URL,NAMESPACE}. The StatefulSet pod-index is the ordinal. The desired
+    // member count lives in the pool table, set by an operator command (maintainer, 2026-11-10),
+    // so no MEMBERS variable is rendered. With the partition off core refuses any partitioned key
+    // ("partition is off but ... set"), so off renders no pool variable at all. Readiness never
+    // depends on pool eligibility: an OrderedReady StatefulSet would otherwise wait forever.
     evaluatorPool: {
-      members: 1,
-      membersEnv: 'NS_EVALUATOR_POOL_MEMBERS',
-      ordinalEnv: 'NS_EVALUATOR_POOL_ORDINAL',
+      partition: 'off',
+      partitionEnv: 'MULTITENANT_POOL_EVALUATOR_PARTITION',
+      ordinalEnv: 'MULTITENANT_POOL_EVALUATOR_ORDINAL',
     },
     vaultAgent: {
       serviceAccount: 'ns-cohort',
@@ -68,7 +74,7 @@
     assert std.isString(c.sourceCommit) && std.length(c.sourceCommit) == 40 : 'sourceCommit must be the full 40-hex commit',
     assert std.isString(c.images.app) : 'images.app is required',
     assert c.cohort.replicas == 1 : 'the preview renders exactly one cohort Pod',
-    assert c.evaluatorPool.members == c.cohort.replicas : 'evaluator pool members must equal the cohort StatefulSet replicas',
+    assert std.member(['off', 'on'], c.evaluatorPool.partition) : 'evaluatorPool.partition is off or on',
 
     local uid = 1000,
     local part = 'nightscout-multitenant',
@@ -104,18 +110,23 @@
       { name: 'secret-' + role, secret: { secretName: 'ns-config-' + role, defaultMode: 288 } },
       { name: 'config-' + role, emptyDir: { medium: 'Memory', sizeLimit: '1Mi' } },
     ],
-    local installConfig(roles) = {
+    // An emptyDir root is root-owned 3777 under fsGroup (measured 2026-11-10). Core refuses
+    // such a directory for the socket directory (lib/server/internal-api/transport.js: owner must
+    // be the process uid, no group or other bits), as Compose's prepare.js 0700 directories
+    // satisfy. So the init step creates a 0700 subdirectory `d` owned by uid 1000 in each volume
+    // and the role containers mount that subdirectory (subPath), never the volume root.
+    local installConfig(roles, ipc=false) = {
       name: 'install-config',
       image: c.images.app,
       imagePullPolicy: 'IfNotPresent',
-      command: ['sh', '-c', 'set -eu; umask 077; for r in "$@"; do cp /run/ns-secret/"$r"/*.json /run/ns-config/"$r"/; done', 'install-config'] + roles,
+      command: ['sh', '-c', 'set -eu; umask 077; if [ -d /run/ns-ipc-volume ]; then mkdir -m 0700 -p /run/ns-ipc-volume/d; fi; for r in "$@"; do mkdir -m 0700 -p /run/ns-config/"$r"/d; cp /run/ns-secret/"$r"/*.json /run/ns-config/"$r"/d/; done', 'install-config'] + roles,
       securityContext: hardened,
       volumeMounts: std.flattenArrays([
         [{ name: 'secret-' + r, mountPath: '/run/ns-secret/' + r, readOnly: true }, { name: 'config-' + r, mountPath: '/run/ns-config/' + r }]
         for r in roles
-      ]),
+      ]) + (if ipc then [{ name: 'ns-ipc', mountPath: '/run/ns-ipc-volume' }] else []),
     },
-    local configMount(role) = { name: 'config-' + role, mountPath: '/run/ns-config', readOnly: true },
+    local configMount(role) = { name: 'config-' + role, mountPath: '/run/ns-config', subPath: 'd', readOnly: true },
 
     local roleContainer(role, ports, extraEnv=[]) = {
       name: role,
@@ -130,7 +141,7 @@
       securityContext: hardened,
       volumeMounts: [
         configMount(role),
-        { name: 'ns-ipc', mountPath: '/run/ns-ipc' },
+        { name: 'ns-ipc', mountPath: '/run/ns-ipc', subPath: 'd' },
         caMount,
         tmpMount,
         { name: 'ns-vault', mountPath: '/run/ns-vault', readOnly: true },
@@ -263,8 +274,9 @@
                 image: c.images.vault,
                 args: ['vault', 'server', '-config=/vault/config/demo.hcl'],
                 ports: [{ name: 'vault', containerPort: 8200 }],
-                // Compose: status 0 (unsealed) or 2 (sealed) is up; unseal is the provision Job's.
-                readinessProbe: { exec: { command: ['sh', '-c', 'vault status -address=https://vault:8200 -ca-cert=/run/ns-ca/ca.crt >/dev/null 2>&1; r=$?; [ "$r" -eq 0 ] || [ "$r" -eq 2 ]'] }, periodSeconds: 2, timeoutSeconds: 2, failureThreshold: 30 },
+                // Compose: status 0 (unsealed) or 2 (sealed) is up; unseal is the provision Job's. Loopback
+                // with the certificate's name: the Service name has no endpoint until this probe passes.
+                readinessProbe: { exec: { command: ['sh', '-c', 'vault status -address=https://127.0.0.1:8200 -tls-server-name=vault -ca-cert=/run/ns-ca/ca.crt >/dev/null 2>&1; r=$?; [ "$r" -eq 0 ] || [ "$r" -eq 2 ]'] }, periodSeconds: 2, timeoutSeconds: 2, failureThreshold: 30 },
                 volumeMounts: [
                   { name: 'data', mountPath: '/vault/file' },
                   { name: 'logs', mountPath: '/vault/logs' },
@@ -334,7 +346,7 @@
               securityContext: podSecurity,
               terminationGracePeriodSeconds: c.cohort.terminationGraceSeconds,
               initContainers: [
-                installConfig(cohortRoles),
+                installConfig(cohortRoles, ipc=true),
                 // Native sidecar (restartPolicy Always): starts before the roles and the startup
                 // probe holds them until the sink has a token (Compose: depends_on healthy).
                 {
@@ -361,10 +373,11 @@
               containers: [
                 roleContainer('api', [{ name: 'http-api', containerPort: 1337 }]),
                 roleContainer('realtime', [{ name: 'http-realtime', containerPort: 1339 }]),
-                roleContainer('evaluator', [], [
-                  { name: c.evaluatorPool.membersEnv, value: std.toString(c.evaluatorPool.members) },
+                roleContainer('evaluator', [], if c.evaluatorPool.partition == 'on' then [
+                  { name: c.evaluatorPool.partitionEnv, value: 'on' },
                   { name: c.evaluatorPool.ordinalEnv, valueFrom: { fieldRef: { fieldPath: "metadata.labels['apps.kubernetes.io/pod-index']" } } },
-                ]),
+                  // The member count: the pool table, via the coming operator command; not here.
+                ] else []),
                 // The owner plane (1341): a container port only; no Service, and the
                 // NetworkPolicy admits nothing to it.
                 roleContainer('tenant-admin', [{ name: 'int-owner', containerPort: 1341 }]),

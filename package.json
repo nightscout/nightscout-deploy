@@ -8,7 +8,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "test": "node tools/targets-check.js bindings/single/targets.json && tools/compose-identity-check.sh"
+    "test": "node tools/targets-check.js bindings/single/targets.json && tools/compose-identity-check.sh && node --test bindings/compose/ownership-admin/ownership-grants.test.js"
   },
   "repository": {
     "type": "git",

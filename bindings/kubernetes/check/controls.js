@@ -28,12 +28,25 @@ const CONTROLS = [
   { check: 'images-pinned', file: LIB, why: 'postgres image by floating tag',
     from: "postgres: 'postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea',", to: "postgres: 'postgres:16',",
     expect: 'image postgres:16 is not pinned by digest or exact tag' },
-  { check: 'evaluator-statefulset', file: LIB, why: 'ordinal env removed from the evaluator',
-    from: "{ name: c.evaluatorPool.ordinalEnv, valueFrom: { fieldRef: { fieldPath: \"metadata.labels['apps.kubernetes.io/pod-index']\" } } },", to: '',
-    expect: 'must come from the StatefulSet pod-index label' },
+  { check: 'evaluator-statefulset', file: LIB, why: 'ordinal rendered with the partition off',
+    from: "                ] else []),\n                // The owner plane", to: "                ] else [{ name: c.evaluatorPool.ordinalEnv, valueFrom: { fieldRef: { fieldPath: \"metadata.labels['apps.kubernetes.io/pod-index']\" } } }]),\n                // The owner plane",
+    expect: 'partition is off but the evaluator sets MULTITENANT_POOL_EVALUATOR_ORDINAL' },
+  { check: 'evaluator-statefulset', file: 'environments/preview/main.jsonnet', why: 'partition on, ordinal from the pod name instead of the pod-index label',
+    from: "  prefix: 'nsdemo',", to: "  prefix: 'nsdemo',\n  evaluatorPool: { partition: 'on' },",
+    alsoFile: LIB, alsoFrom: "fieldPath: \"metadata.labels['apps.kubernetes.io/pod-index']\" } } },\n                  // The member count", alsoTo: "fieldPath: 'metadata.name' } } },\n                  // The member count",
+    expect: 'evaluator env MULTITENANT_POOL_EVALUATOR_ORDINAL must come from the StatefulSet pod-index label' },
+  { check: 'evaluator-statefulset', file: LIB, why: 'readiness made to depend on something other than the role health check',
+    from: "readinessProbe: { exec: { command: ['node', 'deploy/multitenant/health.js', role] }", to: "readinessProbe: { exec: { command: ['node', 'deploy/multitenant/health.js', role, 'pool'] }",
+    expect: 'evaluator readiness must be the role health check only' },
   { check: 'no-overlap-update', file: LIB, why: 'cohort Pods managed in parallel',
     from: "podManagementPolicy: 'OrderedReady',", to: "podManagementPolicy: 'Parallel',",
     expect: 'StatefulSet/cohort podManagementPolicy must be OrderedReady' },
+  { check: 'cohort-single-replica', file: LIB, why: 'cohort StatefulSet set to two replicas (bypassing the renderer assert)',
+    from: "replicas: c.cohort.replicas,", to: "replicas: 2,",
+    expect: 'StatefulSet/cohort replicas is 2; the one-Pod cohort is a monolith and scales vertically only; for horizontal scale or HA use per-role placement (decision cohort-pod-not-scaled)' },
+  { check: 'private-directories', file: LIB, why: 'socket volume mounted at its root (the first smoke failure)',
+    from: "{ name: 'ns-ipc', mountPath: '/run/ns-ipc', subPath: 'd' },", to: "{ name: 'ns-ipc', mountPath: '/run/ns-ipc' },",
+    expect: 'container api mounts ns-ipc at its root; mount the 0700 subdirectory (subPath d)' },
   { check: 'service-links-off', file: LIB, why: 'Service links back on for the cohort',
     from: "with the roles' own <ROLE>_PORT settings.\n              enableServiceLinks: false,", to: "with the roles' own <ROLE>_PORT settings.\n              enableServiceLinks: true,",
     expect: 'StatefulSet/cohort must set enableServiceLinks: false' },
@@ -60,9 +73,13 @@ function main () {
     const file = path.join(root, control.file), original = fs.readFileSync(file, 'utf8');
     const count = original.split(control.from).length - 1;
     if (count !== 1) { bad++; process.stdout.write('MISMATCH ' + control.check + ': mutation text found ' + count + ' times\n'); continue; }
+    const also = control.alsoFile ? path.join(root, control.alsoFile) : null, alsoOriginal = also ? fs.readFileSync(also, 'utf8') : null;
+    if (also && alsoOriginal.split(control.alsoFrom).length !== 2) { bad++; process.stdout.write('MISMATCH ' + control.check + ': second mutation text not found once\n'); continue; }
     fs.writeFileSync(file, original.replace(control.from, control.to));
+    if (also) fs.writeFileSync(also, alsoOriginal.replace(control.alsoFrom, control.alsoTo));
     const broken = invariants();
     fs.writeFileSync(file, original);
+    if (also) fs.writeFileSync(also, alsoOriginal);
     const restored = invariants();
     const line = broken.out.split('\n').find(l => l.startsWith('FAIL ' + control.check + ': ') && l.includes(control.expect));
     const others = broken.out.split('\n').filter(l => l.startsWith('FAIL ') && !l.startsWith('FAIL ' + control.check + ': '));
