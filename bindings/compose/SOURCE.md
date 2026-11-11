@@ -74,3 +74,23 @@ Found bringing the tree up with real role processes for MT-BENCH-BASELINE (align
    at 200 it yields 200 tenants, locks, Vault references and unique ids; `bootstrap.test.js` passes
    5/5 at the default. The restore demonstration (`restore.js`) still requires exactly two tenants,
    and `ownership-admin/ownership-grants.js` still lists A and B only.
+
+## Capacity fixes (branch `deploy/capacity-fixes-20261111`)
+
+Found by the 2026-11-11 capacity campaign (alignment `tools/mt-bench/capacity/`); evidence in alignment
+`reports/tenancy/deploy-capacity-fixes-2026-11-11/README.md`. None touches core's fixture files, so
+the delta is unchanged.
+
+1. **Bootstrap failure detail.** An error without a code printed only `COMPOSE_BOOTSTRAP_FAILED`;
+   the stderr line now adds the redacted `detail` and the top stack frames (`at`).
+2. **Compact role documents.** Role configuration, environment, operation, admission and UI files
+   are compact JSON (35.5% smaller at 1,000 to 5,000 synthetic tenants, measured offline); with
+   core's 1 MiB cap the api `config.json` limit moves from under 2,000 to between 2,500 and 2,600
+   tenants. `NS_BOOTSTRAP_CONFIG_MAX_BYTES` (off by default) passes `MULTITENANT_CONFIG_MAX_BYTES`
+   (name assumed from the peer core lane) to the roles for counts beyond that.
+3. **Edge after a role restart.** `nginx.compose.conf` = `nginx.conf` plus re-resolution through
+   Docker's DNS; `nginx.conf` stays resolver-free for the Kubernetes binding.
+4. **Start order.** `depends_on: service_healthy` from postgres and vault through the roles to nginx.
+5. **Overlay build.** `tools/compose-overlay.sh` writes `.overlay.json`; `prepare.js`/`build.js`
+   check and build core HEAD plus the deploy commit instead of refusing every overlay as
+   `BUILD_INPUTS_DIRTY`.
