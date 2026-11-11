@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Compares bindings/compose/multitenant against the tree hash recorded in SOURCE.md, and, when a core
-# checkout is given, against that checkout's deploy/multitenant at the recorded commit with this
-# repository's recorded delta (bindings/compose/SOURCE.delta.patch) applied.
+# checkout is given, compares the files core still keeps in its reduced deploy/multitenant fixture
+# (every file there except README.md) at the recorded commit, with this repository's recorded delta
+# (bindings/compose/SOURCE.delta.patch) applied, against the same-named files here. Files that exist
+# only here (bootstrap, Compose, Dockerfile, ...) have no upstream copy; this repository is their home.
 #   tools/compose-identity-check.sh [path-to-cgm-remote-monitor-checkout]
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
@@ -22,7 +24,15 @@ if [ "${1:-}" ]; then
   mkdir "$scratch/core" "$scratch/here"
   git -C "$1" archive "$recorded_commit:deploy/multitenant" | tar -x -C "$scratch/core"
   git -C "$here" archive "HEAD:bindings/compose/multitenant" | tar -x -C "$scratch/here"
+  rm -f "$scratch/core/README.md"
   if [ -s "$delta" ]; then (cd "$scratch/core" && git apply --whitespace=nowarn "$delta"); fi
-  if diff -r "$scratch/core" "$scratch/here" >/dev/null; then echo "ok   core tree plus the recorded delta equals this tree"; else echo "FAIL: core tree plus the recorded delta differs from this tree"; fail=1; fi
+  compared=0
+  for f in $(cd "$scratch/core" && find . -type f | sort); do
+    compared=$((compared+1))
+    if [ ! -f "$scratch/here/$f" ]; then echo "FAIL: core fixture file ${f#./} is missing here"; fail=1
+    elif ! cmp -s "$scratch/core/$f" "$scratch/here/$f"; then echo "FAIL: core fixture file ${f#./} plus the recorded delta differs from this tree"; fail=1; fi
+  done
+  [ "$compared" -gt 0 ] || { echo "FAIL: the core fixture at $recorded_commit has no files to compare"; fail=1; }
+  [ "$fail" -ne 0 ] || echo "ok   core fixture files plus the recorded delta equal the same files here ($compared: $(cd "$scratch/core" && find . -type f | sed 's#^./##' | sort | tr '\n' ' '))"
 fi
 exit $fail

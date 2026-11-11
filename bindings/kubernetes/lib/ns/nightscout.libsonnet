@@ -138,6 +138,10 @@
       // Compose healthcheck: the same script. Readiness only; liveness restarts are a separate
       // decision (shared-process liveness is distinct from tenant admission).
       readinessProbe: { exec: { command: ['node', 'deploy/multitenant/health.js', role] }, periodSeconds: 2, timeoutSeconds: 3, failureThreshold: 30 },
+      // Startup budget (Compose start_period 900s): readiness is not probed until this passes, so
+      // a long tenant warm under NS_TENANT_READINESS=all is not cut short. Under the default
+      // `serve` it passes once the role's own dependencies are up. 5 s x 180 = 900 s.
+      [if std.member(['api', 'realtime', 'evaluator'], role) then 'startupProbe']: { exec: { command: ['node', 'deploy/multitenant/health.js', role] }, periodSeconds: 5, timeoutSeconds: 3, failureThreshold: 180 },
       securityContext: hardened,
       volumeMounts: [
         configMount(role),

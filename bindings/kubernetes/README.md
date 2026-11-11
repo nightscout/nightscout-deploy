@@ -15,7 +15,7 @@ are in the alignment workspace's `releases/cgm-remote-monitor-16.0.0/decisions.m
 | path | holds |
 |---|---|
 | `lib/ns/nightscout.libsonnet` | the renderer: one function, `new(overrides)` |
-| `environments/preview/` | the preview environment: one cohort, one evaluator member, core `16a1fc2d` |
+| `environments/preview/` | the preview environment: one cohort, one evaluator member, core `0392acf9` |
 | `ops/vault-kubernetes-auth.js` | provisioning step: the Compose Vault Agent step with Kubernetes auth in place of AppRole |
 | `scripts/secrets.sh` | creates every Secret the render references, at apply time; nothing is committed |
 | `check/invariants.js` | the rendered-YAML invariants (offline, `tk eval`) |
@@ -80,14 +80,14 @@ that enforces NetworkPolicy, a default StorageClass, and a `kubectl` within one 
 of the server. **The apply path is `kubectl apply -f check/golden/preview.yaml`**, the committed
 render that `check/golden.sh` holds equal to `tk show`. `tk` v0.20.0 renders and checks, but cannot
 apply against `kubectl` v1.32: `tk apply` panics (`splitRow: slice bounds out of range` while
-reading `kubectl api-resources`). The image is the Compose image built from core `16a1fc2d` with this repository's
+reading `kubectl api-resources`). The image is the Compose image built from core `0392acf9` with this repository's
 Compose tree in place (`tools/compose-overlay.sh`, then the tree's `build.js`); its base
 `config.js` must leave out the ownership identity, which the ownership overlay adds.
 
 ## Run (smoked on kind v0.27.0, Kubernetes v1.32.2)
 
 ```bash
-commit=16a1fc2d45e59602eb6ec3e3bf6f506f35bcc5b1
+commit=0392acf97c720a7e121eea47a9d42a0c8dbe9e73
 docker tag nightscout-multitenant-demo:local nightscout-multitenant-demo:$commit
 kind load docker-image nightscout-multitenant-demo:$commit            # or the cluster's equivalent
 
@@ -102,9 +102,11 @@ kubectl delete -f check/golden/preview.yaml         # PVCs from volumeClaimTempl
 
 `spec.json` names `https://127.0.0.1:6443` as the API server for Tanka's own commands.
 
-The api needs the bench lane's root_writer grants (`bench/compose-baseline-20261110` `54af5f2`) in
-the Compose tree's `config.js` until they merge; without them it exits at startup
-(`LIFECYCLE_WINDOW_SCHEMA_UNSAFE`).
+The api, realtime and evaluator containers carry a `startupProbe` on the role health command, 5 s ×
+180 = 900 s, the Compose `start_period`. Kubernetes does not run the readiness probe until it passes,
+so a long warm under `NS_TENANT_READINESS=all` is not judged by the 60 s readiness budget. Under the
+default `serve` it passes once the role's own dependencies are up. Not yet applied to a cluster
+(rendered only).
 
 ## Checks
 
@@ -116,10 +118,8 @@ check/golden.sh
 node --test check/vault-kubernetes-auth.test.js
 ```
 
-`invariants.js` reads `../compose` by default. The preview renders core `16a1fc2d`; until the
-Compose tree in this repository is synced to that commit, `postgres-identities-match-compose` is
-red against it, and says so (identities `root_writer`, the `lifetime_*` roles and the ownership
-overlay are missing, and the recorded commits differ).
+`invariants.js` reads `../compose` by default. The preview renders core `0392acf9`, the commit
+`../compose/SOURCE.md` records; `postgres-identities-match-compose` is red whenever the two differ.
 
 | check | asserts | control (mutation -> message) |
 |---|---|---|
@@ -131,6 +131,7 @@ overlay are missing, and the recorded commits differ).
 | `cohort-single-replica` | the workload carrying the socket volume is a StatefulSet with replicas exactly 1, and no HorizontalPodAutoscaler targets it | `replicas: 2` -> `StatefulSet/cohort replicas is 2; the one-Pod cohort is a monolith and scales vertically only; for horizontal scale or HA use per-role placement (decision cohort-pod-not-scaled)` |
 | `private-directories` | role containers mount `ns-ipc` and their `config-*` volume at the 0700 subdirectory (`subPath: d`) | `ns-ipc` at its root -> `container api mounts ns-ipc at its root; mount the 0700 subdirectory (subPath d)` |
 | `no-overlap-update` | StatefulSets `OrderedReady`, default one-at-a-time update, replicas 1; Deployments `Recreate` | `Parallel` -> `podManagementPolicy must be OrderedReady` |
+| `startup-budget` | api, realtime and evaluator each carry a `startupProbe` running `node deploy/multitenant/health.js <role>` with `periodSeconds` × `failureThreshold` ≥ 900 s | `failureThreshold: 30` -> `container api startupProbe allows 150 s; it must allow at least 900 s (Compose start_period)`; probe left off the evaluator -> `container evaluator has no startupProbe` |
 | `service-links-off` | every Pod sets `enableServiceLinks: false` | `true` on the cohort -> `StatefulSet/cohort must set enableServiceLinks: false` |
 | `postgres-identities-match-compose` | the per-workload PostgreSQL identities equal the Compose plan's per-role connection documents plus the ownership overlay's role, and the rendered core commit equals `../compose/SOURCE.md` | `root_writer` dropped from api -> `api: binding names alarm,api,lifetime_api,readiness, Compose names ...,root_writer` |
 

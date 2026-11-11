@@ -4,12 +4,12 @@
 |---|---|
 | upstream repository | nightscout/cgm-remote-monitor |
 | upstream path | `deploy/multitenant` |
-| upstream commit | `16a1fc2d45e59602eb6ec3e3bf6f506f35bcc5b1` (draft PR #8898, the 2026-11-10 batch join) |
-| upstream tree hash of that path | `6529d40282ea4589ea75c71712839d4db6e9940b` |
-| import method | file copy of the path at that commit over the earlier import |
-| local delta | [`SOURCE.delta.patch`](SOURCE.delta.patch): `config.js` leaves out the `ownership_operator` identity, which [`ownership-admin/`](ownership-admin/) adds; `root_writer` gets the lower-role control-schema reads (bench fix 1); `NS_DEMO_TENANTS` selects the synthetic tenant count (bench fix 2) |
-| tree hash here | `88b59c89b280aed876d58f69eca979c828ac0a34` |
-| imported on | 2026-11-10 |
+| upstream commit | `0392acf97c720a7e121eea47a9d42a0c8dbe9e73` (draft PR #8898, the 2026-11-11 batch join, accepted at this head) |
+| upstream tree hash of that path | `8e2d9a1d6c3cbb12ad5b0bc59a47f1a43eeb7842` (core's reduced fixture: `config.js`, `demo.js`, `health.js`, `restore.js`, `ui.js`, `README.md`) |
+| import method | the 2026-11-11 sync: core's changes to `deploy/multitenant` between `16a1fc2d` and `0392acf9` applied by hand, including the lane hunks core resolved as deleted (perf-realtime `50f209e6` `bootstrap.js`, perf-db `a52bc33b` `compose.yaml`) |
+| local delta | [`SOURCE.delta.patch`](SOURCE.delta.patch), against core's fixture `config.js` only: the plan leaves out the `ownership_operator` identity, which [`ownership-admin/`](ownership-admin/) adds; `NS_DEMO_TENANTS` selects the synthetic tenant count (bench fix 2, now 1..10000) |
+| tree hash here | `fd32acee7339270c913dc0a8f378f107ef19362a` |
+| imported on | 2026-11-11 |
 
 History: first imported 2026-11-09 from `ed2ced00c80bd0a6a7d75f834d2c6e2af8c71364` (tree
 `8be3d761cbe592428357d6cee29612affafe4122`) by `git subtree`, which keeps the per-file history; the
@@ -17,7 +17,26 @@ History: first imported 2026-11-09 from `ed2ced00c80bd0a6a7d75f834d2c6e2af8c7136
 
 From core commit `16a1fc2d` onward this repository is the home of the Compose tree. Core keeps a
 reduced `deploy/multitenant` with only the modules its own tests load (`config.js`, `demo.js`,
-`health.js`, `restore.js`, `ui.js`), so later core commits are not compared with this tree.
+`health.js`, `restore.js`, `ui.js`). `tools/compose-identity-check.sh <core>` compares exactly those
+files: core's copy at the recorded commit with the delta applied must equal the copy here, byte for
+byte (core's `README.md` is not compared). Every other file here (`bootstrap.js`, `compose.yaml`, the
+Dockerfile, `prepare.js`, ...) has no upstream copy and is checked only against the tree hash above.
+Changes core makes to those files on a lane branch reach this tree by hand, as listed in the import
+method.
+
+2026-11-11 sync to `0392acf9` (alignment `reports/tenancy/batch-join-2026-11-11/0392acf9-acceptance/README.md`,
+"What nightscout-deploy needs to match this head"):
+
+- `config.js`: the `change_stamps` catalogue; `require('../../lib/change-stamps/postgres').grants(...)` at
+  the end of `grants()` with realtime and evaluator as roles and checkers (USAGE, SELECT on the
+  function's `schema_migrations`, EXECUTE); the api gets `SELECT,UPDATE(last_stamp,last_delete_stamp)` on
+  `tenant_write_clock`; realtime and evaluator name `changeStamps`; realtime takes
+  `authorizationRecheckMs: 30000`; `lifecycle()` excludes `change_stamps` as it excludes `control`.
+  Bench fix 1 (`root_writer` window reads) is in core's plan now and leaves the delta.
+- `bootstrap.js`: the function-ownership loop accepts the reviewed signature `tenant_change_stamps(uuid[])`
+  and refuses any other argument list. The function owner owns every catalogue schema, the clock schema
+  included, which is the USAGE the definer function needs.
+- `compose.yaml`: api, realtime and evaluator healthchecks get `start_period: 900s`, `start_interval: 2s`.
 
 The delta keeps the ownership identity overlay-shaped: core's plan creates and grants it in
 `layout()` and `grants()`; here the base plan does not, and `ownership-admin/ownership-grants.js`
@@ -48,7 +67,7 @@ Found bringing the tree up with real role processes for MT-BENCH-BASELINE (align
    use the window.
 2. **The plan is fixed at two tenants.** `documents()` and `bootstrap()` enumerate `[A, B]`, aliases,
    Vault keys/tokens, locks and `maxTenants: 2`, so the one-host reference cannot be measured at 1, 10,
-   50 or 200 tenants. Fix: `NS_DEMO_TENANTS` (1..1000, default 2) on the bootstrap service; tenants 0
+   50 or 200 tenants. Fix: `NS_DEMO_TENANTS` (1..1000 at first, 1..10000 since the 2026-11-11 sync; default 2) on the bootstrap service; tenants 0
    and 1 keep the A/B ids and aliases, later tenants get fixed synthetic UUIDs and `t<i>.example.test`;
    per-tenant Vault keys, scoped tokens (`NS_VAULT_<i>`), lifecycle locks (`810001+i`) and
    `maxTenants: N`. Measured: `documents()` at the default is byte-identical to core's (15357 bytes);

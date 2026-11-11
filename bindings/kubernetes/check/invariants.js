@@ -174,6 +174,23 @@ function checks (all, inventory, composeDir, envMain) {
     if (probe !== JSON.stringify({ exec: { command: ['node', 'deploy/multitenant/health.js', 'evaluator'] }, failureThreshold: 30, periodSeconds: 2, timeoutSeconds: 3 })) fail('evaluator readiness must be the role health check only (never pool eligibility), found ' + probe);
   });
 
+  run('startup-budget', fail => {
+    // Compose gives api, realtime and evaluator start_period 900s; the binding's startupProbe on the
+    // same health command must allow at least as long, so readiness is not judged during a warm.
+    for (const role of ['api', 'realtime', 'evaluator']) {
+      const hosts = workloads.flatMap(w => (podSpec(w).containers || []).filter(c => c.name === role).map(c => [w, c]));
+      if (!hosts.length) fail('no container named ' + role);
+      for (const [w, c] of hosts) {
+        const p = c.startupProbe;
+        if (!p) { fail(id(w) + ' container ' + role + ' has no startupProbe'); continue; }
+        const want = JSON.stringify(['node', 'deploy/multitenant/health.js', role]);
+        if (JSON.stringify((p.exec || {}).command) !== want) fail(id(w) + ' container ' + role + ' startupProbe must run the role health check ' + want);
+        const budget = (p.periodSeconds || 10) * (p.failureThreshold || 3);
+        if (budget < 900) fail(id(w) + ' container ' + role + ' startupProbe allows ' + budget + ' s; it must allow at least 900 s (Compose start_period)');
+      }
+    }
+  });
+
   run('no-overlap-update', fail => {
     for (const w of workloads) {
       if (w.kind === 'StatefulSet') {

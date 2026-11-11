@@ -694,7 +694,7 @@ spec:
           value: "true"
         - name: MULTITENANT_ADMIN_CONFIG
           value: /run/ns-config/admin.json
-        image: nightscout-multitenant-demo:16a1fc2d45e59602eb6ec3e3bf6f506f35bcc5b1
+        image: nightscout-multitenant-demo:0392acf97c720a7e121eea47a9d42a0c8dbe9e73
         imagePullPolicy: IfNotPresent
         name: admin
         ports:
@@ -732,7 +732,7 @@ spec:
           cp /run/ns-secret/"$r"/*.json /run/ns-config/"$r"/d/; done
         - install-config
         - admin
-        image: nightscout-multitenant-demo:16a1fc2d45e59602eb6ec3e3bf6f506f35bcc5b1
+        image: nightscout-multitenant-demo:0392acf97c720a7e121eea47a9d42a0c8dbe9e73
         imagePullPolicy: IfNotPresent
         name: install-config
         securityContext:
@@ -854,7 +854,7 @@ spec:
           value: "1340"
         - name: UI_PUBLIC_CONFIG
           value: /run/ns-config/config.json
-        image: nightscout-multitenant-demo:16a1fc2d45e59602eb6ec3e3bf6f506f35bcc5b1
+        image: nightscout-multitenant-demo:0392acf97c720a7e121eea47a9d42a0c8dbe9e73
         imagePullPolicy: IfNotPresent
         name: ui
         ports:
@@ -895,7 +895,7 @@ spec:
           cp /run/ns-secret/"$r"/*.json /run/ns-config/"$r"/d/; done
         - install-config
         - ui
-        image: nightscout-multitenant-demo:16a1fc2d45e59602eb6ec3e3bf6f506f35bcc5b1
+        image: nightscout-multitenant-demo:0392acf97c720a7e121eea47a9d42a0c8dbe9e73
         imagePullPolicy: IfNotPresent
         name: install-config
         securityContext:
@@ -965,7 +965,7 @@ spec:
         env:
         - name: NODE_EXTRA_CA_CERTS
           value: /run/ns-ca/ca.crt
-        image: nightscout-multitenant-demo:16a1fc2d45e59602eb6ec3e3bf6f506f35bcc5b1
+        image: nightscout-multitenant-demo:0392acf97c720a7e121eea47a9d42a0c8dbe9e73
         imagePullPolicy: IfNotPresent
         name: api
         ports:
@@ -989,6 +989,15 @@ spec:
           runAsGroup: 1000
           runAsNonRoot: true
           runAsUser: 1000
+        startupProbe:
+          exec:
+            command:
+            - node
+            - deploy/multitenant/health.js
+            - api
+          failureThreshold: 180
+          periodSeconds: 5
+          timeoutSeconds: 3
         volumeMounts:
         - mountPath: /run/ns-config
           name: config-api
@@ -1012,7 +1021,7 @@ spec:
         env:
         - name: NODE_EXTRA_CA_CERTS
           value: /run/ns-ca/ca.crt
-        image: nightscout-multitenant-demo:16a1fc2d45e59602eb6ec3e3bf6f506f35bcc5b1
+        image: nightscout-multitenant-demo:0392acf97c720a7e121eea47a9d42a0c8dbe9e73
         imagePullPolicy: IfNotPresent
         name: realtime
         ports:
@@ -1036,6 +1045,15 @@ spec:
           runAsGroup: 1000
           runAsNonRoot: true
           runAsUser: 1000
+        startupProbe:
+          exec:
+            command:
+            - node
+            - deploy/multitenant/health.js
+            - realtime
+          failureThreshold: 180
+          periodSeconds: 5
+          timeoutSeconds: 3
         volumeMounts:
         - mountPath: /run/ns-config
           name: config-realtime
@@ -1059,7 +1077,7 @@ spec:
         env:
         - name: NODE_EXTRA_CA_CERTS
           value: /run/ns-ca/ca.crt
-        image: nightscout-multitenant-demo:16a1fc2d45e59602eb6ec3e3bf6f506f35bcc5b1
+        image: nightscout-multitenant-demo:0392acf97c720a7e121eea47a9d42a0c8dbe9e73
         imagePullPolicy: IfNotPresent
         name: evaluator
         ports: []
@@ -1081,6 +1099,15 @@ spec:
           runAsGroup: 1000
           runAsNonRoot: true
           runAsUser: 1000
+        startupProbe:
+          exec:
+            command:
+            - node
+            - deploy/multitenant/health.js
+            - evaluator
+          failureThreshold: 180
+          periodSeconds: 5
+          timeoutSeconds: 3
         volumeMounts:
         - mountPath: /run/ns-config
           name: config-evaluator
@@ -1104,7 +1131,7 @@ spec:
         env:
         - name: NODE_EXTRA_CA_CERTS
           value: /run/ns-ca/ca.crt
-        image: nightscout-multitenant-demo:16a1fc2d45e59602eb6ec3e3bf6f506f35bcc5b1
+        image: nightscout-multitenant-demo:0392acf97c720a7e121eea47a9d42a0c8dbe9e73
         imagePullPolicy: IfNotPresent
         name: tenant-admin
         ports:
@@ -1157,7 +1184,7 @@ spec:
         - realtime
         - evaluator
         - tenant-admin
-        image: nightscout-multitenant-demo:16a1fc2d45e59602eb6ec3e3bf6f506f35bcc5b1
+        image: nightscout-multitenant-demo:0392acf97c720a7e121eea47a9d42a0c8dbe9e73
         imagePullPolicy: IfNotPresent
         name: install-config
         securityContext:
@@ -1502,7 +1529,7 @@ spec:
           value: https://vault:8200
         - name: NS_BOOTSTRAP_OUTPUT
           value: /state
-        image: nightscout-multitenant-demo:16a1fc2d45e59602eb6ec3e3bf6f506f35bcc5b1
+        image: nightscout-multitenant-demo:0392acf97c720a7e121eea47a9d42a0c8dbe9e73
         imagePullPolicy: IfNotPresent
         name: done
         securityContext:
@@ -1547,7 +1574,7 @@ spec:
           value: https://vault:8200
         - name: NS_BOOTSTRAP_OUTPUT
           value: /state
-        image: nightscout-multitenant-demo:16a1fc2d45e59602eb6ec3e3bf6f506f35bcc5b1
+        image: nightscout-multitenant-demo:0392acf97c720a7e121eea47a9d42a0c8dbe9e73
         imagePullPolicy: IfNotPresent
         name: wait-stores
         securityContext:
@@ -1594,7 +1621,7 @@ spec:
           value: nightscout_compose_test
         - name: NS_POSTGRES_PASSWORD_FILE
           value: /run/secrets/postgres-password
-        image: nightscout-multitenant-demo:16a1fc2d45e59602eb6ec3e3bf6f506f35bcc5b1
+        image: nightscout-multitenant-demo:0392acf97c720a7e121eea47a9d42a0c8dbe9e73
         imagePullPolicy: IfNotPresent
         name: bootstrap
         securityContext:
@@ -1648,7 +1675,7 @@ spec:
           value: 1h
         - name: NS_VAULT_AGENT_TOKEN_MAX_TTL
           value: 24h
-        image: nightscout-multitenant-demo:16a1fc2d45e59602eb6ec3e3bf6f506f35bcc5b1
+        image: nightscout-multitenant-demo:0392acf97c720a7e121eea47a9d42a0c8dbe9e73
         imagePullPolicy: IfNotPresent
         name: vault-kubernetes-auth
         securityContext:
@@ -1692,7 +1719,7 @@ spec:
           value: "1"
         - name: NS_POSTGRES_PASSWORD_FILE
           value: /run/secrets/postgres-password
-        image: nightscout-multitenant-demo:16a1fc2d45e59602eb6ec3e3bf6f506f35bcc5b1
+        image: nightscout-multitenant-demo:0392acf97c720a7e121eea47a9d42a0c8dbe9e73
         imagePullPolicy: IfNotPresent
         name: ownership-grants
         securityContext:

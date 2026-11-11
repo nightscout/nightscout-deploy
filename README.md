@@ -18,10 +18,11 @@ The Compose tree came from core's `deploy/multitenant` and lives here now; core 
 modules its tests load. It builds from a core checkout, so it runs overlaid on core at the recorded
 commit.
 
-**Core commit pinned:** `16a1fc2d45e59602eb6ec3e3bf6f506f35bcc5b1`, the 2026-11-10 head of core's
-draft pull request [#8898](https://github.com/nightscout/cgm-remote-monitor/pull/8898). It carries
-the `admin` role and the Vault token-file reader both overlays need. The source, tree hash and import
-method are in [`bindings/compose/SOURCE.md`](bindings/compose/SOURCE.md).
+**Core commit pinned:** `0392acf97c720a7e121eea47a9d42a0c8dbe9e73`, the 2026-11-11 batch-join head of
+core's draft pull request [#8898](https://github.com/nightscout/cgm-remote-monitor/pull/8898), accepted
+at that head. It carries the `admin` role, the Vault token-file reader both overlays need, and the
+change-stamp function the realtime and evaluator roles read. The source, tree hash and import method
+are in [`bindings/compose/SOURCE.md`](bindings/compose/SOURCE.md).
 
 ## Run the Compose binding
 
