@@ -116,7 +116,7 @@ async function bootstrap(options) {
     const docs=plan.documents({layout:l,urls:roleURLs,tokens,publicKeys,managementKeys,vaultAddress:vault.origin});
     const ns=l.namespaces,t=(name,table)=>q(ns[name])+'.'+q(table),demoTokens=[],managementTokens=[];
     const now=Date.now(),exp=Math.floor(now/1000)+600,permissions=['api:*:read','api:*:create,update,delete','notifications:*:ack'];
-    const catalogue=['api:entries:read'],digest=require('../../lib/subject-admin/owner-policy').catalogueDigest(catalogue);
+    const catalogue=['*'],digest=require('../../lib/subject-admin/owner-policy').catalogueDigest(catalogue);
     for(const [i,tenant]of [plan.A,plan.B].entries()){
       await admin.query('BEGIN');
       try{
@@ -143,6 +143,9 @@ async function bootstrap(options) {
           await admin.query('INSERT INTO '+t(kind,'tenant_consumer_checkpoint')+'(tenant_id,consumer,contract_digest,checkpoint,projection) VALUES($1,$2,$3,0,NULL)',[tenant,document.consumer,replay.digest]);
         }
         await admin.query('INSERT INTO '+t('control','tenant_lifecycle_windows')+'(tenant_id,lock_key,phase,generation) VALUES($1,$2,\'active\',1)',[tenant,docs.locks[i].key]);
+        // Every tenant has an activity row, written in this same transaction.
+        await require('../../lib/tenant-activity/provisioning').provisionInTransaction((text,values)=>admin.query(text,values),
+          {namespace:ns.control,tenant,principal:'compose-operator',consumer:'bootstrap'});
         if(i===0)await admin.query('INSERT INTO '+t('control','tenant_lifecycle_restore_authority')+'(tenant_id,role_oid,active) VALUES($1,$2::regrole::oid,true)',[tenant,l.roles.operator]);
         await admin.query('COMMIT');
       }catch(error){await admin.query('ROLLBACK');throw error;}

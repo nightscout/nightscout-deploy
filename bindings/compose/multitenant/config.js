@@ -24,7 +24,7 @@ function catalogues() {
 function layout(prefix = 'nsdemo') {
   quote(prefix);
   if (prefix.length > 24) throw new TypeError('Deployment prefix too long');
-  const names = ['api','readiness','realtime','evaluator','alarm','suppression','outbox','owner_writer','owner_reader','operator',
+  const names = ['api','readiness','realtime','evaluator','alarm','suppression','outbox','owner_writer','owner_reader','root_writer','operator','ownership_operator',
     ...serviceRoles.map(name=>'lifetime_'+name.replace('-','_'))];
   return {prefix,owner:prefix+'_owner',namespaces:Object.fromEntries(Object.keys(catalogues()).map(name=>[name,prefix+'_'+name])),
     roles:Object.fromEntries(names.map(name=>[name,prefix+'_'+name])),mount:prefix+'_transit'};
@@ -66,12 +66,36 @@ function grants(l) {
   for(const name of ['authorization','access'])grant('SELECT','ALL TABLES IN SCHEMA '+quote(ns[name]),'alarm');
   for(const name of ['tenant_notification_state','schema_migrations'])grant('SELECT',table('outbox',name),'alarm');
   for(const who of ['owner_writer','owner_reader'])for(const name of ['authorization','legacy','access']){schema(name,who);grant('SELECT','ALL TABLES IN SCHEMA '+quote(ns[name]),who);}
-  for(const name of [table('authorization','tenant_authorization_subjects'),table('legacy','legacy_credential_subjects')])grant('UPDATE,DELETE',name,'owner_writer');
+  for(const name of [table('authorization','tenant_authorization_subjects'),table('legacy','legacy_credential_subjects')])grant('INSERT,UPDATE,DELETE',name,'owner_writer');
+  grant('INSERT',table('authorization','tenant_authorization_roles'),'owner_writer');
   grant('INSERT,DELETE',table('authorization','tenant_authorization_subject_roles'),'owner_writer');
   sql.push('REVOKE SELECT ON '+table('authorization','tenant_subject_admin_audit')+' FROM '+quote(r.owner_writer));
   grant('INSERT',table('authorization','tenant_subject_admin_audit'),'owner_writer');
   for(const name of ['tenant_authorization_config','tenant_authorization_roles','tenant_owner_policy','tenant_owner_actors'])grant('UPDATE(owner_fence)',table('authorization',name),'owner_writer');
-  for(const who of Object.keys(r).filter(name=>name!=='operator')){
+  // Tenant root (API_SECRET) subject administration on the api role: the owner-aware
+  // writer's root plane. Reads owner actor rows for the last-owner guard, never locks
+  // or writes them; no access schema, no legacy_credential_config, no audit reads.
+  for(const name of ['authorization','legacy'])schema(name,'root_writer');
+  grant('SELECT,INSERT,UPDATE,DELETE',table('authorization','tenant_authorization_subjects'),'root_writer');
+  grant('SELECT,INSERT,UPDATE,DELETE',table('legacy','legacy_credential_subjects'),'root_writer');
+  // Root alone edits role permissions and deletes unheld roles (decision root-role-edit-delete).
+  grant('SELECT,INSERT,DELETE,UPDATE(permissions,owner_fence)',table('authorization','tenant_authorization_roles'),'root_writer');
+  grant('SELECT,INSERT,DELETE',table('authorization','tenant_authorization_subject_roles'),'root_writer');
+  grant('INSERT',table('authorization','tenant_subject_admin_audit'),'root_writer');
+  for(const name of ['tenant_authorization_config','tenant_owner_policy'])grant('SELECT,UPDATE(owner_fence)',table('authorization',name),'root_writer');
+  grant('SELECT',table('authorization','tenant_owner_actors'),'root_writer');
+  // The admin role's ownership-operations identity (lib/tenant-ownership/postgres.js SHAPE): reads
+  // authority rows, row-locks config/policy through UPDATE(owner_fence), changes only owner actor
+  // rows and appends audit. No DELETE, no table UPDATE. In the lifecycle control namespace it reads
+  // the tenant phase only (lib/tenant-lifecycle/tenant-phase.js): no operation registration, no
+  // window or ceremony write. No clinical table, so the restore census accepts its backends.
+  schema('authorization','ownership_operator');
+  for(const name of ['tenant_authorization_config','tenant_owner_policy'])grant('SELECT,UPDATE(owner_fence)',table('authorization',name),'ownership_operator');
+  grant('SELECT,INSERT,UPDATE(active,can_update,delegable)',table('authorization','tenant_owner_actors'),'ownership_operator');
+  grant('SELECT',table('authorization','tenant_authorization_subjects'),'ownership_operator');
+  grant('INSERT',table('authorization','tenant_subject_admin_audit'),'ownership_operator');
+  sql.push(...require('../../lib/tenant-lifecycle/tenant-phase').phaseGrants({namespace:ns.control,role:r.ownership_operator}));
+  for(const who of Object.keys(r).filter(name=>!['operator','root_writer','ownership_operator'].includes(name))){
     schema('control',who);for(const name of ['schema_migrations','tenant_lifecycle_windows','tenant_lifecycle_operations'])grant('SELECT',table('control',name),who);
     if(who.startsWith('lifetime_')){
       grant('INSERT(tenant_id,operation_id,generation),UPDATE(finished)',table('control','tenant_lifecycle_operations'),who);
@@ -80,6 +104,10 @@ function grants(l) {
   }
   sql.push(...require('../../lib/tenant-lifecycle/maintenance-window').operatorGrants({namespace:ns.control,role:r.operator}));
   sql.push('GRANT pg_read_all_stats TO '+quote(r.operator));
+  // Restore's key-retention gate (lib/tenant-lifecycle/key-retention.js admitRestore/markRestored):
+  // SELECT request_id,phase,retained_at,retain_until ... WHERE tenant_id=$1 FOR UPDATE, then
+  // UPDATE ... SET phase,restored_at WHERE request_id,tenant_id,phase. Nothing else in that table.
+  grant('SELECT(request_id,tenant_id,phase,retained_at,retain_until),UPDATE(phase,restored_at)',table('control','tenant_lifecycle_key_retention'),'operator');
   for(const name of Object.keys(ns).filter(name=>name!=='control')){
     schema(name,'operator');grant('SELECT','ALL TABLES IN SCHEMA '+quote(ns[name]),'operator');
     if([...clinical,'settings'].includes(name))sql.push(...insertionGrants({namespace:ns[name],domain:name,role:r.operator,mode:'restore'}));
@@ -98,34 +126,41 @@ function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress}
     consumer:'evaluator-compose-demo',...limits,timeIntervalMs:1000,socketOrderDomains:['treatments','devicestatus','profile'],tenants,
     consumers:{realtime:{outbox:{connectionEnv:'NS_OUTBOX_PG',namespace:ns.outbox,maxRows:10000,maxBytes:8388608,maxConnections:2},
       suppression:{connectionEnv:'NS_SUPPRESSION_PG',namespace:ns.alarm,maxRows:10000,maxBytes:8388608,maxConnections:2},
-      route:{id:'realtime-compose-demo',socketPathEnv:'NS_ALARM_SOCKET',maxMessageBytes:1048576,operationTimeoutMs:5000},
+      route:{id:'realtime-compose-demo',maxMessageBytes:1048576,operationTimeoutMs:5000},
       maxPayloadBytes:524288,maxInflight:4,attemptTimeoutMs:10000,retryDelayMs:1000,pollIntervalMs:1000,retryIntervalMs:1000}}};
   const realtime={version:1,postgres:{connectionEnv:'NS_REALTIME_PG',namespaces:{...domainNamespaces,clock:ns.clock,checkpoint:ns.rt_checkpoint}},consumer:'realtime-compose-demo',
-    ...limits,tenants,socketOrderDomains:['treatments','devicestatus','profile'],admissionFileEnv:'NS_ADMISSION_FILE',apiSocketPathEnv:'NS_API_SOCKET',alarmSocketPathEnv:'NS_ALARM_SOCKET',
+    ...limits,tenants,socketOrderDomains:['treatments','devicestatus','profile'],admissionFileEnv:'NS_ADMISSION_FILE',
     maxMessageBytes:1048576,operationTimeoutMs:5000,maxSockets:100};
+  // Decision root-grant-ceiling-default-all: every tenant data permission unless
+  // the operator narrows it. Owner and root share this catalogue (one policy row).
+  const ownerCatalogue=['*'];
   const api={version:1,domains:[...clinical,'settings'],legacy:true,context:true,writeClock:true,
+    subjectAdmin:{writerConnectionEnv:'NS_API_ROOT_WRITER_PG',ownerPolicy:{catalogue:ownerCatalogue.slice()}},
     postgres:{connectionEnv:'NS_API_PG',readinessConnectionEnv:'NS_READINESS_PG',namespaces:{...domainNamespaces,settings:ns.settings,authorization:ns.authorization,secrets:ns.secrets,legacy:ns.legacy,access:ns.access,clock:ns.clock}},
     vault:{address:vaultAddress,mount:l.mount,timeoutMs:5000},resolution:{mode:'direct-alias'},tenants:tenants.map((tenant,i)=>({id:tenant.id,aliases:aliases[i],settings:tenant.settings,
       vault:{tokenEnv:'NS_VAULT_'+i,encryptionKey:'tenant-'+i+'-data',signingKey:'tenant-'+i+'-signing',signingVersion:1}})),
     accessTokens:{issuer:'nightscout-compose-demo',audience:'nightscout-data',keys:publicKeys},
-    socketForwarding:{socketPathEnv:'NS_API_SOCKET',admissionFileEnv:'NS_ADMISSION_FILE',maxTenants:2,maxMessageBytes:1048576,operationTimeoutMs:5000,
+    socketForwarding:{admissionFileEnv:'NS_ADMISSION_FILE',maxTenants:2,maxMessageBytes:1048576,operationTimeoutMs:5000,
       alarm:{connectionEnv:'NS_ALARM_PG',namespace:ns.alarm},consumerState:{evaluatorConfigEnv:'MULTITENANT_EVALUATOR_CONFIG'}}};
   const owner={version:1,postgres:{writerConnectionEnv:'NS_OWNER_WRITER_PG',accessConnectionEnv:'NS_OWNER_READER_PG',namespaces:{authorization:ns.authorization,credentials:ns.legacy,access:ns.access}},
-    ownerPolicy:{catalogue:['api:entries:read']},resolution:{mode:'direct-alias'},tenants:api.tenants.map(({id,aliases})=>({id,aliases})),
+    ownerPolicy:{catalogue:ownerCatalogue.slice()},resolution:{mode:'direct-alias'},tenants:api.tenants.map(({id,aliases})=>({id,aliases})),
     management:{issuer:'nightscout-compose-management',audience:'nightscout-management',purpose:'management',consumer:'compose-owner',maxLifetimeSeconds:600,keys:managementKeys}};
   const configs={api,realtime,evaluator,'tenant-admin':owner};
-  const common={NS_API_SOCKET:ipc+'/api.sock',NS_ALARM_SOCKET:ipc+'/alarm.sock',NODE_EXTRA_CA_CERTS:'/run/ns-ca/ca.crt'};
-  const environments={api:{...common,API_HOSTNAME:'0.0.0.0',API_PORT:'1337',MULTITENANT_PREVIEW_CONFIG:base+'/config.json',MULTITENANT_EVALUATOR_CONFIG:base+'/evaluator-metadata.json',NS_ADMISSION_FILE:base+'/admission.json',NS_API_PG:urls.api,NS_READINESS_PG:urls.readiness,NS_ALARM_PG:urls.alarm,NS_VAULT_0:tokens[0],NS_VAULT_1:tokens[1]},
-    realtime:{...common,REALTIME_HOSTNAME:'0.0.0.0',REALTIME_PORT:'1339',MULTITENANT_REALTIME_CONFIG:base+'/config.json',NS_ADMISSION_FILE:base+'/admission.json',NS_REALTIME_PG:urls.realtime},
-    evaluator:{...common,MULTITENANT_EVALUATOR_CONFIG:base+'/config.json',NS_EVALUATOR_PG:urls.evaluator,NS_OUTBOX_PG:urls.outbox,NS_SUPPRESSION_PG:urls.suppression},
-    'tenant-admin':{...common,TENANT_ADMIN_HOSTNAME:'0.0.0.0',TENANT_ADMIN_PORT:'1341',MULTITENANT_OWNER_PREVIEW_CONFIG:base+'/config.json',NS_OWNER_WRITER_PG:urls.owner_writer,NS_OWNER_READER_PG:urls.owner_reader}};
+  // serve.internal: one socket per role process on the shared private
+  // directory; every peer address names the same paths.
+  const socketOf=role=>ipc+'/'+role+'.sock';
+  const common={...Object.fromEntries(serviceRoles.map(role=>[require('../../lib/server/internal-api/listener-config').envName(role)+'SOCKET',socketOf(role)])),NODE_EXTRA_CA_CERTS:'/run/ns-ca/ca.crt'};
+  const own=role=>({NS_SERVE_INTERNAL_SOCKET:socketOf(role)});
+  const environments={api:{...common,...own('api'),API_HOSTNAME:'0.0.0.0',API_PORT:'1337',MULTITENANT_PREVIEW_CONFIG:base+'/config.json',MULTITENANT_EVALUATOR_CONFIG:base+'/evaluator-metadata.json',NS_ADMISSION_FILE:base+'/admission.json',NS_API_PG:urls.api,NS_READINESS_PG:urls.readiness,NS_API_ROOT_WRITER_PG:urls.root_writer,NS_ALARM_PG:urls.alarm,NS_VAULT_0:tokens[0],NS_VAULT_1:tokens[1]},
+    realtime:{...common,...own('realtime'),REALTIME_HOSTNAME:'0.0.0.0',REALTIME_PORT:'1339',MULTITENANT_REALTIME_CONFIG:base+'/config.json',NS_ADMISSION_FILE:base+'/admission.json',NS_REALTIME_PG:urls.realtime},
+    evaluator:{...common,...own('evaluator'),MULTITENANT_EVALUATOR_CONFIG:base+'/config.json',NS_EVALUATOR_PG:urls.evaluator,NS_OUTBOX_PG:urls.outbox,NS_SUPPRESSION_PG:urls.suppression},
+    'tenant-admin':{...common,...own('tenant-admin'),TENANT_ADMIN_HOSTNAME:'0.0.0.0',TENANT_ADMIN_PORT:'1341',MULTITENANT_OWNER_PREVIEW_CONFIG:base+'/config.json',NS_OWNER_WRITER_PG:urls.owner_writer,NS_OWNER_READER_PG:urls.owner_reader}};
   const protectedNamespaces=require('../../lib/server/serve/operation-cohort').protectedNamespaces;
-  const participants=serviceRoles.map(role=>({id:role,roles:[role],namespaces:[...new Set([...protectedNamespaces(configs[role]),...(role==='api'?[ns.outbox]:[])])].sort(),socketPathEnv:'NS_COHORT_'+role.toUpperCase().replace('-','_')+'_SOCKET',maxMessageBytes:1048576,timeoutMs:5000}));
-  const participantEnvironment=Object.fromEntries(participants.map(peer=>[peer.socketPathEnv,ipc+'/cohort-'+peer.id+'.sock']));
+  const participants=serviceRoles.map(role=>({id:role,roles:[role],namespaces:[...new Set([...protectedNamespaces(configs[role]),...(role==='api'?[ns.outbox]:[])])].sort(),maxMessageBytes:1048576,timeoutMs:5000}));
   const locks=[{tenant:A,key:'810001'},{tenant:B,key:'810002'}],operations={};
-  for(const role of serviceRoles){operations[role]={version:2,namespace:ns.control,connectionEnv:'NS_LIFETIME_PG',locks,participantId:role,participants};Object.assign(environments[role],participantEnvironment,{NS_LIFETIME_PG:urls['lifetime_'+role.replace('-','_')],MULTITENANT_OPERATION_CONFIG:base+'/operation.json'});}
+  for(const role of serviceRoles){operations[role]={version:2,namespace:ns.control,connectionEnv:'NS_LIFETIME_PG',locks,participantId:role,participants};Object.assign(environments[role],{NS_LIFETIME_PG:urls['lifetime_'+role.replace('-','_')],MULTITENANT_OPERATION_CONFIG:base+'/operation.json'});}
   const admission={version:1,mode:'preview-socket-allowlist',tenants:api.tenants.map(({id,aliases})=>({id,enabled:true,aliases}))};
-  const remote=participants.map(peer=>({id:peer.id,roles:peer.roles,namespaces:peer.namespaces,endpoint:{socketPath:participantEnvironment[peer.socketPathEnv],maxBytes:peer.maxMessageBytes,timeoutMs:peer.timeoutMs}}));
+  const remote=participants.map(peer=>({id:peer.id,roles:peer.roles,namespaces:peer.namespaces,endpoint:{socketPath:socketOf(peer.id),maxBytes:peer.maxMessageBytes,timeoutMs:peer.timeoutMs}}));
   return {configs,environments,operations,admission,remote,locks,ui:{version:1,tenants:aliases.map(aliases=>({aliases,theme:'default'}))}};
 }
 function lifecycle(l) {
@@ -141,7 +176,8 @@ function validateFiles(directory, docs) {
   const namespaces=require('../../lib/server/serve/operation-cohort').protectedNamespaces;
   for(const role of serviceRoles){
     const env=Object.fromEntries(Object.entries(docs.environments[role]).map(([key,value])=>[key,typeof value==='string'?value.replace('/run/ns-config',path.join(directory,role)):value]));
-    const parsed=parsers[role](env),operation=require('../../lib/server/serve/operation-cohort-config').load(env);
+    const internal=require('../../lib/server/internal-api/listener-config').resolve([role],env);
+    const parsed=parsers[role](env,internal),operation=require('../../lib/server/serve/operation-cohort-config').load(env,internal);
     const participant=operation.participants.find(row=>row.id===role);
     if(JSON.stringify(namespaces(parsed).sort())!==JSON.stringify(participant.namespaces))throw new TypeError('Deployment participant namespace mismatch');
   }

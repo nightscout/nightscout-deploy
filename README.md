@@ -14,13 +14,14 @@ Kubernetes, single-tenant targets, an operator CLI and conformance kits. Home:
 | Vault Agent overlay | [`bindings/compose/vault-agent/`](bindings/compose/vault-agent/) | a Vault Agent sidecar logs in and renews the token the application reads for Transit calls |
 | Ownership-operations overlay | [`bindings/compose/ownership-admin/`](bindings/compose/ownership-admin/) | the `admin` service and the `ownership_operator` database identity with its grants |
 
-The Compose tree is core's `deploy/multitenant`, imported unchanged. It builds from a core checkout,
-so it runs overlaid on core at the recorded commit.
+The Compose tree came from core's `deploy/multitenant` and lives here now; core keeps only the
+modules its tests load. It builds from a core checkout, so it runs overlaid on core at the recorded
+commit.
 
-**Core commit pinned:** `ed2ced00c80bd0a6a7d75f834d2c6e2af8c71364`, the accepted one-host candidate of
-core's draft pull request [#8898](https://github.com/nightscout/cgm-remote-monitor/pull/8898). The
-pull request has moved on since; this tree has not been re-imported. The source, tree hash and
-import method are in [`bindings/compose/SOURCE.md`](bindings/compose/SOURCE.md).
+**Core commit pinned:** `16a1fc2d45e59602eb6ec3e3bf6f506f35bcc5b1`, the 2026-11-10 head of core's
+draft pull request [#8898](https://github.com/nightscout/cgm-remote-monitor/pull/8898). It carries
+the `admin` role and the Vault token-file reader both overlays need. The source, tree hash and import
+method are in [`bindings/compose/SOURCE.md`](bindings/compose/SOURCE.md).
 
 ## Run the Compose binding
 
@@ -38,8 +39,8 @@ Everything it creates is synthetic. Keep real records and identities out of it.
 
 ## Run the Vault Agent overlay
 
-Requires a core checkout that accepts a token file for Vault (`tokenFile`; core branch
-`codex/vault-token-file-20261109`). From [`bindings/compose/vault-agent/`](bindings/compose/vault-agent/):
+Requires a core checkout that accepts a token file for Vault (`tokenFile`; the pinned commit has
+it). From [`bindings/compose/vault-agent/`](bindings/compose/vault-agent/):
 
 ```bash
 ./vault-agent.sh <core-tree> up        # imported bootstrap, agent provisioning, then every role
@@ -49,7 +50,7 @@ Requires a core checkout that accepts a token file for Vault (`tokenFile`; core 
 
 The overlay's README has the full steps (prepare, build, token lifetime variables), the credential
 locations and the measured results. The ownership-operations overlay runs the same way with
-`ownership-admin.sh`; it needs a core checkout that has the `admin` role.
+`ownership-admin.sh`; the pinned commit has the `admin` role it needs.
 
 ## Not started
 
