@@ -69,6 +69,16 @@ writes against the same value. It never enters `env.json`. `load-env.js` takes i
 bound on `env.json` from core's reader (`lib/server/serve/config-file.js`), and
 keeps the fixed 1 MiB bound with a core that has no such module.
 
+The tenant count (`NS_DEMO_TENANTS`) is bounded by core's preview tenant ceiling
+(`lib/server/serve/tenant-ceiling.js`, 10,000), which the ui also enforces; the
+bootstrap runs the ui's own parser on the ui configuration it writes. Realtime
+admits at most `NS_DEMO_TENANTS` x `NS_DEMO_SOCKETS_PER_TENANT` sockets (1..100,
+default 2; never below 100), across all tenants and Socket.IO namespaces. It is
+part of the realtime configuration, so a change needs a fresh bootstrap and a
+realtime restart. With a core that predates `tenant-ceiling.js` or
+`config-file.js`, `ui.js` and `config.js` keep their former bounds and say so on
+stderr.
+
 The default public binding is `127.0.0.1:18080`. Add local name resolution for
 the synthetic aliases declared in the generated public UI config, then use that
 hostname in the browser. The two aliases select separate tenants at the same

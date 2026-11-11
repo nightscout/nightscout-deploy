@@ -66,6 +66,8 @@ services:
       VAULT_ADDR: https://vault:8200
       NS_COMPOSE_BOOTSTRAP: "1"
       NS_DEMO_TENANTS: ${NS_DEMO_TENANTS:-2}
+      # Realtime maxSockets = tenants x this (1..100, default 2), at least 100. Restart realtime to change.
+      NS_DEMO_SOCKETS_PER_TENANT: ${NS_DEMO_SOCKETS_PER_TENANT:-2}
       # Off when empty. Large tenant counts only: see bootstrap.js input().
       NS_BOOTSTRAP_CONFIG_MAX_BYTES: ${NS_BOOTSTRAP_CONFIG_MAX_BYTES:-}
       NS_BOOTSTRAP_OUTPUT: /state
@@ -162,6 +164,7 @@ services:
       UI_HOSTNAME: 0.0.0.0
       UI_PORT: "1340"
       UI_PUBLIC_CONFIG: /run/ns-config/config.json
+      MULTITENANT_CONFIG_MAX_BYTES: ${NS_BOOTSTRAP_CONFIG_MAX_BYTES:-}
     healthcheck:
       test: [CMD, node, deploy/multitenant/health.js, ui]
       interval: 2s

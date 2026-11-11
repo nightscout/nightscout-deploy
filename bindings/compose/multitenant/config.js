@@ -9,11 +9,32 @@ const A = '11111111-1111-4111-8111-111111111111', B = '22222222-2222-4222-8222-2
 const subject = '000000000000000000000001';
 // Synthetic tenant count: NS_DEMO_TENANTS (default 2 keeps the A/B demonstration
 // byte-identical). Tenants 0 and 1 are A and B; later ids are fixed synthetic UUIDs.
+// The upper bound is core's preview tenant ceiling (lib/server/serve/tenant-ceiling.js);
+// a core without that module keeps this plan's former bound of 10,000 and says so.
+let ceiling;
+function maxTenants() {
+  if (ceiling === undefined) {
+    const file = path.join(__dirname, '../../lib/server/serve/tenant-ceiling.js');
+    if (require('node:fs').existsSync(file)) ceiling = require(file).PREVIEW_MAX_TENANTS;
+    else { ceiling = 10000; process.stderr.write('config: core has no tenant-ceiling module; using the former bound of 10000 tenants\n'); }
+  }
+  return ceiling;
+}
 function tenantCount(env = process.env) {
-  const raw = env.NS_DEMO_TENANTS === undefined ? '2' : env.NS_DEMO_TENANTS;
-  if (!/^[1-9][0-9]{0,4}$/.test(raw) || Number(raw) > 10000) throw new TypeError('NS_DEMO_TENANTS must be 1..10000');
+  const raw = env.NS_DEMO_TENANTS === undefined ? '2' : env.NS_DEMO_TENANTS, max = maxTenants();
+  if (!/^[1-9][0-9]{0,5}$/.test(raw) || Number(raw) > max) throw new TypeError('NS_DEMO_TENANTS must be 1..' + max);
   return Number(raw);
 }
+// Realtime admits at most maxSockets sockets in total, across tenants and namespaces
+// (core lib/server/realtime/protocol.js bind). It is part of the realtime configuration
+// identity, so a change takes a realtime restart. NS_DEMO_SOCKETS_PER_TENANT (1..100,
+// default 2) times the tenant count, never below the former fixed 100.
+function socketsPerTenant(env = process.env) {
+  const raw = env.NS_DEMO_SOCKETS_PER_TENANT === undefined || env.NS_DEMO_SOCKETS_PER_TENANT === '' ? '2' : env.NS_DEMO_SOCKETS_PER_TENANT;
+  if (!/^[1-9][0-9]{0,2}$/.test(raw) || Number(raw) > 100) throw new TypeError('NS_DEMO_SOCKETS_PER_TENANT must be 1..100');
+  return Number(raw);
+}
+const maxSockets = (n, env = process.env) => Math.max(100, n * socketsPerTenant(env));
 function tenantIds(n = tenantCount()) {
   return Array.from({length: n}, (_, i) => i === 0 ? A : i === 1 ? B
     : (0x30000000 + i).toString(16) + '-3333-4333-8333-' + i.toString(16).padStart(12, '0'));
@@ -139,7 +160,7 @@ function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress}
       maxPayloadBytes:524288,maxInflight:4,attemptTimeoutMs:10000,retryDelayMs:1000,pollIntervalMs:1000,retryIntervalMs:1000}}};
   const realtime={version:1,postgres:{connectionEnv:'NS_REALTIME_PG',namespaces:{...domainNamespaces,clock:ns.clock,checkpoint:ns.rt_checkpoint,changeStamps:ns.change_stamps}},consumer:'realtime-compose-demo',
     ...limits,tenants,socketOrderDomains:['treatments','devicestatus','profile'],admissionFileEnv:'NS_ADMISSION_FILE',
-    maxMessageBytes:1048576,operationTimeoutMs:5000,maxSockets:100,authorizationRecheckMs:30000};
+    maxMessageBytes:1048576,operationTimeoutMs:5000,maxSockets:maxSockets(n),authorizationRecheckMs:30000};
   // Decision root-grant-ceiling-default-all: every tenant data permission unless
   // the operator narrows it. Owner and root share this catalogue (one policy row).
   const ownerCatalogue=['*'];
@@ -190,5 +211,9 @@ function validateFiles(directory, docs) {
     const participant=operation.participants.find(row=>row.id===role);
     if(JSON.stringify(namespaces(parsed).sort())!==JSON.stringify(participant.namespaces))throw new TypeError('Deployment participant namespace mismatch');
   }
+  // The ui's own parser (tenant ceiling, aliases), on the written file when there is one, so a
+  // refusal surfaces at bootstrap instead of when the ui starts.
+  const uiFile=path.join(directory,'ui','config.json'),fs=require('node:fs');
+  require('./ui').parseConfig(fs.existsSync(uiFile)?JSON.parse(fs.readFileSync(uiFile,'utf8')):docs.ui);
 }
-module.exports={A,B,subject,tenantCount,tenantIds,tenantAlias,clinical,ordered,serviceRoles,quote,catalogues,layout,insertionGrants,grants,documents,lifecycle,validateFiles};
+module.exports={A,B,subject,tenantCount,socketsPerTenant,maxSockets,tenantIds,tenantAlias,clinical,ordered,serviceRoles,quote,catalogues,layout,insertionGrants,grants,documents,lifecycle,validateFiles};

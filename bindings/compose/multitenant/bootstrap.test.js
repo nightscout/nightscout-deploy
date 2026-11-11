@@ -76,3 +76,19 @@ test('config cap option is off by default and bounded when set',()=>{
   assert.throws(()=>bootstrap.input({...env,NS_BOOTSTRAP_CONFIG_MAX_BYTES:'67108865'}),/BOOTSTRAP_CONFIG_MAX_BYTES_INVALID/);
   assert.equal(bootstrap.input({...env,NS_BOOTSTRAP_CONFIG_MAX_BYTES:'67108864'}).configMaxBytes,67108864);
 });
+test('bootstrap validation runs the ui parser: a ui config over the tenant ceiling refuses at bootstrap',()=>{
+  const {docs}=generated(),directory=files(docs);
+  try{
+    plan.validateFiles(directory,docs);
+    const over={...docs,ui:{version:1,tenants:Array.from({length:10001},(_,i)=>({aliases:['t'+i+'.example.test'],theme:'default'}))}};
+    assert.throws(()=>plan.validateFiles(directory,over),/UI_PUBLIC_CONFIG_INVALID/);
+  }finally{fs.rmSync(directory,{recursive:true});}
+});
+test('realtime maxSockets is tenants x sockets-per-tenant, at least the former 100',()=>{
+  assert.equal(plan.maxSockets(2,{}),100);
+  assert.equal(plan.maxSockets(3000,{}),6000);
+  assert.equal(plan.maxSockets(3000,{NS_DEMO_SOCKETS_PER_TENANT:'8'}),24000);
+  for(const bad of ['0','101','2.5','x'])assert.throws(()=>plan.socketsPerTenant({NS_DEMO_SOCKETS_PER_TENANT:bad}),/NS_DEMO_SOCKETS_PER_TENANT/);
+  assert.throws(()=>plan.tenantCount({NS_DEMO_TENANTS:'10001'}),/NS_DEMO_TENANTS must be 1\.\.10000/);
+  assert.equal(plan.tenantCount({NS_DEMO_TENANTS:'10000'}),10000);
+});

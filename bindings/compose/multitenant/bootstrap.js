@@ -176,9 +176,9 @@ async function bootstrap(options) {
     }
     // Core's loaders take the bound from the environment they are given; the roles get it from
     // Compose, so validation sees the same value without it entering the written env.json.
+    writePrivate(path.join(output,'ui','config.json'),docs.ui,own,compact);
     plan.validateFiles(output,configMaxBytes===undefined?docs:{...docs,environments:Object.fromEntries(plan.serviceRoles.map(role=>
       [role,{...docs.environments[role],MULTITENANT_CONFIG_MAX_BYTES:String(configMaxBytes)}]))});
-    writePrivate(path.join(output,'ui','config.json'),docs.ui,own,compact);
     const lifecycle=plan.lifecycle(l);
     const operatorConfig={version:1,drainTimeoutMs:10000,tenants:ids.map((id,i)=>({id,host:docs.configs.api.tenants[i].aliases[0],tokenEnv:i===0?'NS_DEMO_TOKEN_A':i===1?'NS_DEMO_TOKEN_B':'NS_DEMO_TOKEN_'+i})),
       apiOrigin:'http://api:1337',control:{namespace:ns.control,locks:docs.locks,participants:docs.remote},...lifecycle};

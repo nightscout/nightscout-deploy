@@ -7,8 +7,8 @@
 | upstream commit | `0392acf97c720a7e121eea47a9d42a0c8dbe9e73` (draft PR #8898, the 2026-11-11 batch join, accepted at this head) |
 | upstream tree hash of that path | `8e2d9a1d6c3cbb12ad5b0bc59a47f1a43eeb7842` (core's reduced fixture: `config.js`, `demo.js`, `health.js`, `restore.js`, `ui.js`, `README.md`) |
 | import method | the 2026-11-11 sync: core's changes to `deploy/multitenant` between `16a1fc2d` and `0392acf9` applied by hand, including the lane hunks core resolved as deleted (perf-realtime `50f209e6` `bootstrap.js`, perf-db `a52bc33b` `compose.yaml`) |
-| local delta | [`SOURCE.delta.patch`](SOURCE.delta.patch), against core's fixture `config.js` only: the plan leaves out the `ownership_operator` identity, which [`ownership-admin/`](ownership-admin/) adds; `NS_DEMO_TENANTS` selects the synthetic tenant count (bench fix 2, now 1..10000) |
-| tree hash here | `85d27fb4fc970f599a87d92473a2ef76f3ebbdee` |
+| local delta | [`SOURCE.delta.patch`](SOURCE.delta.patch), against core's fixture `config.js` and `ui.js`. `ui.js` is core lane `workspace/capacity-fixes-20261111` `5c60aec6`'s, plus a fallback for a core without `tenant-ceiling.js`/`config-file.js` (the former 1,000-tenant ceiling and fixed 1 MiB read); `config.js` (nightscout-deploy owns the deployable plan; core's copy is the test fixture) takes its tenant bound from `tenant-ceiling.js` (fallback 10,000) and realtime `maxSockets` from `NS_DEMO_SOCKETS_PER_TENANT`. Also in `config.js`: the plan leaves out the `ownership_operator` identity, which [`ownership-admin/`](ownership-admin/) adds; `NS_DEMO_TENANTS` selects the synthetic tenant count (bench fix 2, now 1..10000) |
+| tree hash here | `d4fd72567e4d940d1723224c2b4aba91bdd1f9b5` |
 | imported on | 2026-11-11 |
 
 History: first imported 2026-11-09 from `ed2ced00c80bd0a6a7d75f834d2c6e2af8c71364` (tree
@@ -97,3 +97,9 @@ the delta is unchanged.
 5. **Overlay build.** `tools/compose-overlay.sh` writes `.overlay.json`; `prepare.js`/`build.js`
    check and build core HEAD plus the deploy commit instead of refusing every overlay as
    `BUILD_INPUTS_DIRTY`.
+6. **ui tenant ceiling, realtime sockets, ui validation at bootstrap** (core lane `5c60aec6`). `ui.js`
+   refused more than 1,000 tenants; it is now core `5c60aec6`'s, plus the fallback above.
+   `tenantCount` takes its bound from core's `PREVIEW_MAX_TENANTS`. Realtime `maxSockets` =
+   tenants x `NS_DEMO_SOCKETS_PER_TENANT` (1..100, default 2), never below the former 100, so the
+   default demonstration's documents are unchanged. `validateFiles` runs the ui's `parseConfig` on
+   the written ui config.
