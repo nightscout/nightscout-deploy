@@ -88,8 +88,8 @@ async function bootstrap(options) {
     for(const sql of plan.grants(l))await admin.query(sql);
     const rootToken=initialization.root_token;
     await request('sys/mounts/'+l.mount,{type:'transit'},rootToken);
-    const tokens=[],publicKeys=[],managementKeys=[],roots=[random(),random()];
-    for(const [i,tenant]of [plan.A,plan.B].entries()){
+    const ids=plan.tenantIds(),tokens=[],publicKeys=[],managementKeys=[],roots=ids.map(()=>random());
+    for(const [i,tenant]of ids.entries()){
       for(const purpose of ['data','signing'])await request(l.mount+'/keys/tenant-'+i+'-'+purpose,{type:'aes256-gcm96',exportable:false},rootToken);
       for(const purpose of ['access','management']){
         await request(l.mount+'/keys/tenant-'+i+'-'+purpose,{type:'ed25519',exportable:false},rootToken);
@@ -109,15 +109,15 @@ async function bootstrap(options) {
     try{
       const providers=roots.map((_,i)=>require('../../lib/secrets/vault-transit').createVaultTransit({address:vault.origin,mount:l.mount,encryptionKey:'tenant-'+i+'-data',signingKey:'tenant-'+i+'-signing',signingVersion:1,getToken:async()=>rootToken}));
       const secrets=require('../../lib/secrets/component').createSecrets({...persistence,maxTokenLifetimeSeconds:28800,
-        providerFor:async tenant=>providers[tenant===plan.A?0:tenant===plan.B?1:(()=>{throw fail('BOOTSTRAP_TENANT_REFUSED');})()],
+        providerFor:async tenant=>providers[ids.includes(tenant)?ids.indexOf(tenant):(()=>{throw fail('BOOTSTRAP_TENANT_REFUSED');})()],
         authorize:async(identity,action)=>identity.principal==='bootstrap-operator'&&identity.consumer==='compose-demo'&&action.operation==='encrypt'});
-      for(const [i,tenant]of [plan.A,plan.B].entries())await secrets.encrypt({tenant,principal:'bootstrap-operator',consumer:'compose-demo'},'root-'+i,Buffer.from(roots[i]));
+      for(const [i,tenant]of ids.entries())await secrets.encrypt({tenant,principal:'bootstrap-operator',consumer:'compose-demo'},'root-'+i,Buffer.from(roots[i]));
     }finally{await persistence.close();}
     const docs=plan.documents({layout:l,urls:roleURLs,tokens,publicKeys,managementKeys,vaultAddress:vault.origin});
     const ns=l.namespaces,t=(name,table)=>q(ns[name])+'.'+q(table),demoTokens=[],managementTokens=[];
     const now=Date.now(),exp=Math.floor(now/1000)+600,permissions=['api:*:read','api:*:create,update,delete','notifications:*:ack'];
     const catalogue=['*'],digest=require('../../lib/subject-admin/owner-policy').catalogueDigest(catalogue);
-    for(const [i,tenant]of [plan.A,plan.B].entries()){
+    for(const [i,tenant]of ids.entries()){
       await admin.query('BEGIN');
       try{
         await admin.query("SELECT set_config('app.current_tenant_id',$1,true)",[tenant]);
@@ -166,11 +166,11 @@ async function bootstrap(options) {
     plan.validateFiles(output,docs);
     writePrivate(path.join(output,'ui','config.json'),docs.ui,own);
     const lifecycle=plan.lifecycle(l);
-    const operatorConfig={version:1,drainTimeoutMs:10000,tenants:[plan.A,plan.B].map((id,i)=>({id,host:docs.configs.api.tenants[i].aliases[0],tokenEnv:i?'NS_DEMO_TOKEN_B':'NS_DEMO_TOKEN_A'})),
+    const operatorConfig={version:1,drainTimeoutMs:10000,tenants:ids.map((id,i)=>({id,host:docs.configs.api.tenants[i].aliases[0],tokenEnv:i===0?'NS_DEMO_TOKEN_A':i===1?'NS_DEMO_TOKEN_B':'NS_DEMO_TOKEN_'+i})),
       apiOrigin:'http://api:1337',control:{namespace:ns.control,locks:docs.locks,participants:docs.remote},...lifecycle};
     writePrivate(path.join(output,'ops','config.json'),operatorConfig,own);
-    writePrivate(path.join(output,'ops','env.json'),{NS_OPERATOR_PG:roleURLs.operator,NS_DEMO_TOKEN_A:demoTokens[0],NS_DEMO_TOKEN_B:demoTokens[1],NS_SOURCE_COMMIT:sourceCommit},own);
-    writePrivate(path.join(output,'ops','tenants.json'),{version:1,tenants:[plan.A,plan.B].map((id,i)=>({id,host:docs.configs.api.tenants[i].aliases[0],dataToken:demoTokens[i],managementToken:managementTokens[i],managementExpiresAt:exp}))},own);
+    writePrivate(path.join(output,'ops','env.json'),{NS_OPERATOR_PG:roleURLs.operator,...Object.fromEntries(demoTokens.map((token,i)=>[i===0?'NS_DEMO_TOKEN_A':i===1?'NS_DEMO_TOKEN_B':'NS_DEMO_TOKEN_'+i,token])),NS_SOURCE_COMMIT:sourceCommit},own);
+    writePrivate(path.join(output,'ops','tenants.json'),{version:1,tenants:ids.map((id,i)=>({id,host:docs.configs.api.tenants[i].aliases[0],dataToken:demoTokens[i],managementToken:managementTokens[i],managementExpiresAt:exp}))},own);
     writePrivate(path.join(output,'bootstrap','layout.json'),l);
     writePrivate(completeFile,{version:1,sourceCommit});
     return {state:'synthetic-demo-provisioned',sourceCommit};

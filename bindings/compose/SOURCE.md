@@ -7,8 +7,8 @@
 | upstream commit | `16a1fc2d45e59602eb6ec3e3bf6f506f35bcc5b1` (draft PR #8898, the 2026-11-10 batch join) |
 | upstream tree hash of that path | `6529d40282ea4589ea75c71712839d4db6e9940b` |
 | import method | file copy of the path at that commit over the earlier import |
-| local delta | [`SOURCE.delta.patch`](SOURCE.delta.patch): `config.js` leaves out the `ownership_operator` identity, which [`ownership-admin/`](ownership-admin/) adds; `root_writer` gets the lower-role control-schema reads (bench fix 1, below) |
-| tree hash here | `eb4898b82e16cf8368e88ed7042058764cd64bc9` |
+| local delta | [`SOURCE.delta.patch`](SOURCE.delta.patch): `config.js` leaves out the `ownership_operator` identity, which [`ownership-admin/`](ownership-admin/) adds; `root_writer` gets the lower-role control-schema reads (bench fix 1); `NS_DEMO_TENANTS` selects the synthetic tenant count (bench fix 2) |
+| tree hash here | `88b59c89b280aed876d58f69eca979c828ac0a34` |
 | imported on | 2026-11-10 |
 
 History: first imported 2026-11-09 from `ed2ced00c80bd0a6a7d75f834d2c6e2af8c71364` (tree
@@ -46,3 +46,12 @@ Found bringing the tree up with real role processes for MT-BENCH-BASELINE (align
    identity. Reproduced red without the fix (unmodified core plan), green with it. Owner decision
    still open: whether `root_writer` should be fenced by the window (this fix) or its store should not
    use the window.
+2. **The plan is fixed at two tenants.** `documents()` and `bootstrap()` enumerate `[A, B]`, aliases,
+   Vault keys/tokens, locks and `maxTenants: 2`, so the one-host reference cannot be measured at 1, 10,
+   50 or 200 tenants. Fix: `NS_DEMO_TENANTS` (1..1000, default 2) on the bootstrap service; tenants 0
+   and 1 keep the A/B ids and aliases, later tenants get fixed synthetic UUIDs and `t<i>.example.test`;
+   per-tenant Vault keys, scoped tokens (`NS_VAULT_<i>`), lifecycle locks (`810001+i`) and
+   `maxTenants: N`. Measured: `documents()` at the default is byte-identical to core's (15357 bytes);
+   at 200 it yields 200 tenants, locks, Vault references and unique ids; `bootstrap.test.js` passes
+   5/5 at the default. The restore demonstration (`restore.js`) still requires exactly two tenants,
+   and `ownership-admin/ownership-grants.js` still lists A and B only.
