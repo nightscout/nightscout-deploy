@@ -13,7 +13,9 @@
 //
 //   provision   create the role, grant, write the two files, record completion
 const fs = require('node:fs'), path = require('node:path'), crypto = require('node:crypto');
-const plan = require('/opt/app/deploy/multitenant/config');
+// Loaded on first use, so the pure document builder below can be tested outside the image.
+let loadedPlan;
+const plan = () => loadedPlan || (loadedPlan = require('/opt/app/deploy/multitenant/config'));
 const fail = code => Object.assign(new Error(code), { code });
 const ROLE = 'ownership_operator';
 // Operator identity recorded in the audit rows; synthetic names for the Compose demonstration.
@@ -31,7 +33,7 @@ function input (env = process.env) {
 
 // The identity's grants, in the order core's plan emits them.
 function grants (l) {
-  const q = plan.quote, who = q(l.prefix + '_' + ROLE), ns = name => q(l.namespaces[name]);
+  const q = plan().quote, who = q(l.prefix + '_' + ROLE), ns = name => q(l.namespaces[name]);
   const table = name => ns('authorization') + '.' + q(name);
   return [
     'GRANT USAGE ON SCHEMA ' + ns('authorization') + ' TO ' + who,
@@ -51,11 +53,21 @@ function writePrivate (file, value, { uid, gid }) {
   fs.chownSync(path.dirname(file), uid, gid); fs.chownSync(file, uid, gid);
 }
 
+// The admin role's configuration. Core requires exactly these ownership keys, with the lifecycle
+// control namespace distinct from the authorization namespace (cgm-remote-monitor 16a1fc2d,
+// lib/server/serve/admin-config.js:59-60): without lifecycleNamespace the role exits with
+// "invalid explicit admin operator configuration" (measured on Kubernetes, 2026-11-10).
+function adminDocument (l, tenants) {
+  return { version: 1, maxBytes: 65536, timeoutMs: 10000,
+    ownership: { connectionEnv: 'NS_OWNERSHIP_PG', namespace: l.namespaces.authorization, lifecycleNamespace: l.namespaces.control,
+      operator: OPERATOR, tenants } };
+}
+
 async function provision ({ pg, output, uid, gid }) {
   const directory = path.join(output, 'ownership-admin'), complete = path.join(directory, 'complete.json');
   if (!fs.existsSync(path.join(output, 'bootstrap', 'complete.json'))) throw fail('IMPORTED_BOOTSTRAP_INCOMPLETE');
   if (fs.existsSync(complete)) return { state: 'ownership-grants-existing' };
-  const l = plan.layout(), q = plan.quote, role = l.prefix + '_' + ROLE;
+  const l = plan().layout(), q = plan().quote, role = l.prefix + '_' + ROLE;
   if (l.roles[ROLE]) throw fail('IMPORTED_PLAN_ALREADY_HAS_OWNERSHIP_OPERATOR'); // the overlay is then redundant
   const { Client } = require('/opt/app/node_modules/pg');
   const admin = new Client({ connectionString: pg.toString(), connectionTimeoutMillis: 10000, statement_timeout: 10000 });
@@ -68,8 +80,7 @@ async function provision ({ pg, output, uid, gid }) {
     const url = new URL(pg); url.username = role; url.password = password;
     const own = { uid, gid };
     writePrivate(path.join(directory, 'env.json'), JSON.stringify({ NS_OWNERSHIP_PG: url.toString() }, null, 2) + '\n', own);
-    writePrivate(path.join(directory, 'admin.json'), JSON.stringify({ version: 1, maxBytes: 65536, timeoutMs: 10000,
-      ownership: { connectionEnv: 'NS_OWNERSHIP_PG', namespace: l.namespaces.authorization, operator: OPERATOR, tenants: [plan.A, plan.B] } }, null, 2) + '\n', own);
+    writePrivate(path.join(directory, 'admin.json'), JSON.stringify(adminDocument(l, [plan().A, plan().B]), null, 2) + '\n', own);
     writePrivate(complete, JSON.stringify({ version: 1, role }) + '\n', own);
     return { state: 'ownership-grants-provisioned', role, grants: grants(l).length };
   } finally { await admin.end(); }
@@ -80,4 +91,4 @@ if (require.main === module) {
     .then(result => process.stdout.write(JSON.stringify(result) + '\n'))
     .catch(error => { process.stderr.write(JSON.stringify({ error: /^[A-Z0-9_]{1,80}$/.test(error?.code || '') ? error.code : 'OWNERSHIP_GRANTS_FAILED' }) + '\n'); process.exitCode = 1; });
 }
-module.exports = { grants, input, provision };
+module.exports = { adminDocument, grants, input, provision };

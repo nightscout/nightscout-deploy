@@ -186,6 +186,17 @@ function checks (all, inventory, composeDir, envMain) {
     }
   });
 
+  run('cohort-single-replica', fail => {
+    // Decision cohort-pod-not-scaled: the one-Pod cohort is a monolith placement; the binding, not
+    // core, holds it to one replica (core does not refuse a second cohort: kind smoke 2026-11-10).
+    const cohorts = workloads.filter(w => (podSpec(w).volumes || []).some(v => v.name === 'ns-ipc'));
+    for (const w of cohorts) {
+      if (w.kind !== 'StatefulSet') fail(id(w) + ' carries the cohort but is a ' + w.kind + '; the cohort is a StatefulSet');
+      if (w.spec.replicas !== 1) fail(id(w) + ' replicas is ' + w.spec.replicas + '; the one-Pod cohort is a monolith and scales vertically only; for horizontal scale or HA use per-role placement (decision cohort-pod-not-scaled)');
+    }
+    for (const m of all) if (m.kind === 'HorizontalPodAutoscaler' && cohorts.some(w => ((m.spec || {}).scaleTargetRef || {}).name === w.metadata.name)) fail('HorizontalPodAutoscaler/' + m.metadata.name + ' targets the cohort');
+  });
+
   run('private-directories', fail => {
     // An emptyDir root is root-owned 3777 under fsGroup; core refuses it as the socket directory
     // (transport.js SOCKET_IPC_DIRECTORY_REFUSED). Role containers mount the 0700 subdirectory.

@@ -41,6 +41,14 @@ Job provision (backoffLimit 0)                    bootstrap -> vault-kubernetes-
 NetworkPolicy                                     default deny ingress, then each Compose path
 ```
 
+**Cohort or per-role placement.** This binding runs every role in one Pod, the cohort. The cohort
+is a monolith: scale it vertically (more CPU and memory for the Pod), never horizontally, and the
+binding holds it to one replica. For horizontal scale or high availability, deploy the roles as
+separate components instead (per-role placement), each scaled through its own mechanism: API
+replicas through the fixed roster, the evaluator through the pool table, realtime through sharding.
+The two placements are alternatives and never run against the same database at the same time.
+Decision of record: [cohort-pod-not-scaled](https://github.com/bewest/rag-nightscout-ecosystem-alignment/blob/main/releases/cgm-remote-monitor-16.0.0/decisions.md#cohort-pod-not-scaled).
+
 Three things the YAML does on purpose:
 
 - **`enableServiceLinks: false` on every Pod.** Kubernetes would otherwise inject
@@ -69,9 +77,10 @@ Three things the YAML does on purpose:
 
 Kubernetes 1.29 or newer (native sidecars; the pod-index label needs 1.28), a network plugin
 that enforces NetworkPolicy, a default StorageClass, and a `kubectl` within one minor version
-of the server. `tk` v0.20.0 renders and checks, but `tk apply` panics against `kubectl` v1.32
-(`splitRow: slice bounds out of range` while reading `kubectl api-resources`), so the smoke applied
-the committed render with `kubectl apply -f check/golden/preview.yaml`. The image is the Compose image built from core `16a1fc2d` with this repository's
+of the server. **The apply path is `kubectl apply -f check/golden/preview.yaml`**, the committed
+render that `check/golden.sh` holds equal to `tk show`. `tk` v0.20.0 renders and checks, but cannot
+apply against `kubectl` v1.32: `tk apply` panics (`splitRow: slice bounds out of range` while
+reading `kubectl api-resources`). The image is the Compose image built from core `16a1fc2d` with this repository's
 Compose tree in place (`tools/compose-overlay.sh`, then the tree's `build.js`); its base
 `config.js` must leave out the ownership identity, which the ownership overlay adds.
 
@@ -82,7 +91,7 @@ commit=16a1fc2d45e59602eb6ec3e3bf6f506f35bcc5b1
 docker tag nightscout-multitenant-demo:local nightscout-multitenant-demo:$commit
 kind load docker-image nightscout-multitenant-demo:$commit            # or the cluster's equivalent
 
-kubectl apply -f check/golden/preview.yaml          # or tk apply with a newer tk; Pods wait for the Secrets
+kubectl apply -f check/golden/preview.yaml          # the apply path; Pods wait for the Secrets
 scripts/secrets.sh seed nightscout-preview ../compose
 kubectl -n nightscout-preview wait --for=condition=complete job/provision --timeout=10m
 scripts/secrets.sh publish nightscout-preview nightscout-multitenant-demo:$commit
@@ -91,7 +100,11 @@ kubectl -n nightscout-preview port-forward svc/edge 18080:8080
 kubectl delete -f check/golden/preview.yaml         # PVCs from volumeClaimTemplates stay until deleted
 ```
 
-`spec.json` names `https://127.0.0.1:6443` as the API server; Tanka refuses to apply to any other.
+`spec.json` names `https://127.0.0.1:6443` as the API server for Tanka's own commands.
+
+The api needs the bench lane's root_writer grants (`bench/compose-baseline-20261110` `54af5f2`) in
+the Compose tree's `config.js` until they merge; without them it exits at startup
+(`LIFECYCLE_WINDOW_SCHEMA_UNSAFE`).
 
 ## Checks
 
@@ -115,6 +128,7 @@ overlay are missing, and the recorded commits differ).
 | `secrets-by-reference` | no Secret rendered; no credential-named or credential-shaped literal env; no credential material in ConfigMaps; `/run/secrets` and `/run/ns-secret` mounts are Secret volumes | connection string in api env -> `env NS_API_PG is a literal; it must come from a Secret reference` |
 | `images-pinned` | every image by `@sha256:` digest or an exact tag (semver or 40-hex commit) | `postgres:16` -> `image postgres:16 is not pinned by digest or exact tag` |
 | `evaluator-statefulset` | the evaluator is in exactly one workload, a StatefulSet, replicas 1; partition off renders no `MULTITENANT_POOL_EVALUATOR_*` key; partition on renders `PARTITION=on` and `ORDINAL` from the pod-index label, never `MEMBERS`; readiness is the role health check only | ordinal with partition off -> `partition is off but the evaluator sets MULTITENANT_POOL_EVALUATOR_ORDINAL`; partition on with `metadata.name` -> `... ORDINAL must come from the StatefulSet pod-index label`; extra readiness argument -> `evaluator readiness must be the role health check only` |
+| `cohort-single-replica` | the workload carrying the socket volume is a StatefulSet with replicas exactly 1, and no HorizontalPodAutoscaler targets it | `replicas: 2` -> `StatefulSet/cohort replicas is 2; the one-Pod cohort is a monolith and scales vertically only; for horizontal scale or HA use per-role placement (decision cohort-pod-not-scaled)` |
 | `private-directories` | role containers mount `ns-ipc` and their `config-*` volume at the 0700 subdirectory (`subPath: d`) | `ns-ipc` at its root -> `container api mounts ns-ipc at its root; mount the 0700 subdirectory (subPath d)` |
 | `no-overlap-update` | StatefulSets `OrderedReady`, default one-at-a-time update, replicas 1; Deployments `Recreate` | `Parallel` -> `podManagementPolicy must be OrderedReady` |
 | `service-links-off` | every Pod sets `enableServiceLinks: false` | `true` on the cohort -> `StatefulSet/cohort must set enableServiceLinks: false` |
@@ -136,10 +150,10 @@ in each row:
   (`LIFECYCLE_WINDOW_SCHEMA_UNSAFE` inside `SUBJECT_ADMIN_STORE_UNSAFE`). The bench lane's
   "Bench fix 1" (`bench/compose-baseline-20261110` `54af5f2`) is the fix; the smoke ran its grants
   by hand in the disposable database.
-- The ownership overlay's `ownership-grants.js` writes `admin.json` without
-  `ownership.lifecycleNamespace`, which core's `admin-config.js` requires, so admin exits
-  ("invalid explicit admin operator configuration"). The smoke added the key (the control
-  namespace) to the Secret by hand.
+- The ownership overlay's `ownership-grants.js` wrote `admin.json` without
+  `ownership.lifecycleNamespace`, which core's `admin-config.js:59` requires, so admin exited
+  ("invalid explicit admin operator configuration"). The smoke added the key by hand; the overlay
+  now writes it (see `../compose/ownership-admin/README.md`).
 
 | Compose service or setting | Kubernetes counterpart | status |
 |---|---|---|
@@ -163,6 +177,6 @@ in each row:
 | `demo` (profile `ops`, mounts the participant sockets) | not rendered. Ephemeral containers may not set `subPath` (API refusal, measured), and core refuses the volume root as socket directory, so an ephemeral container cannot reach the sockets either | UNMEASURED; needs a design |
 | networks `backend` (internal) and `edge` | default-deny ingress plus one NetworkPolicy per Compose path; egress open | smoked: kindnet enforces; removing the policies opened admin to an unlabelled Pod |
 | PostgreSQL identities per role | `inventory` in the renderer, compared with `config.js` and the ownership overlay | rendered; the identities connected in the smoke |
-| one cohort; two cohorts of one deployment refuse to both serve | StatefulSet replicas 1, `OrderedReady`; the renderer refuses more | **control red**: scaled out of band to 2, `cohort-1` became 5/5 Ready, joined the `api` and `realtime` endpoints, and its evaluator started for both tenants |
+| one cohort Pod, a monolith that scales vertically only ([decision cohort-pod-not-scaled](https://github.com/bewest/rag-nightscout-ecosystem-alignment/blob/main/releases/cgm-remote-monitor-16.0.0/decisions.md#cohort-pod-not-scaled)) | StatefulSet replicas exactly 1: the renderer refuses any other count and invariant `cohort-single-replica` fails on a rendered 2. Core does not refuse a second cohort (smoke: a second Pod served), so the rule is the binding's. Horizontal scale or HA is per-role placement, never alongside the cohort on one database | rendered; control red as expected |
 | update without overlap | `OrderedReady`, delete-before-create | smoked once: `rollout restart` deleted `cohort-0` at 03:51:52Z and created the new one at 03:51:53Z |
 | evaluator worker index | `MULTITENANT_POOL_EVALUATOR_ORDINAL` from the pod-index label when the partition is on; nothing when off | rendered; preview off |

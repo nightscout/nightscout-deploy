@@ -86,3 +86,18 @@ from `16a1fc2d:deploy/multitenant/config.js`, all loaded against core `16a1fc2d`
 
 Not measured on this base: the Compose run of the overlay (`ownership-admin.sh <tree> up`) and the
 restore demonstration with `admin` connected.
+
+### 2026-11-10, `admin.json` and core's admin configuration
+
+`admin.json` now carries `ownership.lifecycleNamespace` (the lifecycle control namespace). Core at
+`16a1fc2d` requires it and requires it to differ from `namespace`
+(`lib/server/serve/admin-config.js:59-60`); without it the `admin` role exits with "invalid explicit
+admin operator configuration". Found on the Kubernetes binding's kind smoke, where the role exited
+exactly so. `ownership-grants.test.js` checks the document's keys against that list and, with
+`NS_CORE_DIR` pointing at a core checkout at the recorded commit, runs core's own parser on it.
+
+| check | result |
+|---|---|
+| `NS_CORE_DIR=<core 16a1fc2d> node --test ownership-grants.test.js` | 2 tests, 2 pass |
+| break-it: `lifecycleNamespace` removed from `adminDocument` | 2 fail; core's parser throws `invalid explicit admin operator configuration`. Restored: 2 pass |
+| without `NS_CORE_DIR` | 1 pass, 1 skipped |

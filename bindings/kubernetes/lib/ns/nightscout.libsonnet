@@ -32,8 +32,10 @@
       nginx: 'nginx@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10',
     },
     cohort: {
-      // One Pod per cohort. More than one is a second cohort, which the lifecycle locks must
-      // refuse (the DEPLOY-K8S-BINDING control); the preview never renders it.
+      // Decision cohort-pod-not-scaled: the one-Pod cohort is a monolith and scales vertically
+      // only (resources), never horizontally; this binding (not core) holds it to one replica.
+      // Core does not refuse a second cohort (kind smoke, 2026-11-10). For horizontal scale or
+      // high availability, deploy the roles as separate components (per-role placement).
       replicas: 1,
       // Above the serve.internal drain deadline (NS_SERVE_INTERNAL_SHUTDOWN_TIMEOUT_MS, default
       // 5000 ms, at most 60000 ms; decision internal-listener-graceful-shutdown).
