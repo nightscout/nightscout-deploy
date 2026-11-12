@@ -182,7 +182,10 @@ environment. Editor pages do not imply that every operator/integration feature
 has been admitted in the preview.
 
 Shared optional OIDC for single and multitenant modes is an independent feature.
-Its login/callback/session integration is not implemented by this Compose file.
+The base Compose file leaves login/callback/session configuration disabled.
+The separately opted-in [Authentik profile](../../../providers/identity/authentik/README.md)
+prepares the existing registry OIDC path and bounded provider/Host/TLS probes;
+actual real-provider qualification remains UNMEASURED.
 Both modes should use the same provider protocol with their own current local
 authorization adapters. Existing machine credentials remain compatible.
 

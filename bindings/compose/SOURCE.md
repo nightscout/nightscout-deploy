@@ -4,11 +4,11 @@
 |---|---|
 | upstream repository | nightscout/cgm-remote-monitor |
 | upstream path | `deploy/multitenant` |
-| upstream commit | `9db0ce94f072c8f34aab889f0181afa4269a6758` (joined M7 fixtures with explicit opt-in accounting and umask-independent permission fixture; final acceptance pending) |
+| upstream commit | `9db0ce94f072c8f34aab889f0181afa4269a6758` (joined core; this post-baseline deployment qualification is UNMEASURED) |
 | upstream tree hash of that path | `fdc9f8dd2644b8789c86abeb030fbc0ad7304780` (core's reduced fixture: `config.js`, `demo.js`, `health.js`, `restore.js`, `ui.js`, `README.md`) |
 | import method | Recorded core fixture plus reviewed deployment-owned bootstrap, placement, edge and preparation changes; the patch is checked by `tools/compose-identity-check.sh`. |
 | local delta | [`SOURCE.delta.patch`](SOURCE.delta.patch), against the recorded core fixture. This binding generates fixed API instances and exact maintenance addresses, supports local health probes for network listeners, removes realtime maxSockets and renders explicit per-IP edge budgets. The reduced core fixture stays test-only. |
-| tree hash here | `3ba19b609af18184082cbd8aa5f978c9cfde016c` |
+| tree hash here | `56183e354d33c0d7e83d5ba3656f4cceb9d1ca58` |
 | imported on | 2026-11-12 |
 
 History: first imported 2026-11-09 from `ed2ced00c80bd0a6a7d75f834d2c6e2af8c71364` (tree
@@ -193,3 +193,25 @@ The unsafe secrets-output fixture now explicitly sets and verifies its intended
 readable mode before testing CLI refusal. This test-only core advance preserves
 the runtime permission guard, all Docker source inputs and this binding tree.
 Original and repaired focused runs retain their actual source/patch attribution.
+
+## Post-baseline joined preparation — 2026-11-12
+
+The recorded core remains `9db0ce94f072c8f34aab889f0181afa4269a6758`.
+Original incremental commissioning history `4b0579eace51bc5cd3c02b5a98f0978a41a9cbb1`
+and Authentik/resource/probe history `6d2cb6722e9a65f361679f7f9d96c84a39b87c68`
+are ordinary-merged after the accepted baseline binding. The primer adds explicit
+per-tenant custody/resume behavior; current readiness, controlled replacement,
+cadence, authority and isolation implementation is retained. The README overlap
+keeps both sets of qualification instructions.
+
+None of core's five reduced fixture files or `SOURCE.delta.patch` changes here;
+the delta still covers exactly those upstream files. The full binding-tree pin
+above additionally covers the deployment-owned primer, live-add fixture and docs.
+Identity-provider tools live outside that binding tree and are pinned by their
+selected full deployment/profile commit at private source admission.
+
+Earlier 4b/fba/6d proof retains its executed source and scope. New focused source
+admission uses the actual selected core and exact copied binding; real-provider
+and shipping live-add execution remain UNMEASURED. A new joined image/native
+qualification needs explicit coordinator resource authorization. The running
+accepted baseline and its image are not changed or relabelled by this preparation.

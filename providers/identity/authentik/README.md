@@ -201,3 +201,34 @@ Authentik 2026.8.5 [password validation](https://github.com/goauthentik/authenti
 and [password component](https://github.com/goauthentik/authentik/blob/version/2026.8.5/web/src/flow/stages/password/PasswordStage.ts).
 Unknown-Host routing is defined by this profile's `nginx()`; the probe does not
 claim that edge refusal measures the application's registry resolver.
+
+## Joined post-baseline source admission
+
+The joined deployment targets core `9db0ce94f072c8f34aab889f0181afa4269a6758`.
+Its live-add primer and this isolated identity profile share the same reviewed
+binding source, but neither activates the other. The IdP profile still requires
+its own fresh `nsidp-app-<nonce>` project, standalone RT1/EV1 and explicitly
+configured origins/local principals. The live-add qualification uses its distinct
+owned project guard; a single later image build may be reused by explicitly
+authorized isolated qualifications. No callback wildcard or automatic membership
+grant is introduced for newly commissioned tenants.
+
+The private admission check uses the actual selected core/deployment Git heads,
+all copied binding bytes, overlay/state source pins and exact generated roster.
+It never accepts an old image/state merely because runtime files compare equal.
+Current source defaults remain canonical mg/dL (`mg/dl` internally); the identity
+overlay preserves display units and does not transform clinical values.
+
+Focused source-only checks (no Docker, IdP or app startup):
+
+```bash
+IDP_TEST_CORE=/owned/core IDP_TEST_CORE_COMMIT=9db0ce94f072c8f34aab889f0181afa4269a6758 node providers/identity/authentik/tests/source-settings.test.js
+IDP_TEST_CORE=/owned/core IDP_TEST_CORE_COMMIT=9db0ce94f072c8f34aab889f0181afa4269a6758 node providers/identity/authentik/tests/joined-source-admission.test.js
+```
+
+The joined admission fixture creates an owned local clone, copies the exact
+committed overlay and private synthetic metadata, then removes only that clone.
+The source-overlay semantic control must fail the same fixture when byte
+comparison is removed; restoration must admit again. Source preparation and
+recording-port probes do not establish real-provider/browser or shipping live-add
+execution. Those remain UNMEASURED pending one coordinator-owned native window.

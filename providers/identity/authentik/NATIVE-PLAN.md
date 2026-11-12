@@ -7,7 +7,12 @@ native window and authorize this separate diagnostic before any activation.
 
 ## Exact source and ownership
 
-Core: `ff5156b984424f1ef34bcef22d5bfa0071354cfa`.
+Core: `9db0ce94f072c8f34aab889f0181afa4269a6758`.
+
+This is the joined post-baseline preparation target. Earlier fba/6d source-only
+records retain their exact ff source and environment. No real-provider execution
+has been performed or relabelled. Build one new image from the final joined
+deployment commit; do not use the accepted baseline image or running state.
 Deployment SOURCE-admission imported by ordinary merge from
 `cf5bda3f2d189bac5d60269df5644759c40db9e1`; committed binding tree
 `3ba19b609af18184082cbd8aa5f978c9cfde016c` equals SOURCE and five core reduced
