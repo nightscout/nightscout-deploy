@@ -8,3 +8,5 @@ test('rejects an accepted identical early A effect even with changed B input',()
 test('rejects a second accepted identical B401 effect',()=>{const f=fixture();f.after.push(row(b,'d',3,{created:1543}));assert.throws(()=>verdict(f),/B_HAS_ONLY_INITIAL_AND_ONE_INTENTIONAL_CHANGED_EFFECT/);});
 test('rejects extra pending identical effects before they can be handed off',()=>{const f=fixture();f.after.push(row(a,'d',1,{state:'pending'}));assert.throws(()=>verdict(f),/A_IDENTICAL_EFFECT_MUST_NOT_REPEAT_EARLY/);});
 test('rejects fabricated clear, duplicate socket fanout, and a proof crossing the real repeat deadline',()=>{let f=fixture();f.after.push(row(a,'d',4,{clear:true}));assert.throws(()=>verdict(f),/NO_CONTROL_CLEAR/);f=fixture();f.fanout.get(a).push(hash(1));assert.throws(()=>verdict(f),/FANOUT_MATCHES/);f=fixture();f.now=60000;assert.throws(()=>verdict(f),/ORIGINAL_REPEAT_DEADLINE/);});
+
+test('refuses absent typed digest metadata before classifying an effect',()=>{const f=fixture();delete f.after[2].effectDigest;assert.throws(()=>verdict(f),/TYPED_EFFECT_IDENTITY_REQUIRED/);});

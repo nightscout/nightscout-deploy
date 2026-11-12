@@ -5,6 +5,7 @@ const assert=require('node:assert/strict');
 const live=new Set(['pending','attempting','uncertain','accepted']);
 function verdict({a,b,first,after,deadlines,now,fanout}){
  const initial=new Map();
+ for(const row of [...first,...after])assert(/^[0-9a-f]{64}$/.test(row.effectDigest||'')&&/^[0-9a-f]{64}$/.test(row.origin||'')&&Number.isSafeInteger(row.created),'TYPED_EFFECT_IDENTITY_REQUIRED');
  for(const tenant of [a,b]){
   const rows=first.filter(row=>row.tenant===tenant&&!row.clear&&row.state==='accepted');
   assert.equal(rows.length,1,'ONE_INITIAL_ACCEPTED_NORMAL_EFFECT');initial.set(tenant,rows[0]);
@@ -15,10 +16,10 @@ function verdict({a,b,first,after,deadlines,now,fanout}){
  const active=after.filter(row=>live.has(row.state));
  assert.equal(active.filter(row=>row.clear).length,0,'UNCHANGED_URGENT_CONDITION_HAS_NO_CONTROL_CLEAR');
  const aa=active.filter(row=>row.tenant===a&&!row.clear),bb=active.filter(row=>row.tenant===b&&!row.clear);
- assert.equal(aa.length,1,'A_IDENTICAL_EFFECT_MUST_NOT_REPEAT_EARLY');assert.equal(aa[0].request,initial.get(a).request);assert.equal(aa[0].effectDigest,initial.get(a).effectDigest);assert.equal(aa[0].state,'accepted');
+ assert.equal(aa.length,1,'A_IDENTICAL_EFFECT_MUST_NOT_REPEAT_EARLY');assert.equal(aa[0].request,initial.get(a).request);assert.equal(aa[0].effectDigest,initial.get(a).effectDigest);assert.equal(aa[0].origin,initial.get(a).origin);assert.equal(aa[0].state,'accepted');
  assert.equal(bb.length,2,'B_HAS_ONLY_INITIAL_AND_ONE_INTENTIONAL_CHANGED_EFFECT');
  const old=bb.filter(row=>row.effectDigest===initial.get(b).effectDigest),changed=bb.filter(row=>row.effectDigest!==initial.get(b).effectDigest);
- assert.equal(old.length,1,'B_INITIAL_EFFECT_NOT_DUPLICATED');assert.equal(old[0].request,initial.get(b).request);
+ assert.equal(old.length,1,'B_INITIAL_EFFECT_NOT_DUPLICATED');assert.equal(old[0].request,initial.get(b).request);assert.equal(old[0].origin,initial.get(b).origin);
  assert.equal(changed.length,1,'B_CHANGED_EFFECT_NOT_DUPLICATED');assert.equal(changed[0].state,'accepted');assert.notEqual(changed[0].origin,old[0].origin,'CHANGED_EFFECT_HAS_NEW_CAUSE');
  for(const row of changed)assert(row.created>=old[0].created,'CHANGED_EFFECT_FOLLOWS_INITIAL_INPUT');
  if(fanout){
