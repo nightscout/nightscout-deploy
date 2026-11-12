@@ -40,14 +40,18 @@ function create({ settings, store, resolverFactory, close = async () => {}, reso
   const presentation = Object.freeze({ theme: settings.theme });
   const resolver = resolverFactory({ store, mode: 'direct-alias', maxTenants: settings.maxTenants, refreshMs: settings.refreshMs,
     ...resolverOptions, onError: () => {} });
+  async function resolveTenant(request) {
+    if (closed || inflight >= settings.maxInflight) throw fail('UI_REGISTRY_UNAVAILABLE');
+    inflight++;
+    try { return await resolver.resolve(request); }
+    finally { inflight--; }
+  }
   return Object.freeze({
     async start() { return resolver.start(); },
     async resolve(request) {
-      if (closed || inflight >= settings.maxInflight) throw fail('UI_REGISTRY_UNAVAILABLE');
-      inflight++;
-      try { await resolver.resolve(request); return presentation; }
-      finally { inflight--; }
+      await resolveTenant(request); return presentation;
     },
+    resolveTenant,
     poll: () => resolver.poll(),
     stats: () => ({ ...resolver.stats(), inflight, closed }),
     close() { if (!closing) { closed = true; resolver.close(); closing = Promise.resolve().then(close); } return closing; }

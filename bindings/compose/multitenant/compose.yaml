@@ -14,6 +14,8 @@ x-app: &app
     # Role configuration bound (core config-file.js; empty = core's 1 MiB default). Set with
     # NS_BOOTSTRAP_CONFIG_MAX_BYTES so the bootstrap validates against the same value.
     MULTITENANT_CONFIG_MAX_BYTES: ${NS_BOOTSTRAP_CONFIG_MAX_BYTES:-}
+    NS_M7_DIAGNOSTICS: ${NS_M7_DIAGNOSTICS:-0}
+    NS_M7_DIAGNOSTICS_INTERVAL_MS: ${NS_M7_DIAGNOSTICS_INTERVAL_MS:-5000}
   networks: [backend]
   security_opt: [no-new-privileges:true]
   cap_drop: [ALL]

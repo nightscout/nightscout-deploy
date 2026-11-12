@@ -13,7 +13,7 @@ function policy(source = process.env) {
     return [kind, Number(raw)];
   }));
 }
-function render(template, { replicas = 1, source = process.env } = {}) {
+function render(template, { replicas = 1, realtime = false, source = process.env } = {}) {
   const selected = policy(source);
   const marker = '  upstream api { zone upstream_api 64k; server api:1337 resolve; }';
   const location = '    location ^~ /socket.io/ {';
@@ -26,6 +26,7 @@ function render(template, { replicas = 1, source = process.env } = {}) {
     '  limit_req_status 429;'
   ].join('\n');
   return template.replace('events { worker_connections 1024; }', 'worker_rlimit_nofile 65536;\nevents { worker_connections ' + selected.workerConnections + '; }').replace(marker, rules + '\n' + (replicas > 1 ? marker.replace('server api:', 'server api-internal:') : marker))
+    .replace('server realtime:1339 resolve;', realtime ? 'server socket-edge:1343 resolve;' : 'server realtime:1339 resolve;')
     .replace(location, location + '\n      limit_conn socket_connections ' + selected.connections + ';\n      limit_req zone=socket_handshakes burst=' + selected.burst + ' nodelay;');
 }
 module.exports = { DEFAULTS, policy, render };

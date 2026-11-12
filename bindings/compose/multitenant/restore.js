@@ -76,9 +76,16 @@ async function capture (config, tenant, env = process.env) {
   finally { await connection.end(); }
 }
 
+function operationPlacement(env = process.env) {
+  if (!env.MULTITENANT_REALTIME_PLACEMENT) return null;
+  const internal = require('../../lib/server/internal-api/listener-config').observer(env);
+  return require('../../lib/realtime-placement').load(env, { internal });
+}
+
 async function ready (config) {
+  const placement = operationPlacement();
   const cohort = await require('../../lib/server/serve/operation-cohort').createRemote({namespace: config.control.namespace,
-    tenants: config.tenants.map(t => t.id), participants: config.control.participants});
+    tenants: config.tenants.map(t => t.id), participants: config.control.participants, placement});
   await cohort.close();
 }
 
@@ -87,7 +94,7 @@ async function restore (config, artifact, env = process.env, hooks = {}) {
   const lifecycle = lifecycleFor(config);
   // createRemote reads actual participants. Missing peers fail before suspension.
   const cohort = await require('../../lib/server/serve/operation-cohort').createRemote({ namespace: config.control.namespace,
-    tenants: config.tenants.map(t => t.id), participants: config.control.participants });
+    tenants: config.tenants.map(t => t.id), participants: config.control.participants, placement: operationPlacement(env) });
   const { Pool } = require('pg');
   const pool = new Pool({ connectionString: env.NS_OPERATOR_PG, max: 1, connectionTimeoutMillis: 5000,
     statement_timeout: 10000, options: '-c search_path=pg_catalog' });

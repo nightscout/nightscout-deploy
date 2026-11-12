@@ -30,6 +30,8 @@ function prepare (args) {
   if (fs.existsSync(state) || fs.existsSync(path.join(base, '.env'))) throw new Error('State or deployment .env already exists; reuse it or choose a clean deployment checkout');
   const replicas = require('./replicas');
   const apiReplicas = replicas.count();
+  const realtime = require('./realtime-workers'), selectedRealtime = realtime.selection();
+  const diagnostics = require('./diagnostics').selection();
   const leaseSessions = require('./registry-plan').leaseSessions();
   require('./edge').policy();
   const source = require('./build').assertCleanSource(path.join(base, '../..'));
@@ -53,9 +55,19 @@ function prepare (args) {
   fs.chmodSync(path.join(tls, 'server.key'), 0o644);
   write(path.join(state, 'vault/demo.hcl'), 'disable_mlock = true\nui = false\napi_addr = "https://vault:8200"\nstorage "file" { path = "/vault/file" }\nlistener "tcp" {\n  address = "0.0.0.0:8200"\n  tls_cert_file = "/run/ns-tls/server.crt"\n  tls_key_file = "/run/ns-tls/server.key"\n}\n');
   fs.chmodSync(path.join(state, 'vault/demo.hcl'), 0o644);
-  write(path.join(state, 'edge/nginx.conf'), require('./edge').render(fs.readFileSync(path.join(base, 'nginx.compose.conf'), 'utf8'), { replicas: apiReplicas }));
+  if (selectedRealtime) {
+    fs.mkdirSync(path.join(state, 'placement'), { mode: 0o700 });
+    const map = realtime.initial(selectedRealtime);
+    write(path.join(state, 'placement/backend.json'), JSON.stringify(map) + '\n');
+    write(path.join(state, 'placement/routes.json'), JSON.stringify(map) + '\n');
+    write(path.join(state, 'compose.realtime.yaml'), realtime.compose(selectedRealtime, path.join(base, 'compose.yaml'), replicas.instances(apiReplicas).map(node => node.service)));
+  }
+  write(path.join(state, 'edge/nginx.conf'), require('./edge').render(fs.readFileSync(path.join(base, 'nginx.compose.conf'), 'utf8'), { replicas: apiReplicas, realtime: !!selectedRealtime }));
   write(path.join(state, 'compose.replicas.yaml'), replicas.compose(apiReplicas, path.join(base, 'compose.yaml')));
-  write(path.join(base, '.env'), 'NS_DEPLOY_COMMIT=' + deployCommit + '\nNS_API_REPLICAS=' + apiReplicas + '\nNS_OPERATION_LEASE_SESSIONS=' + leaseSessions + '\nNS_DEMO_STATE=' + state + '\nNS_DEMO_BIND=' + options.bind + '\nNS_DEMO_PORT=' + options.port + '\nNS_SOURCE_COMMIT=' + source + '\n');
+  write(path.join(base, '.env'), 'NS_DEPLOY_COMMIT=' + deployCommit + '\nNS_API_REPLICAS=' + apiReplicas + '\n' +
+    (selectedRealtime ? 'NS_REALTIME_WORKERS=' + selectedRealtime.workers + '\nNS_REALTIME_SHARDS=' + selectedRealtime.shards + '\n' : '') +
+    'NS_M7_DIAGNOSTICS=' + diagnostics.enabled + '\nNS_M7_DIAGNOSTICS_INTERVAL_MS=' + diagnostics.interval + '\n' +
+    'NS_OPERATION_LEASE_SESSIONS=' + leaseSessions + '\nNS_DEMO_STATE=' + state + '\nNS_DEMO_BIND=' + options.bind + '\nNS_DEMO_PORT=' + options.port + '\nNS_SOURCE_COMMIT=' + source + '\n');
   process.stdout.write('Prepared private synthetic deployment state. Run the explicit bootstrap before starting roles.\n');
   return {state, source};
 }

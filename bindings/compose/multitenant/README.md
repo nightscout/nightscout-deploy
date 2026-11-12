@@ -10,6 +10,14 @@ real records and identities out of this demonstration. Executed sources and
 acceptance belong to the [alignment release record](https://github.com/bewest/rag-nightscout-ecosystem-alignment/blob/main/releases/cgm-remote-monitor-16.0.0/contents.md);
 source checks do not establish restore acceptance.
 
+[Fixed realtime workers and controlled moves](REALTIME.md) are an explicit M7
+selection with their own deployment acceptance boundary. Preparation records
+`NS_M7_DIAGNOSTICS` (default `0`) and `NS_M7_DIAGNOSTICS_INTERVAL_MS` (default
+`5000`, range `1000..60000`). Selecting diagnostics passes these bounded settings
+to the application containers. Pool occupancy and inclusive request timing are
+diagnostic observations; missing samples remain unmeasured and their percentile
+histograms do not establish causal ordering or exclusive application time.
+
 ## Prepare and start
 
 Requirements: Docker Engine with Compose v2, Node.js, OpenSSL, and a host user
