@@ -82,9 +82,46 @@ capabilities.
 
 After an assignment rename, an error is an **uncertain new assignment**, never
 permission to restore an older file or reuse an old incarnation. Retain the private
-state and phase evidence. A retry can use a fresh confirmed generation when the
-actual boot and current assignment agree. Failure before boot metadata activation
-can instead produce `PLACEMENT_BOOT_IDENTITY_CHANGED`; explicit recovery for that
-boundary remains unmeasured. Stop and diagnose it rather than editing the assignment
-or silently declaring the old process dead. Native fault/recovery acceptance must
-close that boundary before declaring this binding ready.
+state and phase evidence. Every replacement now writes an fsynced private intent
+journal at `state/placement/operation.json` before effects. It binds the exact
+project/service, source pair, immutable image, Compose inputs, map/environment
+digests, boot incarnations and container Id/StartedAt/PID. It stores no credential
+values. Prior intents remain in private `history-<operation>.json` records.
+
+The Linux host must provide `flock`. A private file-descriptor lock excludes
+concurrent helpers. Every Docker CLI inherits that descriptor on the host; a
+surviving creator keeps the lock after its parent crashes. The descriptor is not
+passed into a container. A busy lock refuses recovery: an absent container while
+its creator still runs is not evidence of termination.
+
+An interrupted journal requires the same explicit invocation with **`--recover`**:
+
+```bash
+node deploy/multitenant/replace-realtime.js \
+  --project "$NS_M7_PROJECT" --state "$NS_M7_STATE" \
+  --compose "$NS_M7_BASE_COMPOSE" \
+  --compose "$NS_M7_API_COMPOSE" --compose "$NS_M7_REALTIME_COMPOSE" \
+  --worker realtime-1 --timeout 60000 --recover
+```
+
+Do not add `--shard`/`--to` during recovery: the journal preserves any unpublished
+move; an already-published move stays applied. Recovery first quiesces only the
+exact journal-labelled one-shot publisher and rereads actual state. Unknown,
+mutated or ambiguous state refuses. Creation and startup are separate: the helper
+records a labelled, never-started container Id before recording start intent and
+starting that exact Id. This distinguishes an intended incarnation that never ran
+from a real new process whose exact identity must be stopped. If startup ran
+before StartedAt/PID could be saved, the durable pre-start Id, operation/incarnation
+labels, image and unchanged custody identify the intended boot. Recovery reads its
+actual StartedAt/PID and stops that exact observed process before publishing a
+fresh incarnation; it never treats an unknown start time as proof of absence. Neither missing
+health nor expired leases substitute for this process proof.
+
+Recovery publishes a fresh confirmed generation, performs activation/readiness and
+publishes matching routes inside the product's exclusive fence. It never rewinds
+the assignment or reuses an interrupted boot incarnation. Filesystem/process and
+Docker-platform controls cover interrupted stop, assignment, environment, creation
+and startup. They simulate the product publisher/readiness boundary; full joined
+Docker/API/alarm/restore acceptance remains separately required. A pre-journal
+uncertain operation, changed source pair or changed Compose custody has no inferred
+recovery authorization and refuses rather than guessing an owner is dead.

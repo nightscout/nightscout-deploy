@@ -21,6 +21,9 @@ test('replacement retains logical partition and durable routing identity while r
 test('operator CLI requires exact owned project/state/roster and bounds the move deadline', () => {
   const base = ['--project','ns-owned-test','--state','/tmp/private-state','--compose','/tmp/compose.yaml','--worker','realtime-1'];
   assert.equal(operator.argumentsFor(base).timeout, 60000);
+  assert.equal(operator.argumentsFor([...base,'--recover']).recover,true);
+  assert.throws(()=>operator.argumentsFor([...base,'--recover','--recover']));
+  assert.throws(()=>operator.argumentsFor([...base,'--recover','--shard','0','--to','realtime-2']));
   for (const extra of [['--timeout','900001'], ['--shard','0'], ['--to','realtime-2'], ['--worker','realtime-2'], ['--unknown','value']]) assert.throws(() => operator.argumentsFor([...base,...extra]));
   assert.equal(operator.argumentsFor([...base,'--shard','0','--to','realtime-2']).to, 'realtime-2');
 });

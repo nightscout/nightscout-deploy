@@ -1,0 +1,94 @@
+TAP version 13
+# Subtest: actual Docker recovery after before-stop
+ok 1 - actual Docker recovery after before-stop
+  ---
+  duration_ms: 1898.64155
+  type: 'test'
+  ...
+# Subtest: actual Docker recovery after after-stop
+ok 2 - actual Docker recovery after after-stop
+  ---
+  duration_ms: 1805.395115
+  type: 'test'
+  ...
+# Subtest: actual Docker recovery after after-assignment
+ok 3 - actual Docker recovery after after-assignment
+  ---
+  duration_ms: 2286.447054
+  type: 'test'
+  ...
+# Subtest: actual Docker recovery after after-env
+ok 4 - actual Docker recovery after after-env
+  ---
+  duration_ms: 1913.047775
+  type: 'test'
+  ...
+# Subtest: actual Docker recovery after after-create-effect
+ok 5 - actual Docker recovery after after-create-effect
+  ---
+  duration_ms: 2082.746228
+  type: 'test'
+  ...
+# Subtest: actual Docker recovery after after-create
+ok 6 - actual Docker recovery after after-create
+  ---
+  duration_ms: 2138.626985
+  type: 'test'
+  ...
+# Subtest: actual Docker recovery after after-start-effect
+ok 7 - actual Docker recovery after after-start-effect
+  ---
+  duration_ms: 2419.659005
+  type: 'test'
+  ...
+# Subtest: actual Docker recovery after after-start
+ok 8 - actual Docker recovery after after-start
+  ---
+  duration_ms: 2486.90266
+  type: 'test'
+  ...
+# Subtest: actual Docker recovery after after-routes
+ok 9 - actual Docker recovery after after-routes
+  ---
+  duration_ms: 2557.017471
+  type: 'test'
+  ...
+# Subtest: actual attached Docker CLI retains inherited lock across creator host crash
+ok 10 - actual attached Docker CLI retains inherited lock across creator host crash
+  ---
+  duration_ms: 1020.278906
+  type: 'test'
+  ...
+# Subtest: actual changed container/process refuses recovery: restart
+ok 11 - actual changed container/process refuses recovery: restart
+  ---
+  duration_ms: 1378.021643
+  type: 'test'
+  ...
+# Subtest: actual changed container/process refuses recovery: recreate
+ok 12 - actual changed container/process refuses recovery: recreate
+  ---
+  duration_ms: 1524.926579
+  type: 'test'
+  ...
+# Subtest: actual foreign project and wrong paired source refuse before stop
+ok 13 - actual foreign project and wrong paired source refuse before stop
+  ---
+  duration_ms: 1759.385525
+  type: 'test'
+  ...
+# Subtest: actual still-running owner cannot be confirmed by a successful no-op stop command
+ok 14 - actual still-running owner cannot be confirmed by a successful no-op stop command
+  ---
+  duration_ms: 1784.808844
+  type: 'test'
+  ...
+1..14
+# tests 14
+# suites 0
+# pass 14
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 27061.988239

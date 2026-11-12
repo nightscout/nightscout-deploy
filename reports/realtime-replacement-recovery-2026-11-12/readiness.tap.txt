@@ -1,0 +1,16 @@
+TAP version 13
+# Subtest: route publication waits for actual eligible target readiness and preserves unrelated failed-shard independence
+ok 1 - route publication waits for actual eligible target readiness and preserves unrelated failed-shard independence
+  ---
+  duration_ms: 41.767852
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 45.982795
