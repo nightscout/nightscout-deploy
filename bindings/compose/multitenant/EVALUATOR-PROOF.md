@@ -46,3 +46,11 @@ they are diagnostics, not substitutes for the actual shipping acceptance.
 The stock/restore and two-to-three clinical-effect criteria are separate runs.
 Results belong in immutable alignment reports with exact source, binding,
 image, instrument and fixture-setup attribution; a skipped runner is unmeasured.
+
+The clinical oracle classifies exact source effect digests and causes. The initial
+A/B urgent alarms and the intentional changed B reading are three expected
+accepted normal effects; unchanged A and the changed B payload must not repeat
+early. Cancelled superseded rows are classified separately, accepted clears and
+extra live/pending effects refuse, socket fanout matches those typed effects, and
+the new B frame must carry its exact upload timestamp. The verdict must finish
+before both original durable repeat deadlines; it never changes heartbeat cadence.
