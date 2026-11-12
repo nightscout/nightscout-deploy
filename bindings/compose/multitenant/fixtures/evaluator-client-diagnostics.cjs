@@ -13,5 +13,5 @@ function connect({io,origin,namespace,agent,accessToken,secret,name,now=()=>perf
  return seen;
 }
 function prerequisites(a,b,main){return a.acks.some(row=>row.success)&&b.acks.some(row=>row.success)&&main.frames.length>0;}
-function summary(seen){return{name:seen.name,namespace:seen.namespace,connections:seen.connections,subscribed:seen.acks.some(row=>row.success),subscribeAcks:seen.acks.map(ack),authorizeAcks:seen.authorizeAcks,initialFrames:seen.frames.length,events:seen.events};}
+function summary(seen){return{name:seen.name,namespace:seen.namespace,connections:seen.connections,subscribed:seen.acks.some(row=>row.success),subscribeAckCount:seen.acks.length,subscribeAcksTruncated:seen.acks.length>64,subscribeAcks:seen.acks.slice(-64).map(ack),authorizeAckCount:seen.authorizeAcks.length,authorizeAcksTruncated:seen.authorizeAcks.length>64,authorizeAcks:seen.authorizeAcks.slice(-64),initialFrames:seen.frames.length,events:seen.events};}
 module.exports={connect,prerequisites,summary};
