@@ -90,6 +90,7 @@ async function replaceLocked(options, hooks) {
   const labels = JSON.parse(docker(['image','inspect',original.Image]))[0].Config.Labels;
   if (labels?.['org.opencontainers.image.revision'] !== complete.sourceCommit || labels?.['org.nightscout.deploy.revision'] !== complete.deployCommit) throw fail('PLACEMENT_SOURCE_IDENTITY_CHANGED');
   const configuration = JSON.parse(docker([...compose,'config','--format','json']));
+  try { require('./check-compose').checkPublisher(configuration); } catch { throw fail('PLACEMENT_PUBLISHER_CUSTODY_REFUSED'); }
   for (const selected of ['placement-operator',service]) {
     const image = configuration.services?.[selected]?.image;
     if (!image || JSON.parse(docker(['image','inspect',image]))[0].Id !== original.Image) throw fail('PLACEMENT_SOURCE_IDENTITY_CHANGED');
