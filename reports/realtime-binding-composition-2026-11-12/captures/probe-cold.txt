@@ -1,0 +1,2 @@
+COLD_HTTP_STATUS 403
+COLD_TARGET handshake403 handoffRefused

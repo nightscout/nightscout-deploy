@@ -1,0 +1,5 @@
+Internal listener for realtime on /run/ns-ipc/realtime-1.sock routes POST /alarm, POST /cohort/status, POST /cohort/invalidate
+Feed consumer alert FEED_DEGRADED
+Tenant warm drained: ready 1 failed 0 deferred 0 after 384 ms
+Listening for role realtime on 0.0.0.0:1339
+{"status":200,"live":true,"ready":true,"configured":1,"healthy":1,"resource":true}

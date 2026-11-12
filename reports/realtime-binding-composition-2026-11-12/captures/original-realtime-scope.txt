@@ -1,0 +1,5 @@
+Internal listener for realtime on /run/ns-ipc/realtime-1.sock routes POST /alarm, POST /cohort/status, POST /cohort/invalidate
+RT_BINDING_SCOPE [{"relation":"nsdemo_registry.tenant_registry","reads":true,"writes":false},{"relation":"nsdemo_registry.tenant_registry_keys","reads":true,"writes":false}]
+RT_BINDING_DIAGNOSTIC unsafe evaluator scope
+nightscout multitenant: realtime preview readiness or initialization refused
+

@@ -1,0 +1,12 @@
+{"stage":"exchange","instance":"api:1337","tenant":0,"status":200,"code":null}
+{"stage":"status","instance":"api:1337","tenant":0,"status":200,"code":null}
+{"stage":"exchange","instance":"api:1337","tenant":1,"status":200,"code":null}
+{"stage":"status","instance":"api:1337","tenant":1,"status":200,"code":null}
+{"stage":"exchange","instance":"api-2:1337","tenant":0,"status":200,"code":null}
+{"stage":"status","instance":"api-2:1337","tenant":0,"status":200,"code":null}
+{"stage":"exchange","instance":"api-2:1337","tenant":1,"status":200,"code":null}
+{"stage":"status","instance":"api-2:1337","tenant":1,"status":200,"code":null}
+{"stage":"exchange","instance":"nginx:8080","tenant":0,"status":200,"code":null}
+{"stage":"status","instance":"nginx:8080","tenant":0,"status":200,"code":null}
+{"stage":"exchange","instance":"nginx:8080","tenant":1,"status":200,"code":null}
+{"stage":"status","instance":"nginx:8080","tenant":1,"status":200,"code":null}

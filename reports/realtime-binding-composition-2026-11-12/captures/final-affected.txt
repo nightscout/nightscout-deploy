@@ -1,0 +1,328 @@
+TAP version 13
+# Subtest: selected launcher applies the same two fixed-roster overlays and starts every worker plus socket edge
+ok 1 - selected launcher applies the same two fixed-roster overlays and starts every worker plus socket edge
+  ---
+  duration_ms: 324.636253
+  type: 'test'
+  ...
+# Subtest: publisher authority is exact readonly-custody shape with pinned source and no unused serving/operator credentials
+ok 2 - publisher authority is exact readonly-custody shape with pinned source and no unused serving/operator credentials
+  ---
+  duration_ms: 6.938165
+  type: 'test'
+  ...
+# Subtest: private publisher never adopts an operator fallback or reaches SQL without explicit narrow connection
+ok 3 - private publisher never adopts an operator fallback or reaches SQL without explicit narrow connection
+  ---
+  duration_ms: 25.206416
+  type: 'test'
+  ...
+# Subtest: route publication waits for actual eligible target readiness and preserves unrelated failed-shard independence
+ok 4 - route publication waits for actual eligible target readiness and preserves unrelated failed-shard independence
+  ---
+  duration_ms: 77.264881
+  type: 'test'
+  ...
+# Subtest: actual Compose publisher has no broad environment, IPC, artifact or restore-custody mount
+ok 5 - actual Compose publisher has no broad environment, IPC, artifact or restore-custody mount
+  ---
+  duration_ms: 130.528962
+  type: 'test'
+  ...
+# Subtest: two API/two realtime documents pass actual product parsers with exact placement and idle-worker coverage
+ok 6 - two API/two realtime documents pass actual product parsers with exact placement and idle-worker coverage
+  ---
+  duration_ms: 282.367648
+  type: 'test'
+  ...
+# Subtest: sharding is opt-in with an explicit logical shard count independent of worker count
+ok 7 - sharding is opt-in with an explicit logical shard count independent of worker count
+  ---
+  duration_ms: 23.143816
+  type: 'test'
+  ...
+# Subtest: all fixed participants include idle workers and use exact private instances
+ok 8 - all fixed participants include idle workers and use exact private instances
+  ---
+  duration_ms: 0.624175
+  type: 'test'
+  ...
+# Subtest: Compose wiring covers every API instance and routes public sockets through the registry edge
+ok 9 - Compose wiring covers every API instance and routes public sockets through the registry edge
+  ---
+  duration_ms: 1.331271
+  type: 'test'
+  ...
+# Subtest: registry role documents have no static roster or per-tenant key lists and pass product parsers
+ok 10 - registry role documents have no static roster or per-tenant key lists and pass product parsers
+  ---
+  duration_ms: 265.77239
+  type: 'test'
+  ...
+# Subtest: control: restoring a static list into registry authority is refused, restoration passes
+ok 11 - control: restoring a static list into registry authority is refused, restoration passes
+  ---
+  duration_ms: 7.486802
+  type: 'test'
+  ...
+# Subtest: provisioning identity and read-only settings/activity capabilities are distinct from serving
+ok 12 - provisioning identity and read-only settings/activity capabilities are distinct from serving
+  ---
+  duration_ms: 8.247827
+  type: 'test'
+  ...
+# Subtest: control: adding the operation control schema to protected data refuses launcher resource matching
+ok 13 - control: adding the operation control schema to protected data refuses launcher resource matching
+  ---
+  duration_ms: 3.659634
+  type: 'test'
+  ...
+# Subtest: restore inventory admits the independent evaluator checkpoint and all current product metadata families
+ok 14 - restore inventory admits the independent evaluator checkpoint and all current product metadata families
+  ---
+  duration_ms: 13.238141
+  type: 'test'
+  ...
+# Subtest: control: a source table absent from the admitted restore inventory refuses instead of being omitted
+ok 15 - control: a source table absent from the admitted restore inventory refuses instead of being omitted
+  ---
+  duration_ms: 4.369492
+  type: 'test'
+  ...
+# Subtest: bounded lifetime-session selection is explicit and cannot exceed the selected physical pool
+ok 16 - bounded lifetime-session selection is explicit and cannot exceed the selected physical pool
+  ---
+  duration_ms: 0.185186
+  type: 'test'
+  ...
+# Subtest: raw LISTEN transport has a distinct login without any table, function or replication grant
+ok 17 - raw LISTEN transport has a distinct login without any table, function or replication grant
+  ---
+  duration_ms: 2.082342
+  type: 'test'
+  ...
+# Subtest: placement publication has readonly control metadata and registry enumeration, without maintenance identity
+ok 18 - placement publication has readonly control metadata and registry enumeration, without maintenance identity
+  ---
+  duration_ms: 1.670335
+  type: 'test'
+  ...
+# Subtest: replacement retains logical partition and durable routing identity while rotating the exact stopped boot
+ok 19 - replacement retains logical partition and durable routing identity while rotating the exact stopped boot
+  ---
+  duration_ms: 3.230264
+  type: 'test'
+  ...
+# Subtest: operator CLI requires exact owned project/state/roster and bounds the move deadline
+ok 20 - operator CLI requires exact owned project/state/roster and bounds the move deadline
+  ---
+  duration_ms: 1.450763
+  type: 'test'
+  ...
+# Subtest: private boot identity replacement rejects symlinks and broad files and persists complete JSON atomically
+ok 21 - private boot identity replacement rejects symlinks and broad files and persists complete JSON atomically
+  ---
+  duration_ms: 9.947844
+  type: 'test'
+  ...
+# Subtest: explicit fresh-generation recovery after before-stop
+ok 22 - explicit fresh-generation recovery after before-stop
+  ---
+  duration_ms: 183.386323
+  type: 'test'
+  ...
+# Subtest: explicit fresh-generation recovery after after-stop
+ok 23 - explicit fresh-generation recovery after after-stop
+  ---
+  duration_ms: 173.427262
+  type: 'test'
+  ...
+# Subtest: explicit fresh-generation recovery after after-assignment
+ok 24 - explicit fresh-generation recovery after after-assignment
+  ---
+  duration_ms: 211.652642
+  type: 'test'
+  ...
+# Subtest: explicit fresh-generation recovery after after-env
+ok 25 - explicit fresh-generation recovery after after-env
+  ---
+  duration_ms: 203.642877
+  type: 'test'
+  ...
+# Subtest: explicit fresh-generation recovery after after-create-effect
+ok 26 - explicit fresh-generation recovery after after-create-effect
+  ---
+  duration_ms: 210.016886
+  type: 'test'
+  ...
+# Subtest: explicit fresh-generation recovery after after-create
+ok 27 - explicit fresh-generation recovery after after-create
+  ---
+  duration_ms: 230.986499
+  type: 'test'
+  ...
+# Subtest: explicit fresh-generation recovery after after-start-effect
+ok 28 - explicit fresh-generation recovery after after-start-effect
+  ---
+  duration_ms: 273.216839
+  type: 'test'
+  ...
+# Subtest: explicit fresh-generation recovery after after-start
+ok 29 - explicit fresh-generation recovery after after-start
+  ---
+  duration_ms: 255.16919
+  type: 'test'
+  ...
+# Subtest: explicit fresh-generation recovery after after-routes
+ok 30 - explicit fresh-generation recovery after after-routes
+  ---
+  duration_ms: 278.799258
+  type: 'test'
+  ...
+# Subtest: no-stop confirmation refuses before backend generation can advance
+ok 31 - no-stop confirmation refuses before backend generation can advance
+  ---
+  duration_ms: 69.250499
+  type: 'test'
+  ...
+# Subtest: recovery refuses mutated project
+ok 32 - recovery refuses mutated project
+  ---
+  duration_ms: 48.791888
+  type: 'test'
+  ...
+# Subtest: recovery refuses mutated image
+ok 33 - recovery refuses mutated image
+  ---
+  duration_ms: 86.550197
+  type: 'test'
+  ...
+# Subtest: recovery refuses mutated startedAt
+ok 34 - recovery refuses mutated startedAt
+  ---
+  duration_ms: 60.529192
+  type: 'test'
+  ...
+# Subtest: recovery refuses mutated pid
+ok 35 - recovery refuses mutated pid
+  ---
+  duration_ms: 50.821456
+  type: 'test'
+  ...
+# Subtest: recovery refuses mutated container
+ok 36 - recovery refuses mutated container
+  ---
+  duration_ms: 88.741955
+  type: 'test'
+  ...
+# Subtest: recovery refuses mutated env
+ok 37 - recovery refuses mutated env
+  ---
+  duration_ms: 65.141402
+  type: 'test'
+  ...
+# Subtest: recovery refuses mutated backend
+ok 38 - recovery refuses mutated backend
+  ---
+  duration_ms: 62.339749
+  type: 'test'
+  ...
+# Subtest: recovery refuses mutated compose
+ok 39 - recovery refuses mutated compose
+  ---
+  duration_ms: 53.942596
+  type: 'test'
+  ...
+# Subtest: recovery refuses mutated authority
+ok 40 - recovery refuses mutated authority
+  ---
+  duration_ms: 56.912124
+  type: 'test'
+  ...
+# Subtest: native FD lock rejects concurrent operation and releases after last close
+ok 41 - native FD lock rejects concurrent operation and releases after last close
+  ---
+  duration_ms: 38.964106
+  type: 'test'
+  ...
+# Subtest: crashed host leaves creator FD locked until the actual inherited child exits
+ok 42 - crashed host leaves creator FD locked until the actual inherited child exits
+  ---
+  duration_ms: 75.764098
+  type: 'test'
+  ...
+# Subtest: operator config refuses a public target, shared lock and missing explicit drain bound
+ok 43 - operator config refuses a public target, shared lock and missing explicit drain bound
+  ---
+  duration_ms: 3.384448
+  type: 'test'
+  ...
+# Subtest: operator CLI requires an explicit tenant, private directory and exact restore digest
+ok 44 - operator CLI requires an explicit tenant, private directory and exact restore digest
+  ---
+  duration_ms: 0.422952
+  type: 'test'
+  ...
+# Subtest: HTTP failures with sensitive bodies are refused without returning their payload
+ok 45 - HTTP failures with sensitive bodies are refused without returning their payload
+  ---
+  duration_ms: 1.048653
+  type: 'test'
+  ...
+# Subtest: demo ordinary protocol passes; missing A restoration, deletion, B progress or B fidelity fail
+ok 46 - demo ordinary protocol passes; missing A restoration, deletion, B progress or B fidelity fail
+  ---
+  duration_ms: 7.418439
+  type: 'test'
+  ...
+# Subtest: missing cohort refuses before the first demo mutation
+ok 47 - missing cohort refuses before the first demo mutation
+  ---
+  duration_ms: 0.316065
+  type: 'test'
+  ...
+# Subtest: registry operator cohort uses one exact typed namespace label while static compatibility stays explicit
+ok 48 - registry operator cohort uses one exact typed namespace label while static compatibility stays explicit
+  ---
+  duration_ms: 1.046312
+  type: 'test'
+  ...
+# Subtest: demo retries only typed warming GET exchange/read with the original absolute signal; other refusals and writes stay terminal
+ok 49 - demo retries only typed warming GET exchange/read with the original absolute signal; other refusals and writes stay terminal
+  ---
+  duration_ms: 202.106699
+  type: 'test'
+  ...
+# Subtest: canonical tenant routing follows current map; selectors and unknown hosts never reach a backend
+ok 50 - canonical tenant routing follows current map; selectors and unknown hosts never reach a backend
+  ---
+  duration_ms: 48.612738
+  type: 'test'
+  ...
+# Subtest: upgrade streams both heads and socket bytes and closes the owned transport
+ok 51 - upgrade streams both heads and socket bytes and closes the owned transport
+  ---
+  duration_ms: 4.301486
+  type: 'test'
+  ...
+# Subtest: unavailable destination refuses within a bounded header deadline
+ok 52 - unavailable destination refuses within a bounded header deadline
+  ---
+  duration_ms: 25.177501
+  type: 'test'
+  ...
+# Subtest: stock long polling remains connected while its next response waits beyond five seconds
+ok 53 - stock long polling remains connected while its next response waits beyond five seconds
+  ---
+  duration_ms: 6277.475043
+  type: 'test'
+  ...
+1..53
+# tests 53
+# suites 0
+# pass 53
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 6447.902226
