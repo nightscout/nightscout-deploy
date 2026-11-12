@@ -6,9 +6,16 @@ cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 # volumes implicitly. For another instance, use a separate checkout and invoke
 # Compose with its own explicit --project-name.
 compose=(docker compose --project-name nightscout-multitenant-demo --env-file .env -f compose.yaml)
+realtime_services="realtime"
 if [ -f .env ]; then
   replica_file=$(node -e 'const fs=require("node:fs"),path=require("node:path");const lines=fs.readFileSync(".env","utf8").split("\n");const line=lines.find(x=>x.startsWith("NS_DEMO_STATE="));if(!line)process.exit(1);process.stdout.write(path.join(line.slice(14),"compose.replicas.yaml"));')
   [ -f "$replica_file" ] && compose+=(-f "$replica_file")
+  realtime_services=$(node -e 'const fs=require("node:fs");const source=Object.fromEntries(fs.readFileSync(".env","utf8").trim().split("\n").map(line=>{const i=line.indexOf("=");return [line.slice(0,i),line.slice(i+1)];}));console.log(require("./realtime-workers").services(require("./realtime-workers").selection(source)).join(" "));')
+  if [ "$realtime_services" != "realtime" ]; then
+    realtime_file="$(dirname "$replica_file")/compose.realtime.yaml"
+    [ -f "$realtime_file" ] || { echo 'Selected realtime placement overlay missing' >&2; exit 1; }
+    compose+=(-f "$realtime_file")
+  fi
 fi
 case "${1:-}" in
   prepare)
@@ -36,7 +43,7 @@ case "${1:-}" in
     "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 900 $replicas
     "${compose[@]}" --profile ops run --rm --no-deps primer node deploy/multitenant/prime.js prime
     node publish-primer.js "$(dirname "$replica_file")"
-    exec "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 900 realtime evaluator tenant-admin ui nginx
+    exec "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 900 $realtime_services evaluator tenant-admin ui nginx
     ;;
   demo)
     node build.js --check-image

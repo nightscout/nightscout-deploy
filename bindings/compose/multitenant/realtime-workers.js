@@ -63,4 +63,5 @@ function compose(selected, composeFile, apiInstances = ['api']) {
     '  nginx:', '    depends_on:', '      socket-edge: {condition: service_healthy}');
   return lines.join('\n') + '\n';
 }
-module.exports = { selection, initial, expand, compose, serviceOf };
+function services(selected) { return selected ? [...Array.from({ length: selected.workers }, (_, index) => serviceOf(index)), 'socket-edge'] : ['realtime']; }
+module.exports = { selection, initial, expand, compose, serviceOf, services };

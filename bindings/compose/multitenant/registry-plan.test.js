@@ -49,6 +49,8 @@ test('provisioning identity and read-only settings/activity capabilities are dis
   const grants = plan.grants(layout).join('\n');
   assert.match(grants, /REVOKE ALL ON FUNCTION \"nsdemo_display_settings\"\.tenant_settings_values_valid\(jsonb\) FROM PUBLIC/);
   assert.match(grants, /GRANT EXECUTE ON FUNCTION \"nsdemo_display_settings\"\.tenant_settings_values_valid\(jsonb\) TO \"nsdemo_provisioner\"/);
+  assert.match(grants, /GRANT EXECUTE ON FUNCTION "nsdemo_registry"\.tenant_registry_lookup\(text, text\) TO "nsdemo_realtime"/);
+  assert(!grants.split('\n').some(sql => /GRANT SELECT ON "nsdemo_registry"\.tenant_registry(?:,|_keys)/.test(sql) && /TO "nsdemo_realtime"/.test(sql)), 'realtime uses reviewed resolver/enumerator functions without raw registry rows');
   assert.match(grants, /tenant_registry_lookup/); assert.match(grants, /tenant_settings_history/);
   assert(!grants.split('\n').some(sql => /INSERT|UPDATE|DELETE/.test(sql) && /TO "nsdemo_display_reader"/.test(sql)));
 });
