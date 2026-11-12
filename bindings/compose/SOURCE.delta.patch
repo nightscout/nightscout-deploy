@@ -55,7 +55,7 @@
      roles:Object.fromEntries(names.map(name=>[name,prefix+'_'+name])),mount:prefix+'_transit'};
  }
  function insertionGrants({namespace,domain,role,mode='serving'}) {
-@@ -85,20 +115,18 @@
+@@ -85,20 +115,19 @@
    grant('INSERT',table('authorization','tenant_subject_admin_audit'),'root_writer');
    for(const name of ['tenant_authorization_config','tenant_owner_policy'])grant('SELECT,UPDATE(owner_fence)',table('authorization',name),'root_writer');
    grant('SELECT',table('authorization','tenant_owner_actors'),'root_writer');
@@ -75,13 +75,15 @@
 +  sql.push(...require('../../lib/tenant-registry/postgres').grants({namespace:ns.registry,readers:[r.ownership_operator]}));
 +  sql.push(...require('../../lib/tenant-connector/postgres-sources').grants({namespaces:{settings:ns.display_settings,registry:ns.registry,secrets:ns.secrets,control:ns.control},writer:r.connector_writer}));
    // Decision root-writer-fenced: root_writer joins the lower-role window reads; the api opens its
-   // subject-admin store connection under the tenant operation window, whose admission reads these.
+-  // subject-admin store connection under the tenant operation window, whose admission reads these.
 -  for(const who of Object.keys(r).filter(name=>!['operator','ownership_operator'].includes(name))){
-+  for(const who of Object.keys(r).filter(name=>!['operator','ownership_operator','provisioner','display_reader','activity_reader','feed_reader','connector_writer','management_issuer','ui_registry'].includes(name))){
++  // subject-admin and read-only settings/activity connections join the tenant
++  // operation window; its admission requires these three metadata reads.
++  for(const who of Object.keys(r).filter(name=>!['operator','ownership_operator','provisioner','feed_reader','connector_writer','management_issuer','ui_registry'].includes(name))){
      schema('control',who);for(const name of ['schema_migrations','tenant_lifecycle_windows','tenant_lifecycle_operations'])grant('SELECT',table('control',name),who);
      if(who.startsWith('lifetime_')){
        grant('INSERT(tenant_id,operation_id,generation),UPDATE(finished)',table('control','tenant_lifecycle_operations'),who);
-@@ -119,14 +147,24 @@
+@@ -119,14 +148,24 @@
    // Decision change-stamp-definer-function: search_path pinned, EXECUTE for realtime and evaluator only;
    // both read the function's catalogue ledger at readiness (write-clock-complete: the evaluator adopts it).
    sql.push(...require('../../lib/change-stamps/postgres').grants({namespace:ns.change_stamps,clockNamespace:ns.clock,roles:[r.realtime,r.evaluator]}));
@@ -97,7 +99,7 @@
    return sql;
  }
 -function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress}) {
-+function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress,registryMode=false}) {
++function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress,registryMode=false,realtimePlacement=null}) {
    const ns=l.namespaces, base='/run/ns-config',ipc='/run/ns-ipc';
    const domainNamespaces=Object.fromEntries(clinical.map(name=>[name,ns[name]]));
 -  const tenants=[A,B].map(id=>({id,revision:'compose-demo-v1',settings:{enable:['bgnow','delta','direction','simplealarms','treatmentnotify']}}));
@@ -110,7 +112,7 @@
    const pgAddress=new URL(urls.evaluator);
    const evaluator={version:1,datastore:{hostname:pgAddress.hostname,port:Number(pgAddress.port||5432),database:decodeURIComponent(pgAddress.pathname.slice(1))},postgres:{connectionEnv:'NS_EVALUATOR_PG',namespaces:{...domainNamespaces,clock:ns.clock,checkpoint:ns.eval_checkpoint,changeStamps:ns.change_stamps}},
      consumer:'evaluator-compose-demo',...limits,timeIntervalMs:1000,socketOrderDomains:['treatments','devicestatus','profile'],tenants,
-@@ -146,7 +184,7 @@
+@@ -146,7 +185,7 @@
      vault:{address:vaultAddress,mount:l.mount,timeoutMs:5000},resolution:{mode:'direct-alias'},tenants:tenants.map((tenant,i)=>({id:tenant.id,aliases:aliases[i],settings:tenant.settings,
        vault:{tokenEnv:'NS_VAULT_'+i,encryptionKey:'tenant-'+i+'-data',signingKey:'tenant-'+i+'-signing',signingVersion:1}})),
      accessTokens:{issuer:'nightscout-compose-demo',audience:'nightscout-data',keys:publicKeys},
@@ -119,7 +121,7 @@
        alarm:{connectionEnv:'NS_ALARM_PG',namespace:ns.alarm},consumerState:{evaluatorConfigEnv:'MULTITENANT_EVALUATOR_CONFIG'}}};
    const owner={version:1,postgres:{writerConnectionEnv:'NS_OWNER_WRITER_PG',accessConnectionEnv:'NS_OWNER_READER_PG',namespaces:{authorization:ns.authorization,credentials:ns.legacy,access:ns.access}},
      ownerPolicy:{catalogue:ownerCatalogue.slice()},resolution:{mode:'direct-alias'},tenants:api.tenants.map(({id,aliases})=>({id,aliases})),
-@@ -157,35 +195,50 @@
+@@ -157,35 +196,57 @@
    const socketOf=role=>ipc+'/'+role+'.sock';
    const common={...Object.fromEntries(serviceRoles.map(role=>[require('../../lib/server/internal-api/listener-config').envName(role)+'SOCKET',socketOf(role)])),NODE_EXTRA_CA_CERTS:'/run/ns-ca/ca.crt'};
    const own=role=>({NS_SERVE_INTERNAL_SOCKET:socketOf(role)});
@@ -139,7 +141,8 @@
 +  let docs = {configs,environments,operations,admission,remote,locks,ui:{version:1,tenants:aliases.map(aliases=>({aliases,theme:'default'}))}};
 +  if(registryMode) docs = require('./registry-plan').expand(docs,{layout:l,urls,vaultAddress});
 +  else for(const env of Object.values(environments)) env.MULTITENANT_STATIC_TENANTS='lab';
-+  return require('./replicas').expand(docs);
++  if (realtimePlacement && !registryMode) throw new TypeError('Realtime placement requires durable registry mode');
++  return require('./realtime-workers').expand(require('./replicas').expand(docs), realtimePlacement);
  }
  function lifecycle(l) {
 -  const aliases={rt_checkpoint:'checkpoint',eval_checkpoint:'evaluator_checkpoint',alarm:'alarm_suppression',outbox:'notification_outbox'};
@@ -164,9 +167,7 @@
      evaluator:require('../../lib/server/serve/evaluator-config').load,'tenant-admin':require('../../lib/server/serve/owner-preview-config').load};
    const namespaces=require('../../lib/server/serve/operation-cohort').protectedNamespaces;
 -  for(const role of serviceRoles){
-+  for(const role of Object.keys(docs.configs)){
-+    const productRole = role.startsWith('api-') ? 'api' : role;
-     const env=Object.fromEntries(Object.entries(docs.environments[role]).map(([key,value])=>[key,typeof value==='string'?value.replace('/run/ns-config',path.join(directory,role)):value]));
+-    const env=Object.fromEntries(Object.entries(docs.environments[role]).map(([key,value])=>[key,typeof value==='string'?value.replace('/run/ns-config',path.join(directory,role)):value]));
 -    const internal=require('../../lib/server/internal-api/listener-config').resolve([role],env);
 -    const parsed=parsers[role](env,internal),operation=require('../../lib/server/serve/operation-cohort-config').load(env,internal);
 -    const participant=operation.participants.find(row=>row.id===role);
@@ -174,10 +175,19 @@
 -  }
 -}
 -module.exports={A,B,subject,clinical,ordered,serviceRoles,quote,catalogues,layout,insertionGrants,grants,documents,lifecycle,validateFiles};
++  for(const role of Object.keys(docs.configs)){
++    const productRole = role.startsWith('api-') ? 'api' : role.startsWith('realtime-') ? 'realtime' : role;
++    const env=Object.fromEntries(Object.entries(docs.environments[role]).map(([key,value])=>[key,typeof value==='string'?value.replace('/run/ns-config',path.join(directory,role)).replace('/run/ns-placement',path.join(directory,'placement')):value]));
 +    const internal=require('../../lib/server/internal-api/listener-config').resolve([productRole],env);
 +    const parsed=parsers[productRole](env,internal),operation=require('../../lib/server/serve/operation-cohort-config').load(env,internal);
 +    const participant=operation.participants.find(row=>row.id===operation.participantId);
 +    if(JSON.stringify(namespaces(parsed).filter(name => name !== operation.namespace).sort())!==JSON.stringify(participant.namespaces))throw new TypeError('Deployment participant namespace mismatch');
++    if (operation.placement) {
++      const map = operation.placement.current(), peers = operation.participants.filter(row => row.roles.includes('realtime'));
++      const key = require('../../lib/server/internal-api/listener-config').key;
++      if (peers.length !== map.workers.size || new Set(peers.map(row => row.worker)).size !== peers.length ||
++          peers.some(row => !map.workers.has(row.worker) || key(row.endpoint) !== key(map.workers.get(row.worker).endpoint))) throw new TypeError('Deployment realtime placement coverage mismatch');
++    }
 +  }
 +  // The ui's own parser (tenant ceiling, aliases), on the written file when there is one, so a
 +  // refusal surfaces at bootstrap instead of when the ui starts.
@@ -260,6 +270,33 @@
  }
  
  function lifecycleFor (config) {
+@@ -88,9 +76,16 @@
+   finally { await connection.end(); }
+ }
+ 
++function operationPlacement(env = process.env) {
++  if (!env.MULTITENANT_REALTIME_PLACEMENT) return null;
++  const internal = require('../../lib/server/internal-api/listener-config').observer(env);
++  return require('../../lib/realtime-placement').load(env, { internal });
++}
++
+ async function ready (config) {
++  const placement = operationPlacement();
+   const cohort = await require('../../lib/server/serve/operation-cohort').createRemote({namespace: config.control.namespace,
+-    tenants: config.tenants.map(t => t.id), participants: config.control.participants});
++    tenants: config.tenants.map(t => t.id), participants: config.control.participants, placement});
+   await cohort.close();
+ }
+ 
+@@ -99,7 +94,7 @@
+   const lifecycle = lifecycleFor(config);
+   // createRemote reads actual participants. Missing peers fail before suspension.
+   const cohort = await require('../../lib/server/serve/operation-cohort').createRemote({ namespace: config.control.namespace,
+-    tenants: config.tenants.map(t => t.id), participants: config.control.participants });
++    tenants: config.tenants.map(t => t.id), participants: config.control.participants, placement: operationPlacement(env) });
+   const { Pool } = require('pg');
+   const pool = new Pool({ connectionString: env.NS_OPERATOR_PG, max: 1, connectionTimeoutMillis: 5000,
+     statement_timeout: 10000, options: '-c search_path=pg_catalog' });
 --- a/ui.js
 +++ b/ui.js
 @@ -1,6 +1,6 @@

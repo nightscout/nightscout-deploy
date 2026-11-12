@@ -4,11 +4,11 @@
 |---|---|
 | upstream repository | nightscout/cgm-remote-monitor |
 | upstream path | `deploy/multitenant` |
-| upstream commit | `c1c501b645ed2133d20d3577c2d99e427a77ca53` (local M7 integration source; final acceptance pending) |
+| upstream commit | `079a3b4c9a6ece9610b32025a0826f756fbb23f0` (local M7 controlled-placement integration; final acceptance pending) |
 | upstream tree hash of that path | `fdc9f8dd2644b8789c86abeb030fbc0ad7304780` (core's reduced fixture: `config.js`, `demo.js`, `health.js`, `restore.js`, `ui.js`, `README.md`) |
 | import method | Recorded core fixture plus reviewed deployment-owned bootstrap, placement, edge and preparation changes; the patch is checked by `tools/compose-identity-check.sh`. |
 | local delta | [`SOURCE.delta.patch`](SOURCE.delta.patch), against the recorded core fixture. This binding generates fixed API instances and exact maintenance addresses, supports local health probes for network listeners, removes realtime maxSockets and renders explicit per-IP edge budgets. The reduced core fixture stays test-only. |
-| tree hash here | `453bec6b8a969f3fc6cf6fdf6b4c088138b3efdb` |
+| tree hash here | `37f658275d9f7f6d4dd953f3140c34b1b07abd1b` |
 | imported on | 2026-11-11 |
 
 History: first imported 2026-11-09 from `ed2ced00c80bd0a6a7d75f834d2c6e2af8c71364` (tree
@@ -103,3 +103,10 @@ the delta is unchanged.
    tenants x `NS_DEMO_SOCKETS_PER_TENANT` (1..100, default 2), never below the former 100, so the
    default demonstration's documents are unchanged. `validateFiles` runs the ui's `parseConfig` on
    the written ui config.
+
+2026-11-12 controlled-placement binding: the optional fixed realtime roster uses
+durable registry Host resolution, stable logical shards, separate backend/route
+views and private controlled publication. The default remains unsharded. Explicit
+M7 diagnostics settings are recorded in preparation, off by default. Focused product
+parser/client/driver checks pass; actual full-stack move/recovery and the frozen
+comprehensive campaign remain separate acceptance boundaries.
