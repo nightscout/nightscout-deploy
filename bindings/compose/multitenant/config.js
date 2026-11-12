@@ -37,7 +37,7 @@ function quote(name) {
 function catalogues() {
   const domains = require('../../lib/server/serve/postgres-domains');
   const successors = require('../../lib/server/tenant-socket-order-port').catalogues;
-  return {...Object.fromEntries([...clinical,'settings'].map(name => [name,successors[name] || domains.get(name).catalogue])),
+  return {...(require('./evaluator-workers').selection() ? {pool:require('../../lib/pool-membership/postgres-candidate.json')} : {}),...Object.fromEntries([...clinical,'settings'].map(name => [name,successors[name] || domains.get(name).catalogue])),
     authorization:require('../../lib/tenant-authorization/postgres-candidate.json'), secrets:require('../../lib/secrets/postgres-candidate.json'),
     legacy:require('../../lib/secrets/legacy-credentials-candidate.json'), access:require('../../lib/tenant-authorization/access-candidate.json'),
     clock:require('../../migrations/candidates/postgres-write-clock-v1.json'), rt_checkpoint:require('../../migrations/candidates/postgres-consumer-checkpoint-v1.json'),
@@ -56,6 +56,7 @@ function layout(prefix = 'nsdemo') {
   quote(prefix);
   if (prefix.length > 24) throw new TypeError('Deployment prefix too long');
   const names = ['api','readiness','realtime','evaluator','alarm','suppression','outbox','owner_writer','owner_reader','root_writer','operator','provisioner','display_reader','activity_reader','feed_reader','feed_listener','placement_publisher','ownership_operator','connector_writer','management_issuer','ui_registry',
+    ...(require('./evaluator-workers').selection() ? ['pool_member','pool_operator'] : []),
     ...serviceRoles.map(name=>'lifetime_'+name.replace('-','_'))];
   return {prefix,owner:prefix+'_owner',feedOwner:prefix+'_feed_owner',managementAuthorityOwner:prefix+'_management_authority',namespaces:Object.fromEntries(Object.keys(catalogues()).map(name=>[name,prefix+'_'+name])),
     roles:Object.fromEntries(names.map(name=>[name,prefix+'_'+name])),mount:prefix+'_transit'};
@@ -127,7 +128,7 @@ function grants(l) {
   // Decision root-writer-fenced: root_writer joins the lower-role window reads; the api opens its
   // subject-admin and read-only settings/activity connections join the tenant
   // operation window; its admission requires these three metadata reads.
-  for(const who of Object.keys(r).filter(name=>!['operator','ownership_operator','provisioner','feed_reader','feed_listener','connector_writer','management_issuer','ui_registry'].includes(name))){
+  for(const who of Object.keys(r).filter(name=>!['operator','ownership_operator','provisioner','feed_reader','feed_listener','connector_writer','management_issuer','ui_registry','pool_member','pool_operator'].includes(name))){
     schema('control',who);for(const name of ['schema_migrations','tenant_lifecycle_windows','tenant_lifecycle_operations'])grant('SELECT',table('control',name),who);
     if(who.startsWith('lifetime_')){
       grant('INSERT(tenant_id,operation_id,generation),UPDATE(finished)',table('control','tenant_lifecycle_operations'),who);
@@ -157,6 +158,7 @@ function grants(l) {
   sql.push(...require('../../lib/tenant-registry/postgres').grants({namespace:ns.registry,resolvers:[r.api,r.owner_reader,r.ui_registry,r.realtime],enumerators:[r.realtime,r.evaluator,r.operator,r.placement_publisher],readers:[r.api,r.owner_reader]}));
   sql.push(...require('../../lib/tenant-registry/provision').provisionerGrants({namespaces:require('./registry-plan').provisioningNamespaces(ns),role:r.provisioner,
     checkpoints:[{namespace:ns.rt_checkpoint},{namespace:ns.eval_checkpoint}]}));
+  if(ns.pool)sql.push(...require('../../lib/pool-membership/postgres').grants({namespace:ns.pool,member:r.pool_member,operator:r.pool_operator}));
   return sql;
 }
 function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress,registryMode=false,realtimePlacement=null}) {
@@ -210,20 +212,20 @@ function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress,
   if(registryMode) docs = require('./registry-plan').expand(docs,{layout:l,urls,vaultAddress});
   else for(const env of Object.values(environments)) env.MULTITENANT_STATIC_TENANTS='lab';
   if (realtimePlacement && !registryMode) throw new TypeError('Realtime placement requires durable registry mode');
-  return require('./realtime-workers').expand(require('./replicas').expand(docs), realtimePlacement);
+  return require('./evaluator-workers').expand(require('./realtime-workers').expand(require('./replicas').expand(docs), realtimePlacement), {layout:l,urls});
 }
 function lifecycle(l) {
   const aliases={rt_checkpoint:'checkpoint',eval_checkpoint:'evaluator_checkpoint',alarm:'alarm_suppression',outbox:'notification_outbox',display_settings:'tenant_settings'};
   const selected=catalogues(), admitted=new Map(require('../../lib/tenant-lifecycle').admittedCatalogue().map(row=>[row.kind,row]));
   const tables={}, extensions={alarm:['tenant_alarm_suppression'],outbox:['tenant_notification_state','tenant_notification_heads','tenant_notification_requests']};
-  for(const key of Object.keys(selected).filter(name=>!['control','change_stamps','registry','feed'].includes(name))){
+  for(const key of Object.keys(selected).filter(name=>!['control','change_stamps','registry','feed','pool'].includes(name))){
     const kind=aliases[key]||key, row=admitted.get(key==='eval_checkpoint'?'checkpoint':kind);
     if(!row&&!Object.hasOwn(extensions,key))throw new TypeError('Product lifecycle catalogue missing '+kind);
     tables[key]=require('../../lib/tenant-lifecycle/insertion-inventory').tableOrder(kind,selected[key],row?row.tables:extensions[key]);
     const sourceTables=require('../../lib/tenant-operations/catalogues').createdTables(selected[key]);
     if(JSON.stringify([...tables[key]].sort())!==JSON.stringify([...sourceTables].sort()))throw new TypeError('Product lifecycle table inventory mismatch '+kind);
   }
-  return {namespaces:Object.fromEntries(Object.entries(l.namespaces).filter(([name])=>!['control','change_stamps','registry','feed'].includes(name)).map(([name,namespace])=>[aliases[name]||name,namespace])),
+  return {namespaces:Object.fromEntries(Object.entries(l.namespaces).filter(([name])=>!['control','change_stamps','registry','feed','pool'].includes(name)).map(([name,namespace])=>[aliases[name]||name,namespace])),
     catalogues:Object.entries(tables).map(([name,tables])=>({kind:aliases[name]||name,candidate:selected[name],tables,secrets:name==='secrets'?['secret_records']:[]}))};
 }
 function validateFiles(directory, docs) {
@@ -231,11 +233,16 @@ function validateFiles(directory, docs) {
     evaluator:require('../../lib/server/serve/evaluator-config').load,'tenant-admin':require('../../lib/server/serve/owner-preview-config').load};
   const namespaces=require('../../lib/server/serve/operation-cohort').protectedNamespaces;
   for(const role of Object.keys(docs.configs)){
-    const productRole = role.startsWith('api-') ? 'api' : role.startsWith('realtime-') ? 'realtime' : role;
+    const productRole = role.startsWith('api-') ? 'api' : role.startsWith('realtime-') ? 'realtime' : role.startsWith('evaluator-') ? 'evaluator' : role;
     const env=Object.fromEntries(Object.entries(docs.environments[role]).map(([key,value])=>[key,typeof value==='string'?value.replace('/run/ns-config',path.join(directory,role)).replace('/run/ns-placement',path.join(directory,'placement')):value]));
     const internal=require('../../lib/server/internal-api/listener-config').resolve([productRole],env);
     const parsed=parsers[productRole](env,internal),operation=require('../../lib/server/serve/operation-cohort-config').load(env,internal);
     const participant=operation.participants.find(row=>row.id===operation.participantId);
+    if(docs.evaluatorPool){
+      const expected=require('./evaluator-workers').services(docs.evaluatorPool),peers=operation.participants.filter(row=>row.roles.includes('evaluator'));
+      if(peers.length!==expected.length||expected.some((service,index)=>!peers.some(row=>row.id==='evaluator-'+(index+1)&&row.endpoint.socketPath==='/run/ns-ipc/evaluator-'+(index+1)+'.sock')))throw new TypeError('Deployment evaluator pool coverage mismatch');
+      if(productRole==='evaluator'&&(!parsed.partition.partitioned||parsed.partition.ordinal!==expected.indexOf(role)))throw new TypeError('Deployment evaluator ordinal mismatch');
+    }
     if(JSON.stringify(namespaces(parsed).filter(name => name !== operation.namespace).sort())!==JSON.stringify(participant.namespaces))throw new TypeError('Deployment participant namespace mismatch');
     if (operation.placement) {
       const map = operation.placement.current(), peers = operation.participants.filter(row => row.roles.includes('realtime'));

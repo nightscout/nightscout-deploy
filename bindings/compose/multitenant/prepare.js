@@ -32,6 +32,7 @@ function prepare (args) {
   const apiReplicas = replicas.count();
   const realtime = require('./realtime-workers'), selectedRealtime = realtime.selection();
   const diagnostics = require('./diagnostics').selection();
+  const evaluator = require('./evaluator-workers'), selectedEvaluator = evaluator.selection();
   const leaseSessions = require('./registry-plan').leaseSessions();
   require('./edge').policy();
   const source = require('./build').assertCleanSource(path.join(base, '../..'));
@@ -62,10 +63,15 @@ function prepare (args) {
     write(path.join(state, 'placement/routes.json'), JSON.stringify(map) + '\n');
     write(path.join(state, 'compose.realtime.yaml'), realtime.compose(selectedRealtime, path.join(base, 'compose.yaml'), replicas.instances(apiReplicas).map(node => node.service)));
   }
+  if (selectedEvaluator) {
+    for (const service of evaluator.services(selectedEvaluator).slice(1)) fs.mkdirSync(path.join(state, service), {mode: 0o700});
+    write(path.join(state, 'compose.evaluator.yaml'), evaluator.compose(selectedEvaluator, path.join(base, 'compose.yaml')));
+  }
   write(path.join(state, 'edge/nginx.conf'), require('./edge').render(fs.readFileSync(path.join(base, 'nginx.compose.conf'), 'utf8'), { replicas: apiReplicas, realtime: !!selectedRealtime }));
   write(path.join(state, 'compose.replicas.yaml'), replicas.compose(apiReplicas, path.join(base, 'compose.yaml')));
   write(path.join(base, '.env'), 'NS_DEPLOY_COMMIT=' + deployCommit + '\nNS_API_REPLICAS=' + apiReplicas + '\n' +
     (selectedRealtime ? 'NS_REALTIME_WORKERS=' + selectedRealtime.workers + '\nNS_REALTIME_SHARDS=' + selectedRealtime.shards + '\n' : '') +
+    (selectedEvaluator ? 'NS_EVALUATOR_WORKERS=' + selectedEvaluator.workers + '\n' : '') +
     'NS_M7_DIAGNOSTICS=' + diagnostics.enabled + '\nNS_M7_DIAGNOSTICS_INTERVAL_MS=' + diagnostics.interval + '\n' +
     'NS_OPERATION_LEASE_SESSIONS=' + leaseSessions + '\nNS_DEMO_STATE=' + state + '\nNS_DEMO_BIND=' + options.bind + '\nNS_DEMO_PORT=' + options.port + '\nNS_SOURCE_COMMIT=' + source + '\n');
   process.stdout.write('Prepared private synthetic deployment state. Run the explicit bootstrap before starting roles.\n');

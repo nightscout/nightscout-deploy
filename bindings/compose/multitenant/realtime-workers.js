@@ -45,7 +45,7 @@ function compose(selected, composeFile, apiInstances = ['api']) {
   if (!selected) return '';
   const lines = ['# Fixed realtime roster with one shared assignment and admitted route view.', 'services:'];
   lines.push('  bootstrap:', '    environment:', '      NS_REALTIME_WORKERS: "' + selected.workers + '"', '      NS_REALTIME_SHARDS: "' + selected.shards + '"');
-  const existing = [...apiInstances,'evaluator','tenant-admin','demo'];
+  const existing = [...apiInstances,...require('./evaluator-workers').services(require('./evaluator-workers').selection()),'tenant-admin','demo'];
   // API replica overlays also mount this directory; a merged override augments
   // every selected instance in the caller rather than relying on role aliases.
   for (const service of [...existing, ...Array.from({ length: selected.workers }, (_, index) => serviceOf(index))]) {
