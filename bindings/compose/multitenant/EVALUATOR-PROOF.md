@@ -54,3 +54,38 @@ early. Cancelled superseded rows are classified separately, accepted clears and
 extra live/pending effects refuse, socket fanout matches those typed effects, and
 the new B frame must carry its exact upload timestamp. The verdict must finish
 before both original durable repeat deadlines; it never changes heartbeat cadence.
+
+Initial client diagnostics record bounded typed connect/error/disconnect/reconnect,
+subscribe ACK, root-authorize ACK and initial-frame metadata without credentials
+or event bodies. They retain the same two successful alarm ACKs plus B frame
+predicate and20-second bound. An authorize ACK can follow the initial frame;
+its absence alone does not identify denial. The separate
+`fixtures/evaluator-client-prerequisites.cjs <core> <state> <port>` observes only
+that pre-mutation predicate and explicitly does not qualify clinical effects.
+A later successful observation cannot reclassify an earlier unclassified timeout.
+
+The final clinical effect observation shares the existing B401-frame absolute
+20-second window with durable acceptance and exact source-digest fanout. It
+retains at least 1500 ms of observation after the exact frame is observed, even
+when acceptance is faster. Only absent/pending/attempting changed effects or
+incomplete fanout are waiting states; duplicate effects, clears, invalid
+identities, cancelled changed effects and unexpected transport uncertainty fail
+immediately. Uncertain is a nonterminal durable state, but does not qualify this
+clean handoff proof. The unchanged strict oracle is still required for success.
+Fanout is copied before primary SQL reads; events arriving during a read belong
+to the next observation. Original repeat deadlines and the monotonic budget are
+checked after each read, whose Docker command is bounded by remaining time.
+PASS/FAIL output retains bounded final typed rows/fanout, SQL read start/end,
+fanout-copy time, observation count and a last-16 trajectory. The acceptedAt
+field is an application finishedAt timestamp taken before the finish commit;
+its difference from created is not measured SQL commit latency.
+
+Completion reads also pass a numeric remaining-budget PostgreSQL session
+`statement_timeout` through psql PGOPTIONS; killing a timed-out Docker CLI alone
+is not treated as cancellation of its remote query. Generic pre-transition
+reads retain their existing session settings. No durable database setting changes.
+
+At candidate PASS, the observer recopies current fanout after the final SQL read
+and reruns the unchanged strict verdict against complete durable rows, then
+rechecks both deadlines. Duplicates received during that last read cannot be
+hidden by the earlier fanout copy. Final-copy and validation times are retained.
