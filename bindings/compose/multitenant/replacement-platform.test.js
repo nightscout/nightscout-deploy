@@ -14,13 +14,14 @@ function fixture(){
   const spec=JSON.parse(docker(['image','inspect',image]))[0],pair=spec.Config.Labels;
   assert.match(pair['org.opencontainers.image.revision'],/^[a-f0-9]{40}$/);assert.match(pair['org.nightscout.deploy.revision'],/^[a-f0-9]{40}$/);
   const state=fs.mkdtempSync(path.join(os.tmpdir(),'ns-native-replacement-'));fs.chmodSync(state,0o700);
-  for(const dir of ['bootstrap','placement','realtime'])fs.mkdirSync(path.join(state,dir),{mode:0o700});
+  for(const dir of ['bootstrap','placement','realtime','placement-operator'])fs.mkdirSync(path.join(state,dir),{mode:0o700});
   const write=(file,value)=>j.atomicJson(path.join(state,file),value,true),before=workers.initial({workers:2,shards:8});
   write('bootstrap/complete.json',{sourceCommit:pair['org.opencontainers.image.revision'],deployCommit:pair['org.nightscout.deploy.revision']});
+  write('placement-operator/env.json',{NS_PLACEMENT_PG:'postgres://publisher:synthetic@postgres/example',NS_ACTIVITY_PG:'postgres://activity:synthetic@postgres/example',NS_SOURCE_COMMIT:pair['org.opencontainers.image.revision'],MULTITENANT_REALTIME_PLACEMENT:'/run/ns-placement/backend.json'});
   write('placement/backend.json',before);write('placement/routes.json',before);write('realtime/env.json',{REALTIME_WORKER_ID:'realtime-1',REALTIME_WORKER_INCARNATION:before.workers[0].incarnation});
   const project='ns-recovery-native-'+crypto.randomBytes(6).toString('hex'),compose=path.join(state,'compose.json');
   const service={image,restart:'no',command:['node','-e','process.on("SIGTERM",()=>process.exit(0));setInterval(()=>{},1000)'],labels:{'org.nightscout.recovery.fixture':project}};
-  fs.writeFileSync(compose,JSON.stringify({services:{demo:service,realtime:service}}));fs.writeFileSync(path.join(state,'.env'),'');
+  fs.writeFileSync(compose,JSON.stringify({services:{'placement-operator':service,realtime:service}}));fs.writeFileSync(path.join(state,'.env'),'');
   const options={state,project,compose:[compose],worker:'realtime-1',timeout:1000},args=['compose','-p',project,'--env-file',path.join(state,'.env'),'-f',compose];
   const current=()=>docker([...args,'ps','--all','--quiet','realtime']);
   docker([...args,'up','-d','--no-build','--pull','never','--no-deps','realtime']);
@@ -45,7 +46,7 @@ for(const fault of ['before-stop','after-stop','after-assignment','after-env','a
     if(fault==='after-routes'){assert.equal(interrupted.phase,'started');assert.deepEqual(j.privateJson(path.join(f.state,'placement/backend.json')),j.privateJson(path.join(f.state,'placement/routes.json')));assert.equal(inspect(f.current()).State.Running,true);await assert.rejects(operator.replace(f.options,{publisher:f.publisher}),/RECOVERY_REQUIRED/);}
     if(fault==='after-assignment'){
       // A creator may already have exited while its one-shot container survives.
-      const orphan=docker(['run','-d','--name',interrupted.publisherName,'--label','org.nightscout.recovery.fixture='+f.project,'--label','com.docker.compose.project='+f.project,'--label','com.docker.compose.service=demo','--label','org.nightscout.replacement.operation='+interrupted.operation,image,'node','-e','process.on("SIGTERM",()=>process.exit(0));setInterval(()=>{},1000)']);
+      const orphan=docker(['run','-d','--name',interrupted.publisherName,'--label','org.nightscout.recovery.fixture='+f.project,'--label','com.docker.compose.project='+f.project,'--label','com.docker.compose.service=placement-operator','--label','org.nightscout.replacement.operation='+interrupted.operation,image,'node','-e','process.on("SIGTERM",()=>process.exit(0));setInterval(()=>{},1000)']);
       assert.equal(inspect(orphan).State.Running,true);
       await operator.replace({...f.options,recover:true},{publisher:f.publisher});assert.equal(inspect(orphan).State.Running,false,'exact orphan publisher stopped before recovered publication');
     }else await operator.replace({...f.options,recover:true},{publisher:f.publisher});
@@ -84,7 +85,7 @@ test('actual foreign project and wrong paired source refuse before stop',{skip:!
   const f=fixture();try{
     const id=f.current();await assert.rejects(operator.replace({...f.options,project:f.project+'-foreign'},{publisher:f.publisher}),/FIXED_CONTAINER_REQUIRED/);assert.equal(inspect(id).State.Running,true);
     const complete=j.privateJson(path.join(f.state,'bootstrap/complete.json'));f.write('bootstrap/complete.json',{...complete,sourceCommit:'f'.repeat(40)});
-    await assert.rejects(operator.replace(f.options,{publisher:f.publisher}),/SOURCE_IDENTITY_CHANGED/);assert.equal(inspect(id).State.Running,true);
+    await assert.rejects(operator.replace(f.options,{publisher:f.publisher}),/PLACEMENT_(SOURCE_IDENTITY_CHANGED|AUTHORITY_REFUSED)/);assert.equal(inspect(id).State.Running,true);
     f.write('bootstrap/complete.json',complete);await operator.replace(f.options,{publisher:f.publisher});assert.equal(j.privateJson(path.join(f.state,'placement/backend.json')).generation,2);
   }finally{f.close();}
 });

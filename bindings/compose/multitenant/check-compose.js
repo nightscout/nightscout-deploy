@@ -59,8 +59,18 @@ function checkEdgeSame (sharedText, composeText) {
   assert(sharedEdge(composeText) === sharedText, 'nginx.compose.conf must equal nginx.conf apart from upstream re-resolution');
   return true;
 }
+function checkPublisher(config) {
+  const service=config.services['placement-operator'];
+  assert(service && service.profiles?.includes('ops'), 'Placement publisher must be explicit');
+  assert(!Object.keys(service.environment || {}).some(key=>/PG|PASSWORD|TOKEN|VAULT|NS_ENV_FILE/.test(key)), 'Publisher credential values belong only in its scoped private document');
+  const volumes=service.volumes || [];
+  assert(volumes.length===2 && volumes.some(row=>row.target==='/run/ns-config' && row.source.endsWith('/placement-operator') && row.read_only) && volumes.some(row=>row.target==='/run/ns-placement' && row.source.endsWith('/placement') && !row.read_only), 'Publisher mounts only its readonly authority and writable placement');
+  assert(!(service.ports||[]).length && !service.privileged && service.network_mode!=='host', 'Publisher has no public listener or privileged runtime');
+  return true;
+}
 function check (config) {
   checkNetworks(config);
+  checkPublisher(config);
   const runtime = ['api', 'realtime', 'evaluator', 'tenant-admin', 'ui', 'nginx', 'admin', 'feed-reader', ...Object.keys(config.services).filter(name => /^api-\d+$/.test(name))];
   for (const name of runtime) {
     const service = config.services[name];
@@ -127,4 +137,4 @@ if (require.main === module) {
     process.stderr.write('Compose boundary check failed: ' + (error.code === 'ERR_ASSERTION' ? error.message : error.code || 'configuration expansion') + '\n'); process.exitCode = 1;
   }
 }
-module.exports = {check, checkNetworks, checkOrder, checkEdgeResolve, checkEdgeSame};
+module.exports = {check, checkPublisher, checkNetworks, checkOrder, checkEdgeResolve, checkEdgeSame};

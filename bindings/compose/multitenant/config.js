@@ -55,7 +55,7 @@ function catalogues() {
 function layout(prefix = 'nsdemo') {
   quote(prefix);
   if (prefix.length > 24) throw new TypeError('Deployment prefix too long');
-  const names = ['api','readiness','realtime','evaluator','alarm','suppression','outbox','owner_writer','owner_reader','root_writer','operator','provisioner','display_reader','activity_reader','feed_reader','feed_listener','ownership_operator','connector_writer','management_issuer','ui_registry',
+  const names = ['api','readiness','realtime','evaluator','alarm','suppression','outbox','owner_writer','owner_reader','root_writer','operator','provisioner','display_reader','activity_reader','feed_reader','feed_listener','placement_publisher','ownership_operator','connector_writer','management_issuer','ui_registry',
     ...serviceRoles.map(name=>'lifetime_'+name.replace('-','_'))];
   return {prefix,owner:prefix+'_owner',feedOwner:prefix+'_feed_owner',managementAuthorityOwner:prefix+'_management_authority',namespaces:Object.fromEntries(Object.keys(catalogues()).map(name=>[name,prefix+'_'+name])),
     roles:Object.fromEntries(names.map(name=>[name,prefix+'_'+name])),mount:prefix+'_transit'};
@@ -154,7 +154,7 @@ function grants(l) {
   grant('EXECUTE','FUNCTION '+quote(ns.display_settings)+'.tenant_settings_values_valid(jsonb)','provisioner');
   for(const name of ['display_settings','operator_policy']){schema(name,'display_reader');grant('SELECT','ALL TABLES IN SCHEMA '+quote(ns[name]),'display_reader');}
   schema('control','activity_reader');grant('SELECT',table('control','schema_migrations'),'activity_reader');grant('SELECT',table('control','tenant_activity'),'activity_reader');
-  sql.push(...require('../../lib/tenant-registry/postgres').grants({namespace:ns.registry,resolvers:[r.api,r.owner_reader,r.ui_registry,r.realtime],enumerators:[r.realtime,r.evaluator,r.operator],readers:[r.api,r.owner_reader]}));
+  sql.push(...require('../../lib/tenant-registry/postgres').grants({namespace:ns.registry,resolvers:[r.api,r.owner_reader,r.ui_registry,r.realtime],enumerators:[r.realtime,r.evaluator,r.operator,r.placement_publisher],readers:[r.api,r.owner_reader]}));
   sql.push(...require('../../lib/tenant-registry/provision').provisionerGrants({namespaces:require('./registry-plan').provisioningNamespaces(ns),role:r.provisioner,
     checkpoints:[{namespace:ns.rt_checkpoint},{namespace:ns.eval_checkpoint}]}));
   return sql;
