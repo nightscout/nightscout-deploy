@@ -249,10 +249,13 @@ The opted-in `shipping-sharding.integration.test.js` first proves every fixed AP
 instance × synthetic seed tenant through a private, authorized status GET. A bare
 readiness client uses only a short-lived mode-0600 DATA-credential input and three
 read-only fixture/input mounts; it receives no operator, database, Vault or IPC
-configuration. Its single 20-second budget permits only typed `TENANT_WARMING`
-responses to remain pending. A 200 response must be an object with `status: 'ok'`
-and no error field; malformed/error-bearing successes fail setup, as do other refusals. No JWT exchange,
-socket admission or clinical write precedes this barrier.
+configuration. Its single 20-second request-phase budget permits only typed
+`TENANT_WARMING` responses to remain pending. A 200 response must be an object with `status: 'ok'`
+and no error field; malformed/error-bearing successes fail setup, as do other
+refusals. No JWT exchange, socket admission or clinical write precedes this barrier. Metadata inspection and
+client cleanup each have separate bounded commands outside that request phase.
+Successful probes are followed by another exact roster inspection: changed or lost
+container ID, boot time, image or ownership/source labels refuse the barrier.
 
 The restore interval keeps the four original public-edge B status readers.
 Each must have succeeded before restore starts; every subsequent non-200 or
