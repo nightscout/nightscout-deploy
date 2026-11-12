@@ -180,3 +180,24 @@ The browser has 30-second action/10-second HTTP/5-second discovery bounds, an
 actual-expiry wait capped by the existing 600-second management ceiling and a
 30-minute journey budget; source controller commands have their separate bounded
 300-second limits. This is not an unmeasured latency/capacity guarantee.
+
+The native journey also checks three explicit refusals, each surrounded by a
+healthy positive and restored positive. The wrong-password probe submits one
+random incorrect password to the real pinned provider, requires its typed
+`ak-stage-password` challenge with password error code `invalid`, unchanged
+local cookie, and then a successful correct-password completion. It does not
+interpret a generic HTTP error or provider outage as a credential rejection.
+The untrusted-CA client uses the distinct application CA as its only trust,
+requires a certificate-chain verification error, and revalidates exact issuer
+metadata with the profile CA. The unknown-Host client changes only HTTP Host,
+retaining the known origin's TLS SNI, CA and isolated lookup; the source edge's
+421 must occur between two reads of the same authoritative management session.
+No credentials, response bodies or private URLs enter the typed probe receipt.
+
+These checks have recording-only qualification until the separately authorized
+real provider/browser run. The challenge contract is read-derived from pinned
+Authentik 2026.8.5 [password validation](https://github.com/goauthentik/authentik/blob/version/2026.8.5/authentik/stages/password/stage.py),
+[challenge serialization](https://github.com/goauthentik/authentik/blob/version/2026.8.5/authentik/flows/stage.py)
+and [password component](https://github.com/goauthentik/authentik/blob/version/2026.8.5/web/src/flow/stages/password/PasswordStage.ts).
+Unknown-Host routing is defined by this profile's `nginx()`; the probe does not
+claim that edge refusal measures the application's registry resolver.

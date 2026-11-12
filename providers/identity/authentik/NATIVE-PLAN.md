@@ -139,3 +139,14 @@ without tokens/URLs containing credentials. Preserve partial install markers,
 owned image/source/state and all failed controls. `down` never uses `-v`; stop only
 the exact owned provider/application projects after identity inspection. Leave
 peer states/volumes, current ready stack and retained acceptance images untouched.
+
+The implemented three-probe sequence is part of `journey.cjs` and its pinned
+`native-probes.cjs` helper. Refusals must be followed by the matching healthy
+restored observation before their check becomes true. TLS probes are bounded to
+5 seconds and 1 MiB with exact isolated lookup, fresh non-pooled connections and
+explicit certificate verification. The password challenge observer is installed
+before its POST, observes the provider's typed invalid-password response and
+waits for that challenge to reach its actual browser component before restoring
+the correct password. Its 1 MiB response check is after Playwright buffering,
+not a browser-memory bound. Recording tests and in-memory ablations qualify only
+fixture logic; no real HTTPS/provider/browser execution is implied.
