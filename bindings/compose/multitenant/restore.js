@@ -37,7 +37,7 @@ function validateConfig (value, env = process.env) {
   let origin, pg;
   try { origin = new URL(value.apiOrigin); pg = new URL(env.NS_OPERATOR_PG); } catch { throw fail('COMPOSE_OPERATOR_CONFIG_REFUSED'); }
   // The demo uses the Compose private service, not a user-provided public site.
-  if (origin.origin !== value.apiOrigin || origin.hostname !== 'api' || origin.protocol !== 'http:' || origin.username || origin.password ||
+  if (origin.origin !== value.apiOrigin || !['api', 'api-internal'].includes(origin.hostname) || origin.protocol !== 'http:' || origin.username || origin.password ||
       !['postgres:', 'postgresql:'].includes(pg.protocol) || !pg.username || !pg.password || !pg.pathname.slice(1) || pg.hash ||
       [...pg.searchParams.keys()].some(k => k !== 'sslmode')) throw fail('COMPOSE_OPERATOR_CONFIG_REFUSED');
   return structuredClone(value);
@@ -50,20 +50,8 @@ function loadConfig (file = process.env.NS_OPERATOR_CONFIG || '/run/ns-config/co
 }
 
 function expectedCandidates () {
-  const domains = require('../../lib/server/serve/postgres-domains');
-  const successors = require('../../lib/server/tenant-socket-order-port').catalogues;
-  return {
-    ...Object.fromEntries(['entries', 'treatments', 'devicestatus', 'profile', 'food', 'activity', 'settings'].map(kind => [kind, successors[kind] || domains.get(kind).catalogue])),
-    authorization: require('../../lib/tenant-authorization/postgres-candidate.json'),
-    secrets: require('../../lib/secrets/postgres-candidate.json'),
-    legacy: require('../../lib/secrets/legacy-credentials-candidate.json'),
-    access: require('../../lib/tenant-authorization/access-candidate.json'),
-    clock: require('../../migrations/candidates/postgres-write-clock-v1.json'),
-    checkpoint: require('../../migrations/candidates/postgres-consumer-checkpoint-v1.json'),
-    evaluator_checkpoint: require('../../migrations/candidates/postgres-consumer-checkpoint-v1.json'),
-    alarm_suppression: require('../../migrations/candidates/postgres-alarm-suppression-v1.json'),
-    notification_outbox: require('../../lib/tenant-notifications/postgres-candidate.json')
-  };
+  const plan = require('./config');
+  return Object.fromEntries(plan.lifecycle(plan.layout()).catalogues.map(row => [row.kind, row.candidate]));
 }
 
 function lifecycleFor (config) {

@@ -47,16 +47,20 @@ function expand(docs, { layout, urls, vaultAddress }) {
   // Recompute manifest coverage from the selected product configuration.
   const protectedNamespaces = require('../../lib/server/serve/operation-cohort').protectedNamespaces;
   const participants = Object.entries(docs.configs).map(([role, config]) => ({ id: role, roles: [role],
-    namespaces: [...new Set([...protectedNamespaces(config), ...(role === 'api' ? [ns.outbox] : [])])].sort(), maxMessageBytes: 1048576, timeoutMs: 10000 }));
+    namespaces: [...new Set([...protectedNamespaces(config), ...(role === 'api' ? [ns.outbox] : [])])].filter(name => name !== ns.control).sort(), maxMessageBytes: 1048576, timeoutMs: 10000 }));
   for (const value of Object.values(docs.operations)) value.participants = participants;
   docs.remote = participants.map(peer => ({ id: peer.id, roles: peer.roles, namespaces: peer.namespaces,
     endpoint: { socketPath: '/run/ns-ipc/' + peer.id + '.sock', maxBytes: peer.maxMessageBytes, timeoutMs: peer.timeoutMs } }));
   docs.locks = docs.locks.map(row => ({ tenant: row.tenant, key: require('../../lib/tenant-registry/rules').lockKey(row.tenant) }));
   docs.admin = { config: { version: 1, maxBytes: 1048576, timeoutMs: 60000,
+    ownership: { connectionEnv: 'NS_OWNERSHIP_PG', namespace: ns.authorization, lifecycleNamespace: ns.control,
+      registry: { ...registry }, operator: { principal: 'compose-operator', consumer: 'compose-ownership' } },
+    connectorSources: { connectionEnv: 'NS_CONNECTOR_SOURCES_PG', namespaces: { settings: ns.display_settings, registry: ns.registry, secrets: ns.secrets, control: ns.control },
+      operator: { principal: 'compose-operator', consumer: 'compose-connectors' } },
     provisioning: { connectionEnv: 'NS_PROVISIONER_PG', namespaces: provisioningNamespaces(ns), checkpoints: checkpoints(docs, ns),
       vault: { address: vaultAddress, mount: layout.mount, tokenFile: '/run/ns-config/vault-token', timeoutMs: 10000 },
       ownerPolicy: { catalogue: ['*'] }, operator: { principal: 'compose-operator', consumer: 'compose-provisioning' } } },
-    environment: { ADMIN_HOSTNAME: 'admin', ADMIN_PORT: '1342', ADMIN_INSECURE_BIND_ACKNOWLEDGED: 'true', MULTITENANT_ADMIN_CONFIG: '/run/ns-config/config.json', NS_PROVISIONER_PG: urls.provisioner } };
+    environment: { ADMIN_HOSTNAME: 'admin', ADMIN_PORT: '1342', ADMIN_INSECURE_BIND_ACKNOWLEDGED: 'true', MULTITENANT_ADMIN_CONFIG: '/run/ns-config/config.json', NS_PROVISIONER_PG: urls.provisioner, NS_OWNERSHIP_PG: urls.ownership_operator, NS_CONNECTOR_SOURCES_PG: urls.connector_writer } };
   delete docs.admission;
   return docs;
 }

@@ -32,6 +32,7 @@ test('registry role documents have no static roster or per-tenant key lists and 
     assert.equal(docs.admin.environment.ADMIN_INSECURE_BIND_ACKNOWLEDGED, 'true');
     assert.equal(docs.configs.api.postgres.namespaces.settings.endsWith('_settings'), true);
     assert.equal(docs.admin.config.provisioning.checkpoints.length, 2);
+    for (const participant of docs.operations.api.participants) assert(!participant.namespaces.includes(docs.operations.api.namespace));
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
 test('control: restoring a static list into registry authority is refused, restoration passes', () => {
@@ -47,4 +48,12 @@ test('provisioning identity and read-only settings/activity capabilities are dis
   const grants = plan.grants(layout).join('\n');
   assert.match(grants, /tenant_registry_lookup/); assert.match(grants, /tenant_settings_history/);
   assert(!grants.split('\n').some(sql => /INSERT|UPDATE|DELETE/.test(sql) && /TO "nsdemo_display_reader"/.test(sql)));
+});
+
+test('control: adding the operation control schema to protected data refuses launcher resource matching', () => {
+  const { docs } = generated();
+  docs.operations.api.participants.find(row => row.id === 'api').namespaces.push(docs.operations.api.namespace);
+  const directory = files(docs);
+  try { assert.throws(() => plan.validateFiles(directory, docs), /namespace mismatch/); }
+  finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });

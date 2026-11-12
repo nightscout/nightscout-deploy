@@ -43,9 +43,16 @@ both (`org.opencontainers.image.revision`, `org.nightscout.deploy.revision`).
 
 `bootstrap` prepares infrastructure only: schemas, grants, role configurations,
 the private admin service and the metadata feed. `up` starts the private admin,
-provisions the seed through its versioned API, starts the API instances, and runs
+provisions the seed through its versioned API, explicitly commissions the private
+restore operator for that synthetic cohort, starts the API instances, and runs
 a separate lab-priming API client before starting realtime/evaluator and ingress.
-The primer has no PostgreSQL or Vault credential. Partial setup is refused; source
+The primer has no PostgreSQL or Vault credential. `commission-restore.js` is a
+separate private DDL-operator step: it provisions current role-OID restore authority
+only for active synthetic seed tenants, refuses existing revocations, and grants
+no serving identity authority to modify that relation. The admin service composes
+ownership operations and durable connector-source configuration on separate
+database identities. Connector definitions contain secret references, never
+plaintext endpoint credentials. Partial setup is refused; source
 and deployment revision changes require fresh synthetic state.
 
 nginx waits only for the services it routes to, including each API instance.

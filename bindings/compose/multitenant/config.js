@@ -55,7 +55,7 @@ function catalogues() {
 function layout(prefix = 'nsdemo') {
   quote(prefix);
   if (prefix.length > 24) throw new TypeError('Deployment prefix too long');
-  const names = ['api','readiness','realtime','evaluator','alarm','suppression','outbox','owner_writer','owner_reader','root_writer','operator','provisioner','display_reader','activity_reader','feed_reader',
+  const names = ['api','readiness','realtime','evaluator','alarm','suppression','outbox','owner_writer','owner_reader','root_writer','operator','provisioner','display_reader','activity_reader','feed_reader','ownership_operator','connector_writer',
     ...serviceRoles.map(name=>'lifetime_'+name.replace('-','_'))];
   return {prefix,owner:prefix+'_owner',feedOwner:prefix+'_feed_owner',namespaces:Object.fromEntries(Object.keys(catalogues()).map(name=>[name,prefix+'_'+name])),
     roles:Object.fromEntries(names.map(name=>[name,prefix+'_'+name])),mount:prefix+'_transit'};
@@ -115,10 +115,18 @@ function grants(l) {
   grant('INSERT',table('authorization','tenant_subject_admin_audit'),'root_writer');
   for(const name of ['tenant_authorization_config','tenant_owner_policy'])grant('SELECT,UPDATE(owner_fence)',table('authorization',name),'root_writer');
   grant('SELECT',table('authorization','tenant_owner_actors'),'root_writer');
-  // ownership_operator: added by ../ownership-admin/ownership-grants.js, not by this plan.
+  // The private operator plane uses identities separate from every serving writer.
+  schema('authorization','ownership_operator');
+  for(const name of ['tenant_authorization_config','tenant_owner_policy']) grant('SELECT,UPDATE(owner_fence)',table('authorization',name),'ownership_operator');
+  grant('SELECT,INSERT,UPDATE(active,can_update,delegable)',table('authorization','tenant_owner_actors'),'ownership_operator');
+  grant('SELECT',table('authorization','tenant_authorization_subjects'),'ownership_operator');
+  grant('INSERT',table('authorization','tenant_subject_admin_audit'),'ownership_operator');
+  sql.push(...require('../../lib/tenant-lifecycle/tenant-phase').phaseGrants({namespace:ns.control,role:r.ownership_operator}));
+  sql.push(...require('../../lib/tenant-registry/postgres').grants({namespace:ns.registry,readers:[r.ownership_operator]}));
+  sql.push(...require('../../lib/tenant-connector/postgres-sources').grants({namespaces:{settings:ns.display_settings,registry:ns.registry,secrets:ns.secrets,control:ns.control},writer:r.connector_writer}));
   // Decision root-writer-fenced: root_writer joins the lower-role window reads; the api opens its
   // subject-admin store connection under the tenant operation window, whose admission reads these.
-  for(const who of Object.keys(r).filter(name=>!['operator','ownership_operator','provisioner','display_reader','activity_reader','feed_reader'].includes(name))){
+  for(const who of Object.keys(r).filter(name=>!['operator','ownership_operator','provisioner','display_reader','activity_reader','feed_reader','connector_writer'].includes(name))){
     schema('control',who);for(const name of ['schema_migrations','tenant_lifecycle_windows','tenant_lifecycle_operations'])grant('SELECT',table('control',name),who);
     if(who.startsWith('lifetime_')){
       grant('INSERT(tenant_id,operation_id,generation),UPDATE(finished)',table('control','tenant_lifecycle_operations'),who);
@@ -200,11 +208,12 @@ function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress,
 }
 function lifecycle(l) {
   const aliases={rt_checkpoint:'checkpoint',eval_checkpoint:'evaluator_checkpoint',alarm:'alarm_suppression',outbox:'notification_outbox',display_settings:'tenant_settings'};
-  const tables={...Object.fromEntries([...clinical,'settings'].map(name=>[name,[...(ordered.includes(name)?['tenant_insertion_ordinal']:[]),name]])),authorization:['tenant_authorization_config','tenant_authorization_roles','tenant_authorization_subjects','tenant_authorization_subject_roles','tenant_subject_admin_audit','tenant_owner_policy','tenant_owner_actors'],secrets:['secret_records','secret_audit'],legacy:['legacy_credential_config','legacy_credential_subjects'],access:['access_tenants','access_credentials','access_sessions','access_keys'],clock:['tenant_write_clock'],rt_checkpoint:['tenant_consumer_checkpoint'],eval_checkpoint:['tenant_consumer_checkpoint'],alarm:['tenant_alarm_suppression'],outbox:['tenant_notification_state','tenant_notification_heads','tenant_notification_requests']};
-  const selected=catalogues();
-  for(const key of ['display_settings','operator_policy','human_session','subject_policy','owner_configuration']){
-    const kind=aliases[key]||key;
-    tables[key]=require('../../lib/tenant-lifecycle').admittedCatalogue().find(row=>row.kind===kind).tables;
+  const selected=catalogues(), admitted=new Map(require('../../lib/tenant-lifecycle').admittedCatalogue().map(row=>[row.kind,row]));
+  const tables={};
+  for(const key of Object.keys(selected).filter(name=>!['control','change_stamps','registry','feed'].includes(name))){
+    const kind=aliases[key]||key, row=admitted.get(kind);
+    if(!row)throw new TypeError('Product lifecycle catalogue missing '+kind);
+    tables[key]=[...(ordered.includes(key)?['tenant_insertion_ordinal']:[]),...row.tables];
   }
   return {namespaces:Object.fromEntries(Object.entries(l.namespaces).filter(([name])=>!['control','change_stamps','registry','feed'].includes(name)).map(([name,namespace])=>[aliases[name]||name,namespace])),
     catalogues:Object.entries(tables).map(([name,tables])=>({kind:aliases[name]||name,candidate:selected[name],tables,secrets:name==='secrets'?['secret_records']:[]}))};
@@ -219,7 +228,7 @@ function validateFiles(directory, docs) {
     const internal=require('../../lib/server/internal-api/listener-config').resolve([productRole],env);
     const parsed=parsers[productRole](env,internal),operation=require('../../lib/server/serve/operation-cohort-config').load(env,internal);
     const participant=operation.participants.find(row=>row.id===operation.participantId);
-    if(JSON.stringify(namespaces(parsed).sort())!==JSON.stringify(participant.namespaces))throw new TypeError('Deployment participant namespace mismatch');
+    if(JSON.stringify(namespaces(parsed).filter(name => name !== operation.namespace).sort())!==JSON.stringify(participant.namespaces))throw new TypeError('Deployment participant namespace mismatch');
   }
   // The ui's own parser (tenant ceiling, aliases), on the written file when there is one, so a
   // refusal surfaces at bootstrap instead of when the ui starts.
