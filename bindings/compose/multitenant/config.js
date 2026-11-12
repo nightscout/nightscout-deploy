@@ -125,8 +125,9 @@ function grants(l) {
   sql.push(...require('../../lib/tenant-registry/postgres').grants({namespace:ns.registry,readers:[r.ownership_operator]}));
   sql.push(...require('../../lib/tenant-connector/postgres-sources').grants({namespaces:{settings:ns.display_settings,registry:ns.registry,secrets:ns.secrets,control:ns.control},writer:r.connector_writer}));
   // Decision root-writer-fenced: root_writer joins the lower-role window reads; the api opens its
-  // subject-admin store connection under the tenant operation window, whose admission reads these.
-  for(const who of Object.keys(r).filter(name=>!['operator','ownership_operator','provisioner','display_reader','activity_reader','feed_reader','connector_writer','management_issuer','ui_registry'].includes(name))){
+  // subject-admin and read-only settings/activity connections join the tenant
+  // operation window; its admission requires these three metadata reads.
+  for(const who of Object.keys(r).filter(name=>!['operator','ownership_operator','provisioner','feed_reader','connector_writer','management_issuer','ui_registry'].includes(name))){
     schema('control',who);for(const name of ['schema_migrations','tenant_lifecycle_windows','tenant_lifecycle_operations'])grant('SELECT',table('control',name),who);
     if(who.startsWith('lifetime_')){
       grant('INSERT(tenant_id,operation_id,generation),UPDATE(finished)',table('control','tenant_lifecycle_operations'),who);
