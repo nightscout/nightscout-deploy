@@ -19,6 +19,11 @@ status/settings readers continue throughout the actual A restore. Its existing
 stock polling, WebSocket, API3, history/correction, lifecycle census, activation
 and B socket/data assertions remain in place.
 
+All shipping instruments load every explicitly selected generated API, realtime
+and evaluator overlay from the prepared .env, refusing missing, unselected or
+unknown overlays. Controlled replacement also accepts the same bounded fresh
+evaluator-proof project name.
+
 `shipping-evaluator.integration.test.js` requires explicit
 `NS_EVALUATOR_BINDING_STATE`, `NS_EVALUATOR_BINDING_PROJECT`,
 `NS_EVALUATOR_BINDING_PORT` and `NS_UI_TEST_CORE`. It observes real private

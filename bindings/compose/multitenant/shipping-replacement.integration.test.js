@@ -5,9 +5,9 @@ const {spawn,execFileSync}=require('node:child_process');
 const selected=process.env.NS_COMPOSE_REPLACEMENT_PROOF==='1';
 test('actual shipping controlled move excludes old boot, holds target warm and keeps B through staged routing',{skip:!selected,timeout:120000},async()=>{
  const state=path.resolve(process.env.NS_COMPOSE_SHARDING_STATE),project=process.env.NS_COMPOSE_SHARDING_PROJECT,core=process.env.NS_UI_TEST_CORE,port=Number(process.env.NS_COMPOSE_SHARDING_PORT);
- assert.match(project||'',/^ns-rt-binding(?:-clean|-final|-proof)?-[0-9]{8}$/);assert.ok(core&&port>=1024&&port<=65535);
+ assert.match(project||'',/^(?:ns-rt-binding(?:-clean|-final|-proof)?-[0-9]{8}|ns-evaluator-binding-proof-[0-9]{8}(?:-[a-z][a-z0-9]{0,15})?)$/);assert.ok(core&&port>=1024&&port<=65535);
  const tenants=JSON.parse(fs.readFileSync(path.join(state,'primer/tenants.json'),'utf8')).tenants,[a,b]=tenants,roots=JSON.parse(fs.readFileSync(path.join(state,'primer/provisioned.json'),'utf8'));
- const folder=path.join(core,'deploy/multitenant'),files=[path.join(folder,'compose.yaml'),path.join(state,'compose.replicas.yaml'),path.join(state,'compose.realtime.yaml')],compose=['compose','-p',project,'--env-file',path.join(folder,'.env'),...files.flatMap(file=>['-f',file])];
+ const folder=path.join(core,'deploy/multitenant'),files=require('./fixtures/shipping-compose-files.cjs').files({core,state}),compose=['compose','-p',project,'--env-file',path.join(folder,'.env'),...files.flatMap(file=>['-f',file])];
  const checkpoint=JSON.parse(fs.readFileSync(path.join(state,'realtime/config.json'),'utf8')).postgres.namespaces.checkpoint;assert.match(checkpoint,/^[a-z][a-z0-9_]{0,62}$/);assert.match(a.id,/^[0-9a-f-]{36}$/);
  const sql=text=>execFileSync('docker',['exec',project+'-postgres-1','psql','-Atq','-v','ON_ERROR_STOP=1','-U','postgres','-d','nightscout_compose_test','-c',text],{encoding:'utf8'}).trim();
  const until=async(fn,label,ms=15000)=>{const end=Date.now()+ms;while(Date.now()<end){if(await fn())return;await new Promise(r=>setTimeout(r,30));}throw new Error('SHIPPING_MOVE_WAIT '+label);};
