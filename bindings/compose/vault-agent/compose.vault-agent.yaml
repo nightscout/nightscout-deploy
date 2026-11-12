@@ -7,11 +7,9 @@
 # `vault-agent.sh` issues exactly that. NS_VAULT_AGENT_DIR is this directory (absolute);
 # relative paths in an override are resolved against the first file, so it is passed in.
 # The imported tree is not edited: this file adds a service, a one-shot provisioning step
-# and one read-only mount per application role.
+# and generated read-only sink mounts for the exact serving API roster.
 #
 # Same Vault image digest as the imported compose.yaml. Pins, not tags.
-
-x-agent-sink: &agent-sink ${NS_DEMO_STATE:?Run prepare.js first}/vault-agent/sink:/run/ns-vault:ro
 
 services:
   vault-agent:
@@ -63,6 +61,11 @@ services:
       VAULT_ADDR: https://vault:8200
       NS_VAULT_AGENT_BOOTSTRAP: "1"
       NS_BOOTSTRAP_OUTPUT: /state
+      NS_SOURCE_COMMIT: ${NS_SOURCE_COMMIT:?Run prepare.js first}
+      NS_DEPLOY_COMMIT: ${NS_DEPLOY_COMMIT:?Run prepare.js first}
+      NS_API_REPLICAS: ${NS_API_REPLICAS:-1}
+      MULTITENANT_CONFIG_MAX_BYTES: ${NS_BOOTSTRAP_CONFIG_MAX_BYTES:-}
+      NS_VAULT_AGENT_PROJECT: ${NS_VAULT_AGENT_PROJECT:?Select an explicit project}
       NS_VAULT_AGENT_TOKEN_TTL: ${NS_VAULT_AGENT_TOKEN_TTL:-1h}
       NS_VAULT_AGENT_TOKEN_MAX_TTL: ${NS_VAULT_AGENT_TOKEN_MAX_TTL:-24h}
       NS_VAULT_AGENT_KEEP_ENV_TOKENS: ${NS_VAULT_AGENT_KEEP_ENV_TOKENS:-0}
@@ -75,18 +78,3 @@ services:
     cap_drop: [ALL]
     read_only: true
     tmpfs: [/tmp:mode=1777]
-
-  api:
-    depends_on:
-      vault-agent: {condition: service_healthy}
-    volumes:
-      - *agent-sink
-  realtime:
-    volumes:
-      - *agent-sink
-  evaluator:
-    volumes:
-      - *agent-sink
-  tenant-admin:
-    volumes:
-      - *agent-sink
