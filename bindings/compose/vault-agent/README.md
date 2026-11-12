@@ -1,119 +1,147 @@
-# Vault Agent sidecar overlay
+# Opt-in Vault Agent for the Compose binding
 
-*Contributor- and operator-facing. State: overlay written 2026-11-09; see "What is measured"
-for what has run. The imported tree in `../multitenant` is not edited by this overlay.*
+This overlay selects one Vault Agent and one AppRole per deployment. It supports
+registry mode and the explicit fixed API roster (`api`, `api-2`, …), while preserving
+the base binding when the overlay is not selected. Decisions of record are the
+alignment release decisions `vault-agent-sidecar` and `vault-one-approle-per-deployment`.
 
-Decision of record: cgm-remote-monitor release record
-`releases/cgm-remote-monitor-16.0.0/decisions.md`, anchor `vault-agent-sidecar` (alignment
-workspace, 2026-11-09). Vault connectivity uses Vault Agent as a sidecar. Auto-auth, the token
-sink file and renewal belong to the Agent; the application reads the token from the sink at call
-time and keeps its small Transit client. No hand-rolled login or renewal in core.
+The Agent owns AppRole login, renewal and max-TTL reauthentication. Serving APIs
+read its token sink on every Transit call. The policy has six fixed rules: decrypt
+`tenant-data-*`, HMAC/verify `tenant-signing-*`, sign `tenant-access-*`, and token
+self-lookup/renewal. Static lab key naming uses the corresponding fixed suffix
+patterns. It never imports or unions tenant policies, enumerates keys or leases,
+or grants key management or management-session signing. Provisioning and management
+issuer credentials remain on their existing private operator paths.
 
-## What this overlay adds
+Only selected APIs receive the read-only sink mount. Realtime, evaluator, UI,
+placement publisher and operation helpers inherit no Agent credential. Agent
+credentials are mounted only into the Agent; the private provisioning helper
+retains the imported bootstrap's operator custody, outside serving containers.
 
-| file | role |
-|---|---|
-| `compose.vault-agent.yaml` | Compose override: a `vault-agent` service (same `hashicorp/vault` digest as the imported `compose.yaml`), a one-shot `vault-agent-bootstrap` step, and one read-only sink mount (`/run/ns-vault`) on `api`, `realtime`, `evaluator` and `tenant-admin` |
-| `agent.hcl` | Agent configuration: `auto_auth` method `approle` reading `role_id` and `secret_id` files with `remove_secret_id_file_after_reading`, one `file` sink at `/run/ns-vault/token` (mode 0600), TLS through the demo CA exactly as the imported tree does, no listener/cache/template |
-| `vault-agent-bootstrap.js` | The step after the imported `bootstrap.js`: enables AppRole, writes one Transit policy, creates the role, writes `role_id` and `secret_id` (0600) into the private state, and points the `api` document at the sink |
-| `vault-agent.sh` | Runs the imported tree with the override under its own project name and env file |
+## Commands
 
-Core side: `lib/server/serve/preview-config.js` accepts `tokenFile` as the alternative to
-`tokenEnv` in each tenant's `vault` block (exactly one of the two; a relative or empty path
-refuses at load). The sink is read with `fs.promises.readFile` on every Transit call and trimmed,
-so a token the Agent renews or re-issues is used by the next operation without a restart. A
-missing, unreadable or empty sink fails that operation closed with `SECRETS_PROVIDER_UNAVAILABLE`
-and never falls back to an environment token. The Transit client is unchanged. Queue item
-`MT-VAULT-TOKEN-FILE`; branch `codex/vault-token-file-20261109` on top of `ed2ced00`.
-
-## Running it
+Prepare an explicitly pinned core/deployment overlay using the companion's normal
+source-identity tooling. Select replicas and worker rosters during preparation;
+subsequent shell overrides cannot retarget the prepared roster. Choose a fresh,
+private state directory and a unique explicit Compose project:
 
 ```bash
-# 1. a core worktree carrying tokenFile, with the imported tree in place
-#    (tools/compose-overlay.sh pins the recorded commit; for a branch head run its two steps:
-#    git worktree add --detach <tree> <head>; cp -a bindings/compose/multitenant <tree>/deploy/multitenant)
-cd <tree>/deploy/multitenant && ./demo.sh prepare --port 18090 --state /private/state/dir
-echo NS_DEMO_IMAGE=nightscout-multitenant-vault-agent:local >> .env     # keep a plain demo's tag intact
-node build.js
-
-# 2. from this directory
-NS_VAULT_AGENT_TOKEN_TTL=1h NS_VAULT_AGENT_TOKEN_MAX_TTL=24h ./vault-agent.sh <tree> up
-./vault-agent.sh <tree> demo
-./vault-agent.sh <tree> destroy        # down -v; the private state directory stays yours to remove
+NS_API_REPLICAS=2 node <core-tree>/deploy/multitenant/prepare.js \
+  --port 18090 --state /private/agent-state
+NS_VAULT_AGENT_PROJECT=synthetic-agent \
+  ./vault-agent.sh <core-tree> plan
+NS_VAULT_AGENT_PROJECT=synthetic-agent \
+  ./vault-agent.sh <core-tree> config
+NS_VAULT_AGENT_PROJECT=synthetic-agent \
+  ./vault-agent.sh <core-tree> build
+NS_VAULT_AGENT_PROJECT=synthetic-agent \
+  ./vault-agent.sh <core-tree> up
 ```
 
-`up` runs the imported bootstrap (unchanged), then `vault-agent-bootstrap`, then starts the Agent
-and waits for its sink before `api` starts (`depends_on: vault-agent: service_healthy`). The
-step is idempotent through `/state/vault-agent/complete.json`; a restarted Agent needs a fresh
-`secret_id` (`./vault-agent.sh <tree> secret-id`, then `agent start`) because the Agent removes
-the file after reading it and keeps the value only in memory.
+`plan` and `config` write no authoritative state. Generated API sink overrides go
+through Compose stdin. Selected API, realtime and evaluator generated overlays
+must match their committed generators exactly. An explicitly selected evaluator
+roster requires the binding's `evaluator-workers.js` and `compose.evaluator.yaml`;
+older bindings refuse that selection instead of silently running one worker.
 
-Environment accepted by the step: `NS_VAULT_AGENT_TOKEN_TTL` (default `1h`),
-`NS_VAULT_AGENT_TOKEN_MAX_TTL` (default `24h`), `NS_VAULT_AGENT_KEEP_ENV_TOKENS=1` (control runs
-only: leaves the imported per-tenant environment tokens in `api/env.json` so that a fallback,
-if one existed, would be visible). Durations are `<n>s|m|h`.
+`up` checks the paired image, starts infrastructure, bootstraps private operator
+state, starts admin/feed, provisions through the admin API, commissions restore,
+provisions the AppRole, starts Agent, then starts every API. It primes through DATA
+APIs, publishes the private primer handoff, and starts the selected realtime/
+evaluator workers, owner role, UI and edge. It writes no SQL settings seed.
 
-## Credentials, by location only
+`bootstrap` performs infrastructure and private bootstrap/Agent provisioning only.
+`demo`, `status`, `stop`, `down` and explicit `destroy` retain their usual meanings;
+`destroy` removes only the explicitly owned project's volumes. A private launch
+receipt pins source/deployment/project/state/roster/TTL identity before the first
+runtime mutation; image build does not commit a runtime TTL selection. Unknown existing
+projects cannot be adopted for mutation; changed identities refuse. Image and
+working-directory labels are checked before operating on existing containers.
 
-| credential | where | who reads it |
+The application image contains the exact source/deployment pair. The Agent/server
+use the pinned Vault image digest declared in the overlay; they are distinct
+services and resources. The host launcher/bootstrap overlay must match the recorded
+deployment commit. `NS_DEMO_IMAGE`, if customized, belongs in the prepared private
+`.env` so the image check and all commands select the same image.
+
+## Token lifecycle and state custody
+
+`NS_VAULT_AGENT_TOKEN_TTL` defaults to `1h`; `NS_VAULT_AGENT_TOKEN_MAX_TTL` defaults
+to `24h`. Both accept positive seconds/minutes/hours, with TTL no greater than max
+TTL and max TTL bounded to 32 days. Keep the same values on repeat commands.
+`NS_VAULT_AGENT_KEEP_ENV_TOKENS=1` is an explicit static-lab credential-retention control for the no-fallback negative test: it
+keeps previous environment credentials while selecting the sink. Registry bootstrap's
+previous API token file may remain present, but serving config names only the sink;
+its absence or refusal must not fall back to old material.
+
+The machine AppRole secret-id has no expiry and allows reuse; this private login
+credential is distinct from its bounded serving tokens. A finite secret-id can
+expire before token max TTL and prevent the Agent from logging in again. The
+Agent consumes and removes its secret-id input file, retaining it only in memory
+for max-TTL reauthentication. Operator revocation and replacement through Vault
+remain explicit; no application endpoint gains credential-management authority. After stopping/restarting that Agent, explicitly replace
+its secret-id before starting it:
+
+```bash
+NS_VAULT_AGENT_PROJECT=synthetic-agent ./vault-agent.sh <core-tree> agent stop
+NS_VAULT_AGENT_PROJECT=synthetic-agent ./vault-agent.sh <core-tree> secret-id
+NS_VAULT_AGENT_PROJECT=synthetic-agent ./vault-agent.sh <core-tree> agent start
+```
+
+All credential files are private and identified by location, never value:
+
+| material | private location | reader |
 |---|---|---|
-| Vault root and unseal material | `/state/bootstrap/vault-init.json` (imported bootstrap, 0600) | imported `bootstrap`, `vault-agent-bootstrap` |
-| AppRole `role_id` | `/state/vault-agent/creds/role_id` (0600) | `vault-agent` only |
-| AppRole `secret_id` | `/state/vault-agent/creds/secret_id` (0600); removed by the Agent after the first read | `vault-agent` only |
-| Agent token | `/state/vault-agent/sink/token` (0600), mounted read-only at `/run/ns-vault/token` | `api` (per Transit call); mounted into `realtime`, `evaluator`, `tenant-admin` for the roles that gain Vault calls later |
-| imported per-tenant tokens (`NS_VAULT_0`, `NS_VAULT_1`) | dropped from `/state/api/env.json` by the step unless `NS_VAULT_AGENT_KEEP_ENV_TOKENS=1` | nobody, once `tokenFile` is in force |
+| imported Vault root/unseal material | state/bootstrap/vault-init.json | private bootstrap helpers |
+| AppRole role-id and secret-id | state/vault-agent/creds/ | Agent only |
+| Agent token | state/vault-agent/sink/token | Agent writes; exact APIs read-only |
+| provisioning/management credentials | existing state/admin/ files | existing private admin authority |
 
-The Agent runs as the runtime uid (`NS_RUNTIME_UID`, default 1000), the uid that owns the
-private state, so no file is widened beyond 0600 and no root chown happens in the container.
+Preflight checks real private directories/files without symlink traversal, bounded
+bytes, exact source identity and every API config/environment/operation file. The
+shipping core parser validates candidate API configs in a private temporary scratch
+directory, which is removed; credentials remain in memory. No authority/Vault
+mutation starts before this succeeds. Repeat provisioning compares exact digests
+and returns locally without creating another role or token. The receipt intentionally
+permits Agent-owned sink rotation and secret-id consumption, while checking their
+private custody when present.
 
-## Design point for the maintainer (not decided here)
+A journal precedes provisioning and secret-id effects. A partial or mutated state
+refuses further provisioning; it is never silently repaired or declared complete.
+Keep its private evidence, stop its owned services, and prepare a fresh private
+state/project for recovery. Do not remove peer resources. Agent health means a
+nonempty sink exists; actual authorization, expiry and Vault outage are determined
+by serving Transit calls, not by that file-existence healthcheck.
 
-The imported bootstrap mints **one token per tenant with a per-tenant policy**
-(`<prefix>_tenant_0`, `<prefix>_tenant_1`): tenant 0's token cannot call tenant 1's keys at
-Vault. One Agent has one login, so this overlay creates **one AppRole whose policy is the union
-of the imported per-tenant policies**, read from Vault at provisioning time. Every serving
-process then holds a token that can reach every tenant's Transit keys on the mount.
+## Verification scope
 
-Trade-off, stated plainly:
+Focused checks exercise registry 1/2/4 APIs, constant policy/request cost, private
+custody, mixed/changed state and repeated identity refusal. Run:
 
-- **What moves.** Tenant separation at Vault (which token may touch which key) moves to the
-  application's authority layer and PostgreSQL RLS: the API picks the tenant's key from the
-  tenant's config after the request is bound to a tenant. A bug that confuses tenants in the
-  application can now reach another tenant's key where before Vault would have refused.
-- **What is gained.** No hand-rolled login or renewal in core; tokens renew and rotate without
-  restarts; one credential to custody per host instead of one per tenant; the same shape as the
-  Kubernetes native sidecar.
-- **Alternatives that keep per-tenant separation at Vault.** One Agent per tenant with one sink
-  per tenant (`tokenFile` already allows one path per tenant, so core needs no change); or one
-  Agent with `auto_auth` into several sinks is not a Vault Agent feature, so the per-tenant option
-  costs one container per tenant. Vault Enterprise namespaces are out of scope for this binding.
+```bash
+node --test bindings/compose/vault-agent/vault-agent.test.js \
+  bindings/compose/vault-agent/tests/plan.test.cjs \
+  bindings/compose/vault-agent/tests/guards.test.cjs
+```
 
-This README states the mechanism; the decision belongs in the release record.
+Vault HTTP responses are explicitly doubled in the unit checks. Pure roster tests
+use the committed generators and the immutable evaluator interface from
+`962fbdbe8617ed8abe63cad7039fde70f91fcbce`; they do not claim worker runtime scaling.
+The historical 2026-11-09 union-policy experiment remains in alignment's immutable
+`reports/tenancy/vault-agent-2026-11-09/` and does not establish this registry binding.
 
-## What is measured
+Fresh finite native lifecycle capture on 2026-11-12 uses core
+`d50502bb6126bda2bb0af384569e1d95de114f2f` paired with deployment
+`43cd1e6a85e9b60a5b1b174a840609ce938169f6`. Its real Agent/Vault and two serving
+APIs pass auto-auth, renewal, max-TTL reauthentication, missing-sink/expired-token/
+seal/transport refusal and recovery, and explicit secret-id replacement. The actual
+production parser also accepts the 1/2/4 API environment shapes. A separate real-Agent
+expiring-secret control fails reauthentication; nonexpiring restoration passes two
+max-TTL cycles. Live four-API capacity and selected realtime/evaluator runtime
+scaling are unmeasured here. All owned serving fixtures are stopped and retained.
 
-Figures from output, 2026-11-09, core head `0c5479584a39f68edb6b1eb2e1228129eb9722ac` (branch
-`codex/vault-token-file-20261109`, `ed2ced00` + one commit) overlaid with this tree; Compose
-project `nightscout-multitenant-vault-agent`, public port 18090, `NS_VAULT_AGENT_TOKEN_TTL=2m`,
-`NS_VAULT_AGENT_KEEP_ENV_TOKENS=1`. The alignment report
-`reports/tenancy/vault-agent-2026-11-09/README.md` carries the full log excerpts.
-
-| check | result |
-|---|---|
-| core unit tests `tests/preview-vault-token-file.test.js` | 5 passing; ablation "cache the sink at load" fails 2 of 5, ablation "fall back to the environment" fails 1 of 5 (`Missing expected rejection`) |
-| `npm run test:affected -- --since ed2ced00` (3 changed files, 28 test files selected) | unit 191 passing, harness 27 passing, integration 24 passing / 69 pending opt-ins / 0 failing, against a MongoDB 7.0.43 container (the first run against the host's MongoDB 3.6 failed 17 boot-path tests on the driver's wire-version refusal; unrelated to this change) |
-| `tools/compose-identity-check.sh <core>`: imported tree untouched | ok, tree `8be3d761cbe592428357d6cee29612affafe4122` on both sides |
-| Agent provisioned; `secret_id` file removed after the first read; sink 0600 uid 1000 | `vault-agent-provisioned`; creds dir holds `role_id` only; sink 95 bytes |
-| renewal: Transit-backed call (legacy token exchange via nginx) after the TTL has passed | token issued 20:03:41Z, `renewed auth token` at 20:03:41Z and 20:05:08Z, sink hash unchanged, both tenants HTTP 200 at 20:06:22Z (2 m 41 s after issue) |
-| control: Agent stopped at 20:06:22Z, env tokens `NS_VAULT_0`/`NS_VAULT_1` left in `api/env.json` | at 20:08:52Z (token expired 20:07:08Z) both tenants HTTP 503, sink hash unchanged: the api failed closed on the expired sink token and did not use the environment tokens |
-| recovery | `secret-id` re-issued, `agent start`, healthy in 4 s, sink hash changed, both tenants HTTP 200 at 20:08:56Z |
-| imported restore demo (`vault-agent.sh demo`) through the overlay | `{"demo":"tenant-local-logical-restore","state":"passed"}`, exit 0 (tenant A restored, B unaffected) |
-
-One finding from the first run: with `token_no_default_policy`, the Agent's token could not
-call `auth/token/renew-self` (403), so the Agent fell back to re-authentication at every TTL
-with its cached `secret_id` (still correct, but not renewal). The policy now grants exactly
-`auth/token/renew-self` (update) and `auth/token/lookup-self` (read); the renewal row above is
-from the second run.
-
-A check that has never gone red is not evidence; the ablations and the stopped-Agent control
-are the red half.
+Exact source/instrument attribution, role receipts, red controls, stopped resources
+and limitations live in alignment's
+`reports/tenancy/vault-agent-registry-2026-11-12/`. Runtime files in the final delivery
+are unchanged from the measured deployment commit above. Default/pilot activation
+and comprehensive joined-candidate acceptance remain separate coordinator work.
