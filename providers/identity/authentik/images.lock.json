@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "authentikVersion": "2026.8.5",
+  "authentik": "ghcr.io/goauthentik/server@sha256:602227a86455d6772e3d16b7d852713c4f864f40df5df894abd1285bb53979a5",
+  "postgres": "postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea",
+  "nginx": "nginx@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10"
+}
