@@ -60,7 +60,11 @@ only for active synthetic seed tenants, refuses existing revocations, and grants
 no serving identity authority to modify that relation. The admin service composes
 ownership operations and durable connector-source configuration on separate
 database identities. Connector definitions contain secret references, never
-plaintext endpoint credentials. Partial setup is refused; source
+plaintext endpoint credentials. The private restore operator uses the same exact registry cohort label as the
+serving participants; the synthetic seed list selects demonstration tenants.
+Hint listeners use a separate login with no table, private function or replication
+grants. Clinical truth and recovery reads stay on each role's registered storage
+connection. Partial setup is refused; source
 and deployment revision changes require fresh synthetic state.
 
 nginx waits only for the services it routes to, including each API instance.

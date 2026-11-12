@@ -50,7 +50,7 @@ async function finish({ options, request, rootToken, layout, roleURLs, writePriv
   const lifecycle = plan.lifecycle(l);
   writePrivate(path.join(output, 'ops', 'config.json'), { version: 1, drainTimeoutMs: 10000,
     tenants: ids.map((id, i) => ({ id, host: plan.tenantAlias(i), tokenEnv: i === 0 ? 'NS_DEMO_TOKEN_A' : i === 1 ? 'NS_DEMO_TOKEN_B' : 'NS_DEMO_TOKEN_' + i })),
-    apiOrigin: docs.apiOrigin || 'http://api:1337', control: { namespace: l.namespaces.control, locks: docs.locks, participants: docs.remote }, ...lifecycle }, own);
+    apiOrigin: docs.apiOrigin || 'http://api:1337', control: { namespace: l.namespaces.control, registry: { namespace: l.namespaces.registry }, locks: docs.locks, participants: docs.remote }, ...lifecycle }, own);
   writePrivate(path.join(output, 'ops', 'env.json'), { NS_OPERATOR_PG: roleURLs.operator, NS_SOURCE_COMMIT: sourceCommit,
     ...(realtimePlacement ? { MULTITENANT_REALTIME_PLACEMENT: '/run/ns-placement/backend.json' } : {}) }, own);
   writePrivate(path.join(output, 'bootstrap', 'layout.json'), l);

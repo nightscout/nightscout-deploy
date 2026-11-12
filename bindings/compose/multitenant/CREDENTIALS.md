@@ -48,6 +48,7 @@ inherits the object owner or bootstrap administrator.
 | Alarm state | API | Narrow suppression writes/current authority reads and notification-state reads |
 | Realtime reader | realtime | Clinical/clock reads and its own checkpoint-column updates |
 | Evaluator reader | evaluator | Clinical/clock reads and its own checkpoint-column updates |
+| Feed hint listener | realtime/evaluator | PostgreSQL LISTEN only; no table, private function or replication grants |
 | Notification outbox | evaluator | Exact durable request/head/state columns; no clinical mutation |
 | Suppression reader | evaluator | Suppression reads; no suppression or clinical writes |
 | Owner writer | tenant-admin | Subject metadata/role links/audit and owner-fence columns; no clinical writes |

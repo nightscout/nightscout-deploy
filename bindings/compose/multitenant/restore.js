@@ -19,7 +19,8 @@ function validateConfig (value, env = process.env) {
       !value.tenants.every(t => exact(t, ['id', 'host', 'tokenEnv']) && UUID.test(t.id) && /^[a-z0-9.-]+$/.test(t.host) &&
         /^[A-Z][A-Z0-9_]*$/.test(t.tokenEnv) && typeof env[t.tokenEnv] === 'string' && env[t.tokenEnv].length > 0) ||
       new Set(value.tenants.map(t => t.id)).size !== 2 || new Set(value.tenants.map(t => t.host)).size !== 2 ||
-      !exact(value.control, ['namespace', 'locks', 'participants']) || !validName(value.control.namespace) ||
+      !exact(value.control, ['namespace', 'locks', 'participants', ...(Object.hasOwn(value.control || {}, 'registry') ? ['registry'] : [])]) || !validName(value.control.namespace) ||
+      value.control.registry !== undefined && (!exact(value.control.registry, ['namespace']) || !validName(value.control.registry.namespace)) ||
       !Array.isArray(value.control.locks) || value.control.locks.length !== 2 ||
       !value.control.locks.every(row => exact(row, ['tenant', 'key']) && value.tenants.some(t => t.id === row.tenant) &&
         typeof row.key === 'string' && /^[1-9][0-9]{0,18}$/.test(row.key) && BigInt(row.key) <= 9223372036854775807n) ||
@@ -82,10 +83,12 @@ function operationPlacement(env = process.env) {
   return require('../../lib/realtime-placement').load(env, { internal });
 }
 
+function cohortTenants(config) { return config.control.registry ? ['registry:' + config.control.registry.namespace] : config.tenants.map(t => t.id); }
+
 async function ready (config) {
   const placement = operationPlacement();
   const cohort = await require('../../lib/server/serve/operation-cohort').createRemote({namespace: config.control.namespace,
-    tenants: config.tenants.map(t => t.id), participants: config.control.participants, placement});
+    tenants: cohortTenants(config), participants: config.control.participants, placement});
   await cohort.close();
 }
 
@@ -94,7 +97,7 @@ async function restore (config, artifact, env = process.env, hooks = {}) {
   const lifecycle = lifecycleFor(config);
   // createRemote reads actual participants. Missing peers fail before suspension.
   const cohort = await require('../../lib/server/serve/operation-cohort').createRemote({ namespace: config.control.namespace,
-    tenants: config.tenants.map(t => t.id), participants: config.control.participants, placement: operationPlacement(env) });
+    tenants: cohortTenants(config), participants: config.control.participants, placement: operationPlacement(env) });
   const { Pool } = require('pg');
   const pool = new Pool({ connectionString: env.NS_OPERATOR_PG, max: 1, connectionTimeoutMillis: 5000,
     statement_timeout: 10000, options: '-c search_path=pg_catalog' });
@@ -147,4 +150,4 @@ if (require.main === module) main().then(result => process.stdout.write(JSON.str
     recovery: 'Inspect persisted operation state. Do not automatically replay or reopen the tenant.' }) + '\n');
   process.exitCode = 1;
 });
-module.exports = { validateConfig, loadConfig, lifecycleFor, tenantFor, ready, capture, restore, argumentsFor, main };
+module.exports = { validateConfig, loadConfig, lifecycleFor, tenantFor, cohortTenants, ready, capture, restore, argumentsFor, main };

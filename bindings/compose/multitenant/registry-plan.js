@@ -45,7 +45,12 @@ function expand(docs, { layout, urls, vaultAddress }) {
     if (role === 'api' || role === 'evaluator' || role === 'realtime') env.NS_ACTIVITY_PG = urls.activity_reader;
     delete docs.operations[role].locks; docs.operations[role].leaseSessions = leaseSessions(); docs.operations[role].registry = { namespace: ns.registry };
   }
-  for (const role of ['evaluator','realtime']) docs.configs[role].changeFeed = { connectionEnv: role === 'evaluator' ? 'NS_EVALUATOR_PG' : 'NS_REALTIME_PG', channel: layout.prefix + '_changes', pageSize: 256, degradedPages: 4, intervalMs: 1000, heartbeatTimeoutMs: 5000 };
+  // LISTEN only carries hints. Its raw transport client has no clinical grant;
+  // tenant-bound truth remains on each role's registered storage connection.
+  for (const role of ['evaluator','realtime']) {
+    docs.environments[role].NS_FEED_LISTENER_PG = urls.feed_listener;
+    docs.configs[role].changeFeed = { connectionEnv: 'NS_FEED_LISTENER_PG', channel: layout.prefix + '_changes', pageSize: 256, degradedPages: 4, intervalMs: 1000, heartbeatTimeoutMs: 5000 };
+  }
   docs.feed = { config: { connectionEnv: 'NS_FEED_PG', namespace: ns.feed, clockNamespace: ns.clock, activityNamespace: ns.control, settingsNamespace: ns.display_settings, policyNamespace: ns.operator_policy,
     slot: layout.prefix + '_feed_slot', publication: layout.prefix + '_feed_publication', owner: layout.feedOwner, channel: layout.prefix + '_changes',
     pollMs: 50, heartbeatMs: 1000, targetChanges: 128, maxMessages: 10000, maxBytes: 1048576, statementTimeoutMs: 2000, rssRefuseBytes: 268435456 },
