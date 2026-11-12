@@ -1,0 +1,204 @@
+TAP version 13
+# Subtest: registered generic adapter emits exact HTTPS callbacks and no static registry origins
+ok 1 - registered generic adapter emits exact HTTPS callbacks and no static registry origins
+  ---
+  duration_ms: 3.715779
+  type: 'test'
+  ...
+# Subtest: single origin uses same registered adapter and explicit origin
+ok 2 - single origin uses same registered adapter and explicit origin
+  ---
+  duration_ms: 1.204253
+  type: 'test'
+  ...
+# Subtest: unknown provider/module paths and unknown fields refuse
+ok 3 - unknown provider/module paths and unknown fields refuse
+  ---
+  duration_ms: 0.268653
+  type: 'test'
+  ...
+# Subtest: HTTPS and issuer/PKCE/algorithm discovery are exact; redirects may not exfiltrate secrets
+ok 4 - HTTPS and issuer/PKCE/algorithm discovery are exact; redirects may not exfiltrate secrets
+  ---
+  duration_ms: 0.60833
+  type: 'test'
+  ...
+# Subtest: credential files refuse symlink, public mode and empty/malformed material
+ok 5 - credential files refuse symlink, public mode and empty/malformed material
+  ---
+  duration_ms: 1.026217
+  type: 'test'
+  ...
+# Subtest: reference profile rejects mixed source/project, nonregistry ports, real domains and wildcard callbacks
+ok 6 - reference profile rejects mixed source/project, nonregistry ports, real domains and wildcard callbacks
+  ---
+  duration_ms: 0.26217
+  type: 'test'
+  ...
+# Subtest: 1/2/4 API roster and explicit idle/source limits retain exact service names
+ok 7 - 1/2/4 API roster and explicit idle/source limits retain exact service names
+  ---
+  duration_ms: 0.492868
+  type: 'test'
+  ...
+# Subtest: provider and DB stay isolated, only TLSedge joins existing owned app network; pins not tags
+ok 8 - provider and DB stay isolated, only TLSedge joins existing owned app network; pins not tags
+  ---
+  duration_ms: 0.639925
+  type: 'test'
+  ...
+# Subtest: private planes refused and only specific owner paths exposed; no credentials in access logs
+ok 9 - private planes refused and only specific owner paths exposed; no credentials in access logs
+  ---
+  duration_ms: 0.361007
+  type: 'test'
+  ...
+# Subtest: API overlay exposes only read-only public trust bundle, no bootstrap/management/provider credentials
+ok 10 - API overlay exposes only read-only public trust bundle, no bootstrap/management/provider credentials
+  ---
+  duration_ms: 0.367448
+  type: 'test'
+  ...
+# Subtest: optional backchannel refuses unreviewed multi-origin broker; omission is explicit
+ok 11 - optional backchannel refuses unreviewed multi-origin broker; omission is explicit
+  ---
+  duration_ms: 0.651014
+  type: 'test'
+  ...
+# Subtest: human store grants preserve local authority read-only; signer never gains key-management rights
+ok 12 - human store grants preserve local authority read-only; signer never gains key-management rights
+  ---
+  duration_ms: 0.384874
+  type: 'test'
+  ...
+# Subtest: human configuration is separate from prior credentials, never grants owner authority or static origin maps
+ok 13 - human configuration is separate from prior credentials, never grants owner authority or static origin maps
+  ---
+  duration_ms: 0.842308
+  type: 'test'
+  ...
+# Subtest: plan and generated commands keep explicit project-directory and no resource execution by default
+ok 14 - plan and generated commands keep explicit project-directory and no resource execution by default
+  ---
+  duration_ms: 0.466633
+  type: 'test'
+  ...
+# Subtest: command environment rejects ambient application/secrets/loader/TLS controls
+ok 15 - command environment rejects ambient application/secrets/loader/TLS controls
+  ---
+  duration_ms: 0.524201
+  type: 'test'
+  ...
+# Subtest: public or symlink profile state refuses before reading context or any referenced source
+ok 16 - public or symlink profile state refuses before reading context or any referenced source
+  ---
+  duration_ms: 0.340989
+  type: 'test'
+  ...
+# Subtest: exact API1/2/4 budget includes every serving and transient source service
+not ok 17 - exact API1/2/4 budget includes every serving and transient source service
+  ---
+  duration_ms: 0.702198
+  type: 'test'
+  location: '/home/bewest/src/rag-nightscout-ecosystem-alignment/externals/work/deploy-idp-authentik-profile-20261112/providers/identity/authentik/tests/resources.test.js:9:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    14 !== 15
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 15
+  actual: 14
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (/home/bewest/src/rag-nightscout-ecosystem-alignment/externals/work/deploy-idp-authentik-profile-20261112/providers/identity/authentik/tests/resources.test.js:9:219)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: resource overlay refuses missing/extra services, missing limit, or authority fields
+not ok 18 - resource overlay refuses missing/extra services, missing limit, or authority fields
+  ---
+  duration_ms: 0.29253
+  type: 'test'
+  location: '/home/bewest/src/rag-nightscout-ecosystem-alignment/externals/work/deploy-idp-authentik-profile-20261112/providers/identity/authentik/tests/resources.test.js:10:1'
+  failureType: 'testCodeFailure'
+  error: 'Missing expected exception.'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+  operator: 'throws'
+  stack: |-
+    TestContext.<anonymous> (/home/bewest/src/rag-nightscout-ecosystem-alignment/externals/work/deploy-idp-authentik-profile-20261112/providers/identity/authentik/tests/resources.test.js:10:389)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: resolved equality permits only exact finite limits and retains all authority/config
+not ok 19 - resolved equality permits only exact finite limits and retains all authority/config
+  ---
+  duration_ms: 1.443006
+  type: 'test'
+  location: '/home/bewest/src/rag-nightscout-ecosystem-alignment/externals/work/deploy-idp-authentik-profile-20261112/providers/identity/authentik/tests/resources.test.js:11:1'
+  failureType: 'testCodeFailure'
+  error: 'Missing expected exception.'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+  operator: 'throws'
+  stack: |-
+    TestContext.<anonymous> (/home/bewest/src/rag-nightscout-ecosystem-alignment/externals/work/deploy-idp-authentik-profile-20261112/providers/identity/authentik/tests/resources.test.js:11:668)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: every original source command and install recreation includes the verified resource file
+ok 20 - every original source command and install recreation includes the verified resource file
+  ---
+  duration_ms: 1.323324
+  type: 'test'
+  ...
+# Subtest: actual resolved config recording checks baseline then resource-only selection
+ok 21 - actual resolved config recording checks baseline then resource-only selection
+  ---
+  duration_ms: 0.807102
+  type: 'test'
+  ...
+# Subtest: source roster check detects omitted/extra production service before diagnostic preparation
+ok 22 - source roster check detects omitted/extra production service before diagnostic preparation
+  ---
+  duration_ms: 0.27028
+  type: 'test'
+  ...
+# Subtest: provider services have finite diagnostic upper limits including PID/swap bounds
+ok 23 - provider services have finite diagnostic upper limits including PID/swap bounds
+  ---
+  duration_ms: 0.363949
+  type: 'test'
+  ...
+# Subtest: actual container HostConfig must retain every finite CPU/RAM/swap/PID budget
+ok 24 - actual container HostConfig must retain every finite CPU/RAM/swap/PID budget
+  ---
+  duration_ms: 0.267194
+  type: 'test'
+  ...
+1..24
+# tests 24
+# suites 0
+# pass 21
+# fail 3
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 29.763131
