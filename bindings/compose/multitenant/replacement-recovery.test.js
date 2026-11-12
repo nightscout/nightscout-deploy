@@ -11,10 +11,11 @@ function live(pid) { try { return !['Z','X'].includes(fs.readFileSync('/proc/'+p
 function processStart() { const p = spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'}); p.unref(); return p; }
 function fixture() {
   const state = fs.mkdtempSync(path.join(os.tmpdir(),'ns-replacement-recovery-')); fs.chmodSync(state,0o700);
-  for (const dir of ['bootstrap','placement','realtime']) fs.mkdirSync(path.join(state,dir),{mode:0o700});
+  for (const dir of ['bootstrap','placement','realtime','placement-operator']) fs.mkdirSync(path.join(state,dir),{mode:0o700});
   const complete = {sourceCommit:'a'.repeat(40),deployCommit:'b'.repeat(40)}, before=workers.initial({workers:2,shards:8});
   const write = (file,value) => j.atomicJson(path.join(state,file),value,true);
   write('bootstrap/complete.json',complete);write('placement/backend.json',before);write('placement/routes.json',before);
+  write('placement-operator/env.json',{NS_PLACEMENT_PG:'postgres://publisher:synthetic@postgres/example',NS_ACTIVITY_PG:'postgres://activity:synthetic@postgres/example',NS_SOURCE_COMMIT:complete.sourceCommit,MULTITENANT_REALTIME_PLACEMENT:'/run/ns-placement/backend.json'});
   write('realtime/env.json',{REALTIME_WORKER_ID:'realtime-1',REALTIME_WORKER_INCARNATION:before.workers[0].incarnation});
   const compose=path.join(state,'compose.yaml');fs.writeFileSync(compose,'services: {}\n');fs.writeFileSync(path.join(state,'.env'),'FIXTURE=1\n');
   const options={state,compose:[compose],project:'ns-owned-recovery-test',worker:'realtime-1',timeout:1000};
@@ -29,7 +30,7 @@ function fixture() {
     if(args[0]==='image')return JSON.stringify([{Id:image,Config:{Labels:{'org.opencontainers.image.revision':complete.sourceCommit,'org.nightscout.deploy.revision':complete.deployCommit}}}]);
     if(args[0]==='stop') { const r=rows.get(args.at(-1));assert.ok(r);if(stopWorks&&r.State.Running){process.kill(r.State.Pid,'SIGKILL');for(let n=0;n<100&&live(r.State.Pid);n++)Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,2);assert.equal(live(r.State.Pid),false,'actual old OS process terminated');r.State.Running=false;r.State.Pid=0;}return r.Id; }
     if(args[0]==='start'){start(rows.get(args[1]));return args[1];}
-    if(args.includes('config'))return JSON.stringify({services:{demo:{image},realtime:{image}}});
+    if(args.includes('config'))return JSON.stringify({services:{'placement-operator':{image},realtime:{image}}});
     if(args.includes('ps'))return current;
     if(args.includes('--no-start')){const file=args[args.lastIndexOf('-f')+1];const labels=j.privateJson(file).services.realtime.labels;const r=row(labels);rows.set(r.Id,r);current=r.Id;return '';}
     throw Error('UNIMPLEMENTED_DOCKER:'+args.join(' '));
@@ -39,7 +40,7 @@ function fixture() {
     // Product's actual PostgreSQL fence is deliberately not modeled as proof.
     if(!await action({name:'confirm',owner}))await action({name:'stop',owner});
     if(!await action({name:'confirm',owner}))throw Object.assign(Error('OLD_OWNER_UNCONFIRMED'),{code:'REALTIME_PLACEMENT_OLD_OWNER_UNCONFIRMED'});
-    write('placement/backend.json',candidate);
+  write('placement/backend.json',candidate);
     if(!await action({name:'activate',owner:{}}))throw Error('ACTIVATION_REFUSED');
     assert.equal(inspect(current).State.Running,true);assert.equal(j.privateJson(path.join(state,'realtime/env.json')).REALTIME_WORKER_INCARNATION,candidate.workers[0].incarnation);
     write('placement/routes.json',candidate);return {generation:candidate.generation};
@@ -65,7 +66,7 @@ for(const fault of ['before-stop','after-stop','after-assignment','after-env','a
 test('no-stop confirmation refuses before backend generation can advance',async()=>{
   const f=fixture();try{f.stopRefuses();await assert.rejects(operator.replace(f.options,{docker:f.docker,publisher:f.publisher}),/OLD_OWNER_UNCONFIRMED/);assert.equal(j.privateJson(path.join(f.state,'placement/backend.json')).generation,1);assert.equal(live(f.original.State.Pid),true);}finally{f.close();}
 });
-for(const mutation of ['project','image','startedAt','pid','container','env','backend','compose'])test('recovery refuses mutated '+mutation,async()=>{
+for(const mutation of ['project','image','startedAt','pid','container','env','backend','compose','authority'])test('recovery refuses mutated '+mutation,async()=>{
   const f=fixture();try{
     await assert.rejects(operator.replace(f.options,{docker:f.docker,publisher:f.publisher,checkpoint:async p=>{if(p==='before-stop')throw Error('CRASH')}}),/CRASH/);
     if(mutation==='project')f.original.Config.Labels['com.docker.compose.project']='foreign';
@@ -75,6 +76,7 @@ for(const mutation of ['project','image','startedAt','pid','container','env','ba
     if(mutation==='container')f.original.Id=hash();
     if(mutation==='env')f.write('realtime/env.json',{REALTIME_WORKER_ID:'realtime-2'});
     if(mutation==='backend')f.write('placement/backend.json',{...f.before,generation:99});
+    if(mutation==='authority')f.write('placement-operator/env.json',{...j.privateJson(path.join(f.state,'placement-operator/env.json')),NS_ACTIVITY_PG:'postgres://changed:synthetic@postgres/example'});
     if(mutation==='compose')fs.appendFileSync(f.options.compose[0],'# mutation');
     await assert.rejects(operator.replace({...f.options,recover:true},{docker:f.docker,publisher:f.publisher}),/PLACEMENT_/);
     assert.equal(j.privateJson(path.join(f.state,'placement/routes.json')).generation,1);

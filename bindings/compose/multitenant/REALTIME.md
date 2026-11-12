@@ -125,3 +125,16 @@ and startup. They simulate the product publisher/readiness boundary; full joined
 Docker/API/alarm/restore acceptance remains separately required. A pre-journal
 uncertain operation, changed source pair or changed Compose custody has no inferred
 recovery authorization and refuses rather than guessing an owner is dead.
+
+
+The one-shot `placement-operator` service receives only its private
+`placement-operator/env.json`: `NS_PLACEMENT_PG`, `NS_ACTIVITY_PG`, source identity
+and backend-map metadata. It does not mount the serving environment, restore
+operator credentials/tokens, artifacts or private participant sockets. Its only
+writable custody is the placement directory. Publication uses the readonly
+metadata/registry login; it never falls back to `NS_OPERATOR_PG`. The activity
+login only checks current eligibility. The host journal pins exact publisher
+authority bytes, and the private protocol checks that digest before opening
+connections. Missing, extra or changed authority/source refuses. An incomplete
+operation from a different source/custody tuple must be retained and inspected;
+changing its authority is not an implicit recovery permission.

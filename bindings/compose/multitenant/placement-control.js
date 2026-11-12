@@ -78,10 +78,12 @@ async function eligibleReady({ before, candidate, registry, activity, fetchImpl 
   }
   throw fail('REALTIME_PLACEMENT_TARGET_UNREADY');
 }
-async function run({ candidate, action, timeoutMs, source = process.env }) {
+async function run({ candidate, action, timeoutMs, authorityDigest, source = process.env }) {
   const { Client } = require('pg');
-  const connectionString = source.NS_OPERATOR_PG;
+  const connectionString = source.NS_PLACEMENT_PG;
   if (!connectionString || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 900000) throw fail('PLACEMENT_OPERATOR_INPUT_REQUIRED');
+  const authority = require('./placement-authority').verify('/run/ns-config/env.json', source.NS_SOURCE_COMMIT, authorityDigest);
+  if (authority.sha256 !== authorityDigest || authority.values.NS_PLACEMENT_PG !== connectionString || authority.values.NS_ACTIVITY_PG !== source.NS_ACTIVITY_PG) throw fail('PLACEMENT_AUTHORITY_REFUSED');
   const layout = require('./config').layout();
   const internal = require('../../lib/server/internal-api/listener-config').observer(source);
   const backendFile = '/run/ns-placement/backend.json', routesFile = '/run/ns-placement/routes.json';
@@ -92,8 +94,7 @@ async function run({ candidate, action, timeoutMs, source = process.env }) {
   try {
     registryConnection = await require('../../lib/storage/postgres-connection')({ connectionString, max: 1, statement_timeout: 5000, connectionTimeoutMillis: 5000 });
     const registry = require('../../lib/tenant-registry/postgres').create({ connection: registryConnection, namespace: layout.namespaces.registry });
-    const warmEnv = JSON.parse(await fs.readFile('/run/ns-warm-config/env.json', 'utf8'));
-    activity = await require('../../lib/tenant-activity/postgres').create({ connectionString: warmEnv.NS_ACTIVITY_PG, namespace: layout.namespaces.control, capability: 'reader' });
+    activity = await require('../../lib/tenant-activity/postgres').create({ connectionString: authority.values.NS_ACTIVITY_PG, namespace: layout.namespaces.control, capability: 'reader' });
     await client.connect();
     return await require('../../lib/realtime-placement/publish').publish({ file: backendFile, candidate, internal, client,
       controlNamespace: layout.namespaces.control, registry,

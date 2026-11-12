@@ -38,10 +38,10 @@ function sameProcess(row, known) {
   if (row.Id !== known.id || row.State.StartedAt !== known.startedAt || row.State.Running && row.State.Pid !== known.pid) fail('PLACEMENT_PLATFORM_IDENTITY_CHANGED');
 }
 const phases = ['prepared','stop-intent','stopped','env-intent','env-written','create-intent','created','start-intent','started','complete'];
-function recoverable(journal, { project, state, worker, complete, compose, backend, routes, env, row }) {
+function recoverable(journal, { project, state, worker, complete, authority, compose, backend, routes, env, row }) {
   if (journal.version !== 1 || !/^[a-f0-9]{32}$/.test(journal.operation || '') || !phases.includes(journal.phase) || journal.phase === 'complete' ||
       journal.project !== project || journal.state !== state || journal.worker !== worker || journal.source.core !== complete.sourceCommit || journal.source.deploy !== complete.deployCommit ||
-      journal.image !== row.Image || JSON.stringify(journal.compose) !== JSON.stringify(compose)) fail('PLACEMENT_RECOVERY_IDENTITY_CHANGED');
+      JSON.stringify(journal.authority) !== JSON.stringify(authority) || !authority || !/^[a-f0-9]{64}$/.test(authority.sha256) || journal.image !== row.Image || JSON.stringify(journal.compose) !== JSON.stringify(compose)) fail('PLACEMENT_RECOVERY_IDENTITY_CHANGED');
   const map = digest(backend), route = digest(routes), boot = digest(env);
   if (![journal.beforeDigest, journal.candidateDigest].includes(map) || ![journal.routesDigest, journal.candidateDigest].includes(route) ||
       route === journal.candidateDigest && map !== journal.candidateDigest || ![journal.oldEnvDigest, journal.newEnvDigest].includes(boot)) fail('PLACEMENT_RECOVERY_STATE_CHANGED');

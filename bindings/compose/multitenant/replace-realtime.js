@@ -46,6 +46,9 @@ async function replaceLocked(options, hooks) {
   const state = fs.realpathSync(options.state);
   if (state !== path.resolve(options.state)) throw fail('PLACEMENT_PRIVATE_FILE_REQUIRED');
   const complete = privateJson(path.join(state, 'bootstrap/complete.json'));
+  const authorityFile = path.join(state, 'placement-operator/env.json');
+  const selectedAuthority = require('./placement-authority').read(authorityFile, complete.sourceCommit);
+  const authority = { path: authorityFile, sha256: selectedAuthority.sha256 };
   let before = privateJson(path.join(state, 'placement/backend.json'));
   let routes = privateJson(path.join(state, 'placement/routes.json'));
   const journalFile = path.join(state, 'placement/operation.json');
@@ -67,7 +70,7 @@ async function replaceLocked(options, hooks) {
       if (!/^[a-f0-9]{64}$/.test(publisherId)) throw fail('PLACEMENT_RECOVERY_PROCESS_AMBIGUOUS');
       const actor = JSON.parse(docker(['inspect',publisherId]))[0];
       if (actor.Image !== prior.image || actor.Config.Labels?.['com.docker.compose.project'] !== options.project ||
-          actor.Config.Labels?.['com.docker.compose.service'] !== 'demo' || actor.Config.Labels?.['org.nightscout.replacement.operation'] !== prior.operation) throw fail('PLACEMENT_RECOVERY_PROCESS_AMBIGUOUS');
+          actor.Config.Labels?.['com.docker.compose.service'] !== 'placement-operator' || actor.Config.Labels?.['org.nightscout.replacement.operation'] !== prior.operation) throw fail('PLACEMENT_RECOVERY_PROCESS_AMBIGUOUS');
       if (actor.State.Running) docker(['stop','--time','5',publisherId]);
       // --rm can remove the actor immediately after exit. An absent exact name
       // also proves it cannot continue publishing; a reused name/Id refuses.
@@ -87,19 +90,19 @@ async function replaceLocked(options, hooks) {
   const labels = JSON.parse(docker(['image','inspect',original.Image]))[0].Config.Labels;
   if (labels?.['org.opencontainers.image.revision'] !== complete.sourceCommit || labels?.['org.nightscout.deploy.revision'] !== complete.deployCommit) throw fail('PLACEMENT_SOURCE_IDENTITY_CHANGED');
   const configuration = JSON.parse(docker([...compose,'config','--format','json']));
-  for (const selected of ['demo',service]) {
+  for (const selected of ['placement-operator',service]) {
     const image = configuration.services?.[selected]?.image;
     if (!image || JSON.parse(docker(['image','inspect',image]))[0].Id !== original.Image) throw fail('PLACEMENT_SOURCE_IDENTITY_CHANGED');
   }
   const composeIdentity = [...options.compose, path.join(path.dirname(options.compose[0]), '.env')].map(file => ({ path: file, sha256: journal.bytesDigest(file) }));
   let recovery;
-  if (options.recover) recovery = journal.recoverable(prior, { project: options.project, state, worker: options.worker, complete, compose: composeIdentity, backend: before, routes, env, row: original });
+  if (options.recover) recovery = journal.recoverable(prior, { project: options.project, state, worker: options.worker, complete, authority, compose: composeIdentity, backend: before, routes, env, row: original });
   const move = options.recover ? recovery.published ? {} : prior.move : { ...(options.shard === undefined ? {} : { shard: options.shard, to: options.to }) };
   const candidate = replacement(before, options.worker, move);
   const operation = crypto.randomBytes(16).toString('hex');
   const nextEnv = { ...env, REALTIME_WORKER_INCARNATION: candidate.workers[index].incarnation };
   const record = { version: 1, operation, publisherName: options.project + '-placement-' + operation, phase: 'prepared', project: options.project, state, worker: options.worker,
-    source: { core: complete.sourceCommit, deploy: complete.deployCommit }, image: original.Image, compose: composeIdentity, move,
+    source: { core: complete.sourceCommit, deploy: complete.deployCommit }, image: original.Image, authority, compose: composeIdentity, move,
     beforeDigest: journal.digest(before), candidateDigest: journal.digest(candidate), routesDigest: journal.digest(routes),
     oldEnvDigest: journal.digest(env), newEnvDigest: journal.digest(nextEnv), oldIncarnation: before.workers[index].incarnation,
     newIncarnation: candidate.workers[index].incarnation, oldIdentity: journal.identity(original),
@@ -115,6 +118,7 @@ async function replaceLocked(options, hooks) {
     return row.State.Running === false && row.State.Pid === 0;
   }
   const action = async event => {
+    if (journal.bytesDigest(authorityFile) !== authority.sha256) throw fail('PLACEMENT_AUTHORITY_REFUSED');
     let ok = false;
     if (event.name === 'confirm' && exactOld(event.owner)) ok = stopped();
     else if (event.name === 'stop' && exactOld(event.owner)) { persist('stop-intent'); await checkpoint('before-stop'); docker(['stop','--time','10',id]); ok = stopped(); if (ok) persist('stopped'); await checkpoint('after-stop'); }
@@ -143,15 +147,15 @@ async function replaceLocked(options, hooks) {
     }
     return ok;
   };
-  const result = await (hooks.publisher || publish)({ options, state, compose, candidate, action, docker, operation, lockFd: hooks.lockFd });
+  const result = await (hooks.publisher || publish)({ options, state, compose, candidate, action, docker, operation, authority, lockFd: hooks.lockFd });
   persist('complete');
   return result;
 }
-async function publish({ options, state, compose, candidate, action, docker, operation, lockFd }) {
+async function publish({ options, state, compose, candidate, action, docker, operation, authority, lockFd }) {
   const name = options.project + '-placement-' + operation;
   const child = spawn('docker', [...compose,'run','--rm','-T','--no-deps','--name',name,'--label','org.nightscout.replacement.operation=' + operation,
-    '-v',path.join(state,'placement') + ':/run/ns-placement:rw', '-v',path.join(state,'realtime') + ':/run/ns-warm-config:ro',
-    'demo','node','-r','./deploy/multitenant/load-env.js','deploy/multitenant/placement-control.js'], { stdio: ['pipe','pipe','pipe',lockFd] });
+    '-v',path.join(state,'placement') + ':/run/ns-placement:rw', '-v',path.join(state,'placement-operator') + ':/run/ns-config:ro',
+    'placement-operator','node','-r','./deploy/multitenant/load-env.js','deploy/multitenant/placement-control.js'], { stdio: ['pipe','pipe','pipe',lockFd] });
   let result, refused = false, errors = '', processing = Promise.resolve();
   const timer = setTimeout(() => {
     refused = true;
@@ -173,7 +177,7 @@ async function publish({ options, state, compose, candidate, action, docker, ope
       child.stdin.write(JSON.stringify({ id: event.id, ok }) + '\n');
     }).catch(() => { refused = true; child.stdin.end(); });
   });
-  child.stdin.write(JSON.stringify({ candidate, timeoutMs: options.timeout }) + '\n');
+  child.stdin.write(JSON.stringify({ candidate, timeoutMs: options.timeout, authorityDigest: authority.sha256 }) + '\n');
   try {
     const code = await new Promise((resolve, reject) => { child.once('exit', resolve); child.once('error', reject); });
     await processing;

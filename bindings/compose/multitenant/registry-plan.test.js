@@ -98,3 +98,11 @@ test('raw LISTEN transport has a distinct login without any table, function or r
   }
   assert.ok(!plan.grants(layout).some(sql=>sql.includes('"'+layout.roles.feed_listener+'"')),'LISTEN needs no schema/table/function grants');
 });
+
+test('placement publication has readonly control metadata and registry enumeration, without maintenance identity',()=>{
+  const {layout}=generated(),grants=plan.grants(layout).filter(sql=>sql.includes('"'+layout.roles.placement_publisher+'"'));
+  assert.notEqual(layout.roles.placement_publisher,layout.roles.operator);
+  assert.ok(grants.some(sql=>sql.includes('tenant_registry_tenants')));
+  assert.ok(grants.some(sql=>sql.includes('tenant_lifecycle_windows')));
+  for(const sql of grants){assert.ok(!/INSERT|UPDATE|DELETE|REPLICATION|tenant_lifecycle_backend_birth|ALL TABLES/.test(sql),sql);}
+});
