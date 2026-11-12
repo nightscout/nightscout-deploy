@@ -114,7 +114,7 @@ if (require.main === module) {
     assert.throws(() => check(gated), /nginx must not wait for evaluator/, 'Edge-gating control must fail');
     const read = name => require('node:fs').readFileSync(require('node:path').join(__dirname, name), 'utf8');
     const nginx = read('nginx.compose.conf'), shared = read('nginx.conf');
-    assert(config.services.nginx.volumes.some(v => v.target === '/etc/nginx/nginx.conf' && v.source.endsWith('/nginx.compose.conf')), 'Compose edge must mount nginx.compose.conf');
+    assert(config.services.nginx.volumes.some(v => v.target === '/etc/nginx/nginx.conf' && v.source.endsWith('/edge/nginx.conf') && v.read_only), 'Compose edge must mount only its prepared read-only edge configuration');
     checkEdgeResolve(nginx); checkEdgeSame(shared, nginx);
     assert.throws(() => checkEdgeResolve(nginx.replace('server api:1337 resolve;', 'server api:1337;')), /upstream api must re-resolve/, 'Edge re-resolve control must fail');
     assert.throws(() => checkEdgeSame(shared, nginx.replace("proxy_set_header Cookie '';", '')), /must equal nginx.conf/, 'Edge drift control must fail');
