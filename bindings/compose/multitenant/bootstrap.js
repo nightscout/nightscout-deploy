@@ -168,20 +168,20 @@ async function bootstrap(options) {
       managementTokens.push(payload+'.'+Buffer.from(signature.split(':')[2],'base64').toString('base64url'));
     }
     const own={uid,gid},compact={compact:true};
-    for(const role of plan.serviceRoles){
+    for(const role of Object.keys(docs.configs)){
       const directory=path.join(output,role);writePrivate(path.join(directory,'env.json'),docs.environments[role],own,compact);
       writePrivate(path.join(directory,'config.json'),docs.configs[role],own,compact);writePrivate(path.join(directory,'operation.json'),docs.operations[role],own,compact);
-      if(role==='api'){writePrivate(path.join(directory,'evaluator-metadata.json'),docs.configs.evaluator,own,compact);writePrivate(path.join(directory,'admission.json'),docs.admission,own,compact);}
+      if(role==='api'||role.startsWith('api-')){writePrivate(path.join(directory,'evaluator-metadata.json'),docs.configs.evaluator,own,compact);writePrivate(path.join(directory,'admission.json'),docs.admission,own,compact);}
       if(role==='realtime')writePrivate(path.join(directory,'admission.json'),docs.admission,own,compact);
     }
     // Core's loaders take the bound from the environment they are given; the roles get it from
     // Compose, so validation sees the same value without it entering the written env.json.
     writePrivate(path.join(output,'ui','config.json'),docs.ui,own,compact);
-    plan.validateFiles(output,configMaxBytes===undefined?docs:{...docs,environments:Object.fromEntries(plan.serviceRoles.map(role=>
+    plan.validateFiles(output,configMaxBytes===undefined?docs:{...docs,environments:Object.fromEntries(Object.keys(docs.configs).map(role=>
       [role,{...docs.environments[role],MULTITENANT_CONFIG_MAX_BYTES:String(configMaxBytes)}]))});
     const lifecycle=plan.lifecycle(l);
     const operatorConfig={version:1,drainTimeoutMs:10000,tenants:ids.map((id,i)=>({id,host:docs.configs.api.tenants[i].aliases[0],tokenEnv:i===0?'NS_DEMO_TOKEN_A':i===1?'NS_DEMO_TOKEN_B':'NS_DEMO_TOKEN_'+i})),
-      apiOrigin:'http://api:1337',control:{namespace:ns.control,locks:docs.locks,participants:docs.remote},...lifecycle};
+      apiOrigin:docs.apiOrigin||'http://api:1337',control:{namespace:ns.control,locks:docs.locks,participants:docs.remote},...lifecycle};
     writePrivate(path.join(output,'ops','config.json'),operatorConfig,own);
     writePrivate(path.join(output,'ops','env.json'),{NS_OPERATOR_PG:roleURLs.operator,...Object.fromEntries(demoTokens.map((token,i)=>[i===0?'NS_DEMO_TOKEN_A':i===1?'NS_DEMO_TOKEN_B':'NS_DEMO_TOKEN_'+i,token])),NS_SOURCE_COMMIT:sourceCommit},own);
     writePrivate(path.join(output,'ops','tenants.json'),{version:1,tenants:ids.map((id,i)=>({id,host:docs.configs.api.tenants[i].aliases[0],dataToken:demoTokens[i],managementToken:managementTokens[i],managementExpiresAt:exp}))},own);

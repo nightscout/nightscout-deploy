@@ -25,16 +25,6 @@ function tenantCount(env = process.env) {
   if (!/^[1-9][0-9]{0,5}$/.test(raw) || Number(raw) > max) throw new TypeError('NS_DEMO_TENANTS must be 1..' + max);
   return Number(raw);
 }
-// Realtime admits at most maxSockets sockets in total, across tenants and namespaces
-// (core lib/server/realtime/protocol.js bind). It is part of the realtime configuration
-// identity, so a change takes a realtime restart. NS_DEMO_SOCKETS_PER_TENANT (1..100,
-// default 2) times the tenant count, never below the former fixed 100.
-function socketsPerTenant(env = process.env) {
-  const raw = env.NS_DEMO_SOCKETS_PER_TENANT === undefined || env.NS_DEMO_SOCKETS_PER_TENANT === '' ? '2' : env.NS_DEMO_SOCKETS_PER_TENANT;
-  if (!/^[1-9][0-9]{0,2}$/.test(raw) || Number(raw) > 100) throw new TypeError('NS_DEMO_SOCKETS_PER_TENANT must be 1..100');
-  return Number(raw);
-}
-const maxSockets = (n, env = process.env) => Math.max(100, n * socketsPerTenant(env));
 function tenantIds(n = tenantCount()) {
   return Array.from({length: n}, (_, i) => i === 0 ? A : i === 1 ? B
     : (0x30000000 + i).toString(16) + '-3333-4333-8333-' + i.toString(16).padStart(12, '0'));
@@ -160,7 +150,7 @@ function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress}
       maxPayloadBytes:524288,maxInflight:4,attemptTimeoutMs:10000,retryDelayMs:1000,pollIntervalMs:1000,retryIntervalMs:1000}}};
   const realtime={version:1,postgres:{connectionEnv:'NS_REALTIME_PG',namespaces:{...domainNamespaces,clock:ns.clock,checkpoint:ns.rt_checkpoint,changeStamps:ns.change_stamps}},consumer:'realtime-compose-demo',
     ...limits,tenants,socketOrderDomains:['treatments','devicestatus','profile'],admissionFileEnv:'NS_ADMISSION_FILE',
-    maxMessageBytes:1048576,operationTimeoutMs:5000,maxSockets:maxSockets(n),authorizationRecheckMs:30000};
+    maxMessageBytes:1048576,operationTimeoutMs:5000,authorizationRecheckMs:30000};
   // Decision root-grant-ceiling-default-all: every tenant data permission unless
   // the operator narrows it. Owner and root share this catalogue (one policy row).
   const ownerCatalogue=['*'];
@@ -191,7 +181,7 @@ function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress}
   for(const role of serviceRoles){operations[role]={version:2,namespace:ns.control,connectionEnv:'NS_LIFETIME_PG',locks,participantId:role,participants};Object.assign(environments[role],{NS_LIFETIME_PG:urls['lifetime_'+role.replace('-','_')],MULTITENANT_OPERATION_CONFIG:base+'/operation.json'});}
   const admission={version:1,mode:'preview-socket-allowlist',tenants:api.tenants.map(({id,aliases})=>({id,enabled:true,aliases}))};
   const remote=participants.map(peer=>({id:peer.id,roles:peer.roles,namespaces:peer.namespaces,endpoint:{socketPath:socketOf(peer.id),maxBytes:peer.maxMessageBytes,timeoutMs:peer.timeoutMs}}));
-  return {configs,environments,operations,admission,remote,locks,ui:{version:1,tenants:aliases.map(aliases=>({aliases,theme:'default'}))}};
+  return require('./replicas').expand({configs,environments,operations,admission,remote,locks,ui:{version:1,tenants:aliases.map(aliases=>({aliases,theme:'default'}))}});
 }
 function lifecycle(l) {
   const aliases={rt_checkpoint:'checkpoint',eval_checkpoint:'evaluator_checkpoint',alarm:'alarm_suppression',outbox:'notification_outbox'};
@@ -204,11 +194,12 @@ function validateFiles(directory, docs) {
   const parsers={api:require('../../lib/server/serve/preview-config').load,realtime:require('../../lib/server/realtime/config').load,
     evaluator:require('../../lib/server/serve/evaluator-config').load,'tenant-admin':require('../../lib/server/serve/owner-preview-config').load};
   const namespaces=require('../../lib/server/serve/operation-cohort').protectedNamespaces;
-  for(const role of serviceRoles){
+  for(const role of Object.keys(docs.configs)){
+    const productRole = role.startsWith('api-') ? 'api' : role;
     const env=Object.fromEntries(Object.entries(docs.environments[role]).map(([key,value])=>[key,typeof value==='string'?value.replace('/run/ns-config',path.join(directory,role)):value]));
-    const internal=require('../../lib/server/internal-api/listener-config').resolve([role],env);
-    const parsed=parsers[role](env,internal),operation=require('../../lib/server/serve/operation-cohort-config').load(env,internal);
-    const participant=operation.participants.find(row=>row.id===role);
+    const internal=require('../../lib/server/internal-api/listener-config').resolve([productRole],env);
+    const parsed=parsers[productRole](env,internal),operation=require('../../lib/server/serve/operation-cohort-config').load(env,internal);
+    const participant=operation.participants.find(row=>row.id===operation.participantId);
     if(JSON.stringify(namespaces(parsed).sort())!==JSON.stringify(participant.namespaces))throw new TypeError('Deployment participant namespace mismatch');
   }
   // The ui's own parser (tenant ceiling, aliases), on the written file when there is one, so a
@@ -216,4 +207,4 @@ function validateFiles(directory, docs) {
   const uiFile=path.join(directory,'ui','config.json'),fs=require('node:fs');
   require('./ui').parseConfig(fs.existsSync(uiFile)?JSON.parse(fs.readFileSync(uiFile,'utf8')):docs.ui);
 }
-module.exports={A,B,subject,tenantCount,socketsPerTenant,maxSockets,tenantIds,tenantAlias,clinical,ordered,serviceRoles,quote,catalogues,layout,insertionGrants,grants,documents,lifecycle,validateFiles};
+module.exports={A,B,subject,tenantCount,tenantIds,tenantAlias,clinical,ordered,serviceRoles,quote,catalogues,layout,insertionGrants,grants,documents,lifecycle,validateFiles};

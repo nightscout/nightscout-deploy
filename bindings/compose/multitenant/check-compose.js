@@ -30,6 +30,11 @@ function checkOrder (config) {
       assert(config.services[need].healthcheck?.test, need + ' needs a healthcheck to be waited on');
     }
   }
+  for (const [name, service] of Object.entries(config.services)) {
+    if (!/^api-\d+$/.test(name)) continue;
+    for (const need of ['postgres', 'vault']) assert(service.depends_on?.[need]?.condition === 'service_healthy', name + ' must wait for ' + need);
+    assert(config.services.nginx.depends_on?.[name]?.condition === 'service_healthy', 'nginx must wait for every API instance');
+  }
   for (const name of EDGE_INDEPENDENT) assert(!Object.hasOwn(config.services.nginx.depends_on || {}, name), 'nginx must not wait for ' + name);
   return true;
 }
@@ -56,7 +61,7 @@ function checkEdgeSame (sharedText, composeText) {
 }
 function check (config) {
   checkNetworks(config);
-  const runtime = ['api', 'realtime', 'evaluator', 'tenant-admin', 'ui', 'nginx'];
+  const runtime = ['api', 'realtime', 'evaluator', 'tenant-admin', 'ui', 'nginx', ...Object.keys(config.services).filter(name => /^api-\d+$/.test(name))];
   for (const name of runtime) {
     const service = config.services[name];
     assert(service, 'Missing service: ' + name);

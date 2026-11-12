@@ -192,3 +192,26 @@ checking the exact project and saving any wanted synthetic evidence. A stopped
 Vault must be unsealed before runtime roles start again. Do not delete sockets
 while participating services are running. The initial demo CA expires after
 30 days; rebuild a fresh synthetic instance rather than disabling verification.
+
+## Fixed API instances and edge budgets
+
+`NS_API_REPLICAS` selects 1..16 equal API instances in this synthetic binding.
+Set it for `demo.sh prepare`; preparation records it and renders the fixed Compose
+placement. One instance keeps the original local-socket placement. Multiple instances
+use one private service address, while maintenance pins every exact instance address.
+Changing the roster requires preparing a new deployment; do not use Compose scaling
+behind an unchanged maintenance roster. Only nginx publishes a host port.
+
+The edge applies per-client-IP connection/request concurrency and new Engine.IO
+handshake budgets. Configure `NS_EDGE_CONNECTIONS_PER_IP`,
+`NS_EDGE_HANDSHAKES_PER_SECOND`, and `NS_EDGE_HANDSHAKE_BURST` at preparation.
+The synthetic defaults are 50,000 concurrent connections/requests per IP,
+5,000 new handshakes per second, and burst 10,000. They are test-binding defaults,
+not measured production limits. Established Engine.IO sessions do not consume the
+new-handshake rate budget. Refusal returns 429 at the edge; there is no application
+process-wide socket cap. Record these settings in capacity results and size them
+for the deployment, including clients sharing an egress address.
+
+Generated edge and replica files live in private deployment state. Their input
+policy changes take effect through explicit preparation rather than mutating running
+role authority or silently changing the fixed maintenance census.

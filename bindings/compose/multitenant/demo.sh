@@ -6,6 +6,10 @@ cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 # volumes implicitly. For another instance, use a separate checkout and invoke
 # Compose with its own explicit --project-name.
 compose=(docker compose --project-name nightscout-multitenant-demo --env-file .env -f compose.yaml)
+if [ -f .env ]; then
+  replica_file=$(node -e 'const fs=require("node:fs"),path=require("node:path");const lines=fs.readFileSync(".env","utf8").split("\n");const line=lines.find(x=>x.startsWith("NS_DEMO_STATE="));if(!line)process.exit(1);process.stdout.write(path.join(line.slice(14),"compose.replicas.yaml"));')
+  [ -f "$replica_file" ] && compose+=(-f "$replica_file")
+fi
 case "${1:-}" in
   prepare)
     shift
@@ -25,7 +29,8 @@ case "${1:-}" in
   up)
     node build.js --check-image
     "${compose[@]}" --profile ops run --rm bootstrap
-    exec "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 90 api realtime evaluator tenant-admin ui nginx
+    replicas=$(node -e 'const fs=require("node:fs"),lines=fs.readFileSync(".env","utf8").split("\n");const n=Number((lines.find(x=>x.startsWith("NS_API_REPLICAS="))||"NS_API_REPLICAS=1").slice(16));if(!Number.isSafeInteger(n)||n<1||n>16)process.exit(1);console.log(Array.from({length:n},(_,i)=>i?"api-"+(i+1):"api").join(" "));')
+    exec "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 900 $replicas realtime evaluator tenant-admin ui nginx
     ;;
   demo)
     node build.js --check-image

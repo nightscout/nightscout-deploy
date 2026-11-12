@@ -84,11 +84,9 @@ test('bootstrap validation runs the ui parser: a ui config over the tenant ceili
     assert.throws(()=>plan.validateFiles(directory,over),/UI_PUBLIC_CONFIG_INVALID/);
   }finally{fs.rmSync(directory,{recursive:true});}
 });
-test('realtime maxSockets is tenants x sockets-per-tenant, at least the former 100',()=>{
-  assert.equal(plan.maxSockets(2,{}),100);
-  assert.equal(plan.maxSockets(3000,{}),6000);
-  assert.equal(plan.maxSockets(3000,{NS_DEMO_SOCKETS_PER_TENANT:'8'}),24000);
-  for(const bad of ['0','101','2.5','x'])assert.throws(()=>plan.socketsPerTenant({NS_DEMO_SOCKETS_PER_TENANT:bad}),/NS_DEMO_SOCKETS_PER_TENANT/);
+test('realtime emits no removed process-wide socket cap',()=>{
+  const {docs}=generated();
+  assert(!Object.hasOwn(docs.configs.realtime,'maxSockets'));
   assert.throws(()=>plan.tenantCount({NS_DEMO_TENANTS:'10001'}),/NS_DEMO_TENANTS must be 1\.\.10000/);
   assert.equal(plan.tenantCount({NS_DEMO_TENANTS:'10000'}),10000);
 });

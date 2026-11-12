@@ -4,10 +4,10 @@
 |---|---|
 | upstream repository | nightscout/cgm-remote-monitor |
 | upstream path | `deploy/multitenant` |
-| upstream commit | `0392acf97c720a7e121eea47a9d42a0c8dbe9e73` (draft PR #8898, the 2026-11-11 batch join, accepted at this head) |
-| upstream tree hash of that path | `8e2d9a1d6c3cbb12ad5b0bc59a47f1a43eeb7842` (core's reduced fixture: `config.js`, `demo.js`, `health.js`, `restore.js`, `ui.js`, `README.md`) |
-| import method | the 2026-11-11 sync: core's changes to `deploy/multitenant` between `16a1fc2d` and `0392acf9` applied by hand, including the lane hunks core resolved as deleted (perf-realtime `50f209e6` `bootstrap.js`, perf-db `a52bc33b` `compose.yaml`) |
-| local delta | [`SOURCE.delta.patch`](SOURCE.delta.patch), against core's fixture `config.js` and `ui.js`. `ui.js` is core lane `workspace/capacity-fixes-20261111` `5c60aec6`'s, plus a fallback for a core without `tenant-ceiling.js`/`config-file.js` (the former 1,000-tenant ceiling and fixed 1 MiB read); `config.js` (nightscout-deploy owns the deployable plan; core's copy is the test fixture) takes its tenant bound from `tenant-ceiling.js` (fallback 10,000) and realtime `maxSockets` from `NS_DEMO_SOCKETS_PER_TENANT`. Also in `config.js`: the plan leaves out the `ownership_operator` identity, which [`ownership-admin/`](ownership-admin/) adds; `NS_DEMO_TENANTS` selects the synthetic tenant count (bench fix 2, now 1..10000) |
+| upstream commit | `65ea9e37cb93e7e8e50f512cb3a6bc4709435011` (local M7 integration source; final acceptance pending) |
+| upstream tree hash of that path | `37730434b08d5e9b54d56c9455aecc62ff001be7` (core's reduced fixture: `config.js`, `demo.js`, `health.js`, `restore.js`, `ui.js`, `README.md`) |
+| import method | Recorded core fixture plus reviewed deployment-owned bootstrap, placement, edge and preparation changes; the patch is checked by `tools/compose-identity-check.sh`. |
+| local delta | [`SOURCE.delta.patch`](SOURCE.delta.patch), against the recorded core fixture. This binding generates fixed API instances and exact maintenance addresses, supports local health probes for network listeners, removes realtime maxSockets and renders explicit per-IP edge budgets. The reduced core fixture stays test-only. |
 | tree hash here | `d4fd72567e4d940d1723224c2b4aba91bdd1f9b5` |
 | imported on | 2026-11-11 |
 
