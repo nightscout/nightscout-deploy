@@ -4,11 +4,11 @@
 |---|---|
 | upstream repository | nightscout/cgm-remote-monitor |
 | upstream path | `deploy/multitenant` |
-| upstream commit | `195c932293f3abc648da8fbe4356bf7360acd002` (joined M7 scheduler/completion and controlled-placement candidate; final acceptance pending) |
+| upstream commit | `cd4629159809fb3cffbc6f57626f98f3ffdbdda7` (joined M7 scheduling, completed-work and alarm-repeat candidate; final acceptance pending) |
 | upstream tree hash of that path | `fdc9f8dd2644b8789c86abeb030fbc0ad7304780` (core's reduced fixture: `config.js`, `demo.js`, `health.js`, `restore.js`, `ui.js`, `README.md`) |
 | import method | Recorded core fixture plus reviewed deployment-owned bootstrap, placement, edge and preparation changes; the patch is checked by `tools/compose-identity-check.sh`. |
 | local delta | [`SOURCE.delta.patch`](SOURCE.delta.patch), against the recorded core fixture. This binding generates fixed API instances and exact maintenance addresses, supports local health probes for network listeners, removes realtime maxSockets and renders explicit per-IP edge budgets. The reduced core fixture stays test-only. |
-| tree hash here | `1550fceb5ef1835e22ea1442b3f6bff238e8cbd8` |
+| tree hash here | `b6b3143228c81b6cdacaf1d20d341ccb8d946afa` |
 | imported on | 2026-11-12 |
 
 History: first imported 2026-11-09 from `ed2ced00c80bd0a6a7d75f834d2c6e2af8c71364` (tree
@@ -138,3 +138,11 @@ The final selected-topology native instruments derive every explicitly prepared
 API/realtime/evaluator overlay and reject missing, extra or symlink selections.
 This test-only composition repair changes the complete tree identity; it leaves
 the five-file runtime delta and production binding behavior unchanged.
+
+The repaired alarm-repeat candidate preserves known producer deadlines through
+temporary model unavailability. Its native clinical oracle now distinguishes the
+intentional changed B payload from identical early effects, requires the exact
+new B frame timestamp/checkpoint, and rejects the original accepted-duplicate
+captures. This is an instrument correction, not a waiver of clinical idempotency.
+The original failed image/state remain retained; repaired paired acceptance is
+measured separately on a fresh image/state.
