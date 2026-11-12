@@ -6,7 +6,8 @@ const {execFileSync}=require('node:child_process');
 const q=name=>{if(!/^[a-z][a-z0-9_]{0,62}$/.test(name))throw new Error('FIXTURE_IDENTIFIER_REFUSED');return '"'+name+'"';};
 function command({core,state,project},sql){
  if(!/^ns-evaluator-binding-proof-[0-9]{8}(?:-[a-z][a-z0-9]{0,15})?$/.test(project))throw new Error('FIXTURE_PROJECT_REFUSED');
- const args=['compose','-p',project,'--env-file','.env','-f','compose.yaml','-f',path.join(state,'compose.replicas.yaml'),'-f',path.join(state,'compose.evaluator.yaml'),'exec','-T','postgres','psql','-X','-q','-v','ON_ERROR_STOP=1','-U','postgres','-d','nightscout_compose_test'];
+ const files=require('./shipping-compose-files.cjs').files({core,state});
+ const args=['compose','-p',project,'--env-file','.env',...files.flatMap(file=>['-f',file]),'exec','-T','postgres','psql','-X','-q','-v','ON_ERROR_STOP=1','-U','postgres','-d','nightscout_compose_test'];
  try{execFileSync('docker',args,{cwd:path.join(core,'deploy/multitenant'),input:sql,stdio:['pipe','pipe','pipe']});}
  catch{throw Object.assign(new Error('EVALUATOR_SETTINGS_FIXTURE_ADMIN_REFUSED'),{code:'EVALUATOR_SETTINGS_FIXTURE_ADMIN_REFUSED'});}
 }

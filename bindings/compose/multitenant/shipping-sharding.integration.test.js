@@ -39,7 +39,9 @@ test('actual shipping edge preserves registered Host polling/WebSocket/API3 and 
     await until(()=>mainB.frames.some(frame=>frame.sgvs.some(row=>row.mgdl===159)),'B actual data progression');
     await new Promise(r=>setTimeout(r,6500));assert.equal(mainA.socket.connected,true,'stock idle polling survives ordinary empty poll');assert.equal(mainB.socket.id,bSession);
     const folder=path.join(core,'deploy/multitenant');
-    const args=['compose','--project-name',project,'--env-file','.env','-f','compose.yaml','-f',path.join(state,'compose.replicas.yaml'),...((evaluatorProfile?['compose.evaluator.yaml']:['compose.realtime.yaml']).flatMap(file=>['-f',path.join(state,file)])),'--profile','ops','run','--rm','--no-deps','demo'];
+    const files=require('./fixtures/shipping-compose-files.cjs').files({core,state});
+    assert(files.some(file=>path.basename(file)===(evaluatorProfile?'compose.evaluator.yaml':'compose.realtime.yaml')),'EXPLICIT_SHIPPING_PROFILE_REQUIRED');
+    const args=['compose','--project-name',project,'--env-file','.env',...files.flatMap(file=>['-f',file]),'--profile','ops','run','--rm','--no-deps','demo'];
     const override=process.env.NS_COMPOSE_SHARDING_RESTORE_OVERRIDE;
     if(override){assert.ok(path.isAbsolute(override));args.splice(args.length-1,0,'--volume',override+':/opt/app/deploy/multitenant/restore.js:ro');}
     const demoOverride=process.env.NS_COMPOSE_SHARDING_DEMO_OVERRIDE;

@@ -12,7 +12,9 @@ test('actual evaluator two-to-three membership preserves clinical alarm effects,
  const [a,b]=tenants;assert.equal(tenants.length,2);
  const {io}=require(path.join(core,'node_modules/socket.io-client')),bucket=require(path.join(core,'lib/pool-membership/slice')).bucket;
  const sockets=[],agents=[],cwd=path.join(core,'deploy/multitenant');
- const compose=['compose','-p',project,'--env-file','.env','-f','compose.yaml','-f',path.join(state,'compose.replicas.yaml'),'-f',path.join(state,'compose.evaluator.yaml')];
+ const files=require('./fixtures/shipping-compose-files.cjs').files({core,state});
+ assert(files.some(file=>path.basename(file)==='compose.evaluator.yaml'),'EXPLICIT_EVALUATOR_PROFILE_REQUIRED');
+ const compose=['compose','-p',project,'--env-file','.env',...files.flatMap(file=>['-f',file])];
  const fixture=path.join(__dirname,'fixtures/evaluator-private-probe.cjs');
  async function docker(args){try{return (await execute('docker',[...compose,...args],{cwd,maxBuffer:4*1024*1024})).stdout;}catch{throw new Error('EVALUATOR_SHIPPING_COMMAND_REFUSED');}}
  async function inspection(){const raw=await docker(['--profile','ops','run','--rm','--no-deps','-v',fixture+':/opt/evaluator-probe.cjs:ro','demo','node','/opt/evaluator-probe.cjs','inspect']);return JSON.parse(raw.trim().split('\n').at(-1));}
