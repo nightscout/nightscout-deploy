@@ -4,11 +4,11 @@
 |---|---|
 | upstream repository | nightscout/cgm-remote-monitor |
 | upstream path | `deploy/multitenant` |
-| upstream commit | `cd4629159809fb3cffbc6f57626f98f3ffdbdda7` (joined M7 scheduling, completed-work and alarm-repeat candidate; final acceptance pending) |
+| upstream commit | `47b43b6246ce7f94f1f1f0d01830495a78b28add` (joined M7 scheduling, alarm-repeat and observed due-state candidate; final acceptance pending) |
 | upstream tree hash of that path | `fdc9f8dd2644b8789c86abeb030fbc0ad7304780` (core's reduced fixture: `config.js`, `demo.js`, `health.js`, `restore.js`, `ui.js`, `README.md`) |
 | import method | Recorded core fixture plus reviewed deployment-owned bootstrap, placement, edge and preparation changes; the patch is checked by `tools/compose-identity-check.sh`. |
 | local delta | [`SOURCE.delta.patch`](SOURCE.delta.patch), against the recorded core fixture. This binding generates fixed API instances and exact maintenance addresses, supports local health probes for network listeners, removes realtime maxSockets and renders explicit per-IP edge budgets. The reduced core fixture stays test-only. |
-| tree hash here | `b6b3143228c81b6cdacaf1d20d341ccb8d946afa` |
+| tree hash here | `89f317006cee22526f8aebd759386573aa002e9e` |
 | imported on | 2026-11-12 |
 
 History: first imported 2026-11-09 from `ed2ced00c80bd0a6a7d75f834d2c6e2af8c71364` (tree
@@ -146,3 +146,16 @@ new B frame timestamp/checkpoint, and rejects the original accepted-duplicate
 captures. This is an instrument correction, not a waiver of clinical idempotency.
 The original failed image/state remain retained; repaired paired acceptance is
 measured separately on a fresh image/state.
+
+The current private evaluator inspection exports the runtime's existing due time
+and reason, including finite fractional deadlines. It does not change scheduling
+or cadence. The unreleased strict private-v2 response requires matching source,
+client and schema; an older strict client refuses the added fields. A new exact
+image and fresh state qualify this tuple separately from the earlier cd462/0f8749
+image. Historical captures retain their original source and missing-state limits.
+
+Host-only socket and clinical completion instruments are joined from e91. They
+retain the original minimum observation period, shared maximum deadline and
+strict effect/fanout oracle, with bounded typed evidence and session SQL timeouts.
+They do not add clinical writes or change runtime producer behavior. The five
+common runtime files and their delta remain unchanged by these instruments.
