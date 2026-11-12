@@ -14,7 +14,7 @@ test('actual shipping edge preserves registered Host polling/WebSocket/API3 and 
   const roots=JSON.parse(fs.readFileSync(path.join(state,'primer/provisioned.json'),'utf8'));
   assert.equal(credentials.length,2);const [a,b]=credentials;
   const {io}=require(path.join(core,'node_modules/socket.io-client'));
-  const sockets=[],agents=[];let settingsTraffic=false;const settingsTasks=[],settingsErrors=[];let settingsReads=0;
+  const sockets=[],agents=[];const {observer,traffic,typedCode}=require('./fixtures/api-readiness-observation.cjs'),trace=observer();let measured=null;
   const until=async(fn,label,ms=20000)=>{const deadline=Date.now()+ms;while(Date.now()<deadline){if(await fn())return;await new Promise(r=>setTimeout(r,30));}throw new Error('COMPOSE_SHARD_WAIT '+label);};
   function agent(){const value=new http.Agent({keepAlive:true,lookup:(host,options,done)=>options.all?done(null,[{address:'127.0.0.1',family:4}]):done(null,'127.0.0.1',4)});agents.push(value);return value;}
   function client(tenant,namespace,transport){
@@ -28,6 +28,9 @@ test('actual shipping edge preserves registered Host polling/WebSocket/API3 and 
   }
   async function jwt(tenant){const result=await request(tenant,'/api/v2/authorization/request/'+encodeURIComponent(tenant.dataToken));assert.equal(result.status,200,'exchange '+String(result.body.error||result.body.message||'').replace(/[^A-Za-z0-9_: -]/g,'').slice(0,120));assert.equal(typeof result.body.token,'string');return result.body.token;}
   try {
+    trace.marker('precondition-host-start');
+    const readiness=await require('./fixtures/api-readiness-host.cjs').prepare({core,state,project,tenants:credentials});
+    fs.writeFileSync(path.join(state,'artifacts/api-readiness.json'),JSON.stringify(readiness),{mode:0o600});trace.marker('exact-api-tenant-readiness-complete',{tuples:readiness.matrix.length});
     const mainA=client(a,'/','polling'),mainB=client(b,'/','websocket'),storage=client(a,'/storage','websocket'),alarms=client(a,'/alarm','polling');
     await until(()=>mainA.frames.length&&mainB.frames.length&&storage.acks.some(row=>row.success)&&alarms.acks.some(row=>row.success),'stock client admission');
     assert.equal(mainA.socket.io.engine.transport.name,'polling');assert.equal(mainB.socket.io.engine.transport.name,'websocket');
@@ -47,20 +50,20 @@ test('actual shipping edge preserves registered Host polling/WebSocket/API3 and 
     const demoOverride=process.env.NS_COMPOSE_SHARDING_DEMO_OVERRIDE;
     if(demoOverride){assert.ok(path.isAbsolute(demoOverride));args.splice(args.length-1,0,'--volume',demoOverride+':/opt/app/deploy/multitenant/demo.js:ro');}
     if(evaluatorProfile&&process.env.NS_EVALUATOR_SETTINGS_TRAFFIC==='1'){
-      settingsTraffic=true;
-      for(let worker=0;worker<4;worker++)settingsTasks.push((async()=>{
-        while(settingsTraffic){try{const seen=await request(b,'/api/v1/status.json',{token:bToken});if(seen.status!==200)throw new Error('B_SETTINGS_STATUS_'+seen.status+'_'+String(seen.body?.error||'UNKNOWN').replace(/[^A-Z0-9_]/g,'').slice(0,80));settingsReads++;}catch(error){settingsErrors.push(error.message);break;}}
-      })());
-      await until(()=>settingsReads>=4,'continuous B settings readers');
+      measured=traffic({read:()=>request(b,'/api/v1/status.json',{token:bToken}),trace});
+      await until(()=>measured.ready(),'every B settings reader first success');
     }
     const record=path.join(state,'artifacts/shipping-restore.log');const out=fs.openSync(record,'w',0o600);
-    const child=spawn('docker',args,{cwd:folder,stdio:['ignore',out,out]});const exit=await new Promise((resolve,reject)=>{child.once('exit',resolve);child.once('error',reject);});fs.closeSync(out);
-    settingsTraffic=false;await Promise.all(settingsTasks);assert.deepEqual(settingsErrors,[],'B settings traffic remains healthy');
-    if(settingsTasks.length){assert.ok(settingsReads>=4);console.log('B_SETTINGS_TRAFFIC reads'+settingsReads+' workers4 errors0');}
+    if(measured)assert.deepEqual(measured.errors,[],'B settings traffic remains healthy before restore');
+    trace.marker('restore-spawn');
+    const child=spawn('docker',args,{cwd:folder,stdio:['ignore',out,out]});const exit=await new Promise((resolve,reject)=>{child.once('exit',(code,signal)=>{trace.marker('restore-exit',{code,signal});resolve(code);});child.once('error',()=>{trace.marker('restore-spawn-refused');reject(new Error('COMPOSE_RESTORE_SPAWN_REFUSED'));});});fs.closeSync(out);
+    if(measured){await measured.stop();assert.deepEqual(measured.errors,[],'B settings traffic remains healthy');assert.ok(measured.first.every(Boolean));console.log('B_SETTINGS_TRAFFIC reads'+measured.reads+' workers4 errors0');}
     assert.equal(exit,0,'actual shipping restore/census demo refused; inspect private artifact');
     const summary=JSON.parse(fs.readFileSync(record,'utf8').trim().split('\n').at(-1));assert.equal(summary.state,'passed');assert.equal(summary.observations.bCommittedDuringRestore,true);
     await until(()=>mainB.frames.some(frame=>frame.sgvs.some(row=>row.mgdl===152)),'actual B update during restore reaches unchanged socket');assert.equal(mainB.socket.id,bSession);
     assert.equal(mainB.connections,1,'unrelated B never reconnects during A restore');
     console.log('COMPOSE_SHARD_PROOF stockPolling stockWebSocket API3reload registeredHost tenantIsolation idlePolling actualRestore census BContinuity');
-  } finally {settingsTraffic=false;await Promise.all(settingsTasks);for(const socket of sockets){socket.io.reconnection(false);socket.disconnect();}await new Promise(resolve=>setTimeout(resolve,300));for(const value of agents)value.destroy();}
+    trace.marker('proof-complete');
+  } catch(error){trace.marker('proof-failed',{code:typedCode(error.code)});if(error.apiReadiness)fs.writeFileSync(path.join(state,'artifacts/api-readiness.json'),JSON.stringify(error.apiReadiness),{mode:0o600});throw error;
+  } finally {if(measured)await measured.stop();fs.writeFileSync(path.join(state,'artifacts/settings-continuity.json'),JSON.stringify(trace.snapshot()),{mode:0o600});for(const socket of sockets){socket.io.reconnection(false);socket.disconnect();}await new Promise(resolve=>setTimeout(resolve,300));for(const value of agents)value.destroy();}
 });
