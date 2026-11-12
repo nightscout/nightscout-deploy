@@ -64,12 +64,21 @@ async function provision(config, directory) {
 async function prime(config, directory) {
   const saved = JSON.parse(fs.readFileSync(path.join(directory, 'provisioned.json'), 'utf8'));
   const completed = path.join(directory, 'primed.json');
-  if (fs.existsSync(completed)) return JSON.parse(fs.readFileSync(completed, 'utf8'));
-  const results = [];
+  const tenantsFile = path.join(directory, 'tenants.json');
+  if (fs.existsSync(completed) && !fs.existsSync(tenantsFile)) throw fail('PRIMER_CUSTODY_INVALID');
+  const prior = fs.existsSync(tenantsFile) ? JSON.parse(fs.readFileSync(tenantsFile, 'utf8')) : { version: 1, tenants: [] };
+  const savedIds = new Set(saved.map(row => row.id));
+  if (prior.version !== 1 || !Array.isArray(prior.tenants) || new Set(prior.tenants.map(row => row.id)).size !== prior.tenants.length ||
+      prior.tenants.some(row => !savedIds.has(row.id) || typeof row.dataToken !== 'string' || !row.dataToken || typeof row.managementToken !== 'string' || !row.managementToken)) throw fail('PRIMER_CUSTODY_INVALID');
+  const results = prior.tenants.slice(), commissioned = new Set(results.map(row => row.id));
   const ownership = require('../../lib/server/internal-api/clients').ownershipOperations({ url: config.adminOrigin, trust: 'network', maxBytes: 1048576, timeoutMs: 60000 });
   const requestFile = path.join(directory, 'management-requests.json');
   const managementRequests = fs.existsSync(requestFile) ? JSON.parse(fs.readFileSync(requestFile, 'utf8')) : {};
   for (const [index, row] of saved.entries()) {
+    // A global completion marker describes the previous seed, not future
+    // additions. Preserve existing client custody and do not reissue or write
+    // existing tenants while explicitly commissioning new ones.
+    if (commissioned.has(row.id)) continue;
     const headers = { host: row.hosts[0], 'api-secret': crypto.createHash('sha1').update(row.rootSecret).digest('hex') };
     const call = async (route, options = {}) => {
       const response = await request(config.apiOrigin, route, { ...options, headers: { ...headers, ...options.headers } });
@@ -110,11 +119,19 @@ async function prime(config, directory) {
   const state = { state: 'synthetic-data-primed', tenants: results.length };
   privateWrite(completed, state); return state;
 }
+async function add(config, directory) {
+  const value = JSON.parse(fs.readFileSync(path.join(directory, 'add.json'), 'utf8'));
+  if (!value || Object.keys(value).sort().join(',') !== 'tenants,version' || value.version !== 1 ||
+      !Array.isArray(value.tenants) || !value.tenants.length || value.tenants.length > 100) throw fail('PRIMER_ADDITION_INVALID');
+  for (const spec of value.tenants) require('../../lib/tenant-registry/provision').parseSpec(spec);
+  await provision({ ...config, seed: value.tenants }, directory);
+  return prime(config, directory);
+}
 async function main() {
   const [operation] = process.argv.slice(2), directory = process.env.NS_PRIMER_STATE || '/run/ns-primer';
   const config = load(path.join(directory, 'config.json'));
-  if (!['provision','prime'].includes(operation)) throw fail('PRIMER_OPERATION_INVALID');
-  console.log(JSON.stringify(await (operation === 'provision' ? provision(config, directory) : prime(config, directory))));
+  if (!['provision','prime','add'].includes(operation)) throw fail('PRIMER_OPERATION_INVALID');
+  console.log(JSON.stringify(await ({ provision, prime, add }[operation](config, directory))));
 }
 if (require.main === module) main().catch(error => { console.error(JSON.stringify({ error: /^[A-Z0-9_]{1,100}$/.test(error.code || '') ? error.code : 'PRIMER_FAILED' })); process.exitCode = 1; });
-module.exports = { load, request, waitForTenant, provision, prime, privateWrite };
+module.exports = { load, request, waitForTenant, provision, prime, add, privateWrite };

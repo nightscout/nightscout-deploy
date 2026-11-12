@@ -280,3 +280,41 @@ status handler with synthetic recording store/provider ports and disposable HTTP
 listeners. It is distinct from native PostgreSQL/Compose acceptance. The existing
 shipping native suite remains explicitly selected by `NS_COMPOSE_SHARDING_STATE`;
 unselected native runs are skipped, never evidence that a deployment passed.
+
+### Explicit synthetic incremental commissioning
+
+The lab/qualification primer can commission additional synthetic tenants through
+existing private provisioning, ownership and management-session issuance APIs.
+It has no database or Vault credential. This adapter is separate from the
+shipping operator authority APIs. Registry mode already sets runtime/UI tenant
+ceilings to 10,000 independently of the seed count; no reserve flag is needed.
+
+Write a private `primer/add.json` in the prepared state directory with
+`{"version":1,"tenants":[...]}`. Each tenant is an ordinary provisioning request
+(`id`, `hosts`, `issueRootSecret: true`); at most 100 requests are admitted. Run
+`node deploy/multitenant/prime.js add` in the existing Compose primer service,
+using the same prepared overlay selection. Output contains counts only. Keep
+this file and all primer custody private (0600).
+
+A refused batch preserves successfully issued roots before stopping. Correct
+only the refused request and explicitly retry; reuse the same tenant IDs.
+An ambiguous response without locally retained root custody refuses rather than
+replacing the credential. Commissioning resumes unfinished tenants with their
+persisted management request IDs. Previously completed tenants are skipped:
+no clinical re-upload, implicit credential renewal or ownership reassignment.
+A global `primed.json` marker never suppresses new-tenant commissioning.
+Pause/suspend qualification is a separate deferred stage.
+
+`shipping-live-add.integration.test.js` is an opt-in, mutating synthetic
+qualification on a fresh disposable project, never an existing benchmark or
+retained stack. It requires `NS_SHIPPING_LIVE_ADD_STATE`,
+`NS_SHIPPING_LIVE_ADD_CORE`, `NS_SHIPPING_LIVE_ADD_PROJECT` (prefix
+`ns-live-add-proof-YYYYMMDD`) and exact `NS_SHIPPING_LIVE_ADD_IMAGE`. It checks
+actual source/image/project identity before running the primer fixture. The
+fixture intentionally produces an existing-tenant host conflict alongside one
+successful new tenant, preserves root custody, explicitly retries that same new
+ID, commissions it through the actual APIs, and verifies registered edge reads,
+wrong-tenant denial, private-route refusal and existing clinical-row continuity.
+Its private once-only journal refuses a repeated qualification run. It performs
+no container lifecycle, SQL seeding, membership or settings mutation. A skipped
+native test is UNMEASURED, not deployment acceptance.
