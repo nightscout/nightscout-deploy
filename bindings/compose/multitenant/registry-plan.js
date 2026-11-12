@@ -22,7 +22,7 @@ function expand(docs, { layout, urls, vaultAddress }) {
   const activity = { connectionEnv: 'NS_ACTIVITY_PG', namespace: ns.control };
   for (const [role, config] of Object.entries(docs.configs)) {
     delete config.tenants; config.registry = { ...registry };
-    if (role === 'api' || role === 'evaluator') config.tenantSettings = settings;
+    if (role === 'api' || role === 'evaluator' || role === 'realtime') config.tenantSettings = settings;
     if (role === 'api' || role === 'evaluator' || role === 'realtime') config.activity = activity;
     if (role === 'api') {
       config.vault = { address: vaultAddress, mount: layout.mount, timeoutMs: 5000, tokenFile: '/run/ns-config/vault-token' };
@@ -35,7 +35,7 @@ function expand(docs, { layout, urls, vaultAddress }) {
     if (role === 'realtime') delete config.admissionFileEnv;
     const env = docs.environments[role];
     for (const name of Object.keys(env)) if (/^NS_VAULT_\d+$/.test(name) || name === 'NS_ADMISSION_FILE') delete env[name];
-    if (role === 'api' || role === 'evaluator') env.NS_DISPLAY_PG = urls.display_reader;
+    if (role === 'api' || role === 'evaluator' || role === 'realtime') env.NS_DISPLAY_PG = urls.display_reader;
     if (role === 'api' || role === 'evaluator' || role === 'realtime') env.NS_ACTIVITY_PG = urls.activity_reader;
     delete docs.operations[role].locks; docs.operations[role].registry = { namespace: ns.registry };
   }
@@ -56,7 +56,7 @@ function expand(docs, { layout, urls, vaultAddress }) {
     provisioning: { connectionEnv: 'NS_PROVISIONER_PG', namespaces: provisioningNamespaces(ns), checkpoints: checkpoints(docs, ns),
       vault: { address: vaultAddress, mount: layout.mount, tokenFile: '/run/ns-config/vault-token', timeoutMs: 10000 },
       ownerPolicy: { catalogue: ['*'] }, operator: { principal: 'compose-operator', consumer: 'compose-provisioning' } } },
-    environment: { ADMIN_HOSTNAME: '0.0.0.0', ADMIN_PORT: '1342', MULTITENANT_ADMIN_CONFIG: '/run/ns-config/config.json', NS_PROVISIONER_PG: urls.provisioner } };
+    environment: { ADMIN_HOSTNAME: 'admin', ADMIN_PORT: '1342', ADMIN_INSECURE_BIND_ACKNOWLEDGED: 'true', MULTITENANT_ADMIN_CONFIG: '/run/ns-config/config.json', NS_PROVISIONER_PG: urls.provisioner } };
   delete docs.admission;
   return docs;
 }

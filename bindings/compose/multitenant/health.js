@@ -9,7 +9,8 @@ const role = process.argv[2];
 const roles = {api: {port: 1337}, realtime: {port: 1339}, evaluator: {}, 'tenant-admin': {port: 1341}};
 async function main () {
   if (role === 'admin') {
-    const response = await fetch('http://127.0.0.1:1342/v1/openapi.json', {signal: AbortSignal.timeout(1500)});
+    require('./load-env');
+    const response = await fetch('http://' + process.env.ADMIN_HOSTNAME + ':' + process.env.ADMIN_PORT + '/v1/openapi.json', {signal: AbortSignal.timeout(1500)});
     if (!response.ok || typeof (await response.json()).openapi !== 'string') throw new Error();
     return;
   }

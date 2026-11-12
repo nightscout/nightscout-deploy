@@ -26,6 +26,10 @@ test('registry role documents have no static roster or per-tenant key lists and 
       assert(!Object.keys(docs.environments[role]).some(name => /^NS_VAULT_\d+$/.test(name)), role);
     }
     assert.equal(docs.configs.api.tenantSettings.namespaces.settings.endsWith('_display_settings'), true);
+    assert.deepEqual(docs.configs.realtime.tenantSettings, docs.configs.api.tenantSettings);
+    assert.equal(docs.environments.realtime.NS_DISPLAY_PG, docs.environments.api.NS_DISPLAY_PG);
+    assert.equal(docs.admin.environment.ADMIN_HOSTNAME, 'admin');
+    assert.equal(docs.admin.environment.ADMIN_INSECURE_BIND_ACKNOWLEDGED, 'true');
     assert.equal(docs.configs.api.postgres.namespaces.settings.endsWith('_settings'), true);
     assert.equal(docs.admin.config.provisioning.checkpoints.length, 2);
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
