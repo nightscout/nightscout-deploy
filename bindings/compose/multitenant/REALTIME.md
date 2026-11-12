@@ -110,7 +110,11 @@ exact journal-labelled one-shot publisher and rereads actual state. Unknown,
 mutated or ambiguous state refuses. Creation and startup are separate: the helper
 records a labelled, never-started container Id before recording start intent and
 starting that exact Id. This distinguishes an intended incarnation that never ran
-from a real new process whose exact identity must be stopped. Neither missing
+from a real new process whose exact identity must be stopped. If startup ran
+before StartedAt/PID could be saved, the durable pre-start Id, operation/incarnation
+labels, image and unchanged custody identify the intended boot. Recovery reads its
+actual StartedAt/PID and stops that exact observed process before publishing a
+fresh incarnation; it never treats an unknown start time as proof of absence. Neither missing
 health nor expired leases substitute for this process proof.
 
 Recovery publishes a fresh confirmed generation, performs activation/readiness and

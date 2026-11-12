@@ -1,6 +1,6 @@
 'use strict';
-// Opt-in native Docker platform discriminator. One owned idle Node container at
-// a time; product PostgreSQL publication/readiness is simulated, not accepted.
+// Opt-in native Docker platform discriminator. One tiny owned project with at
+// most two idle Node containers; product PostgreSQL publication/readiness is simulated, not accepted.
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),crypto=require('node:crypto');
 const {execFileSync,spawn}=require('node:child_process');
