@@ -160,3 +160,7 @@ exactly one intended A probe and the same single B probe. Unrelated clinical
 notifications remain visible/countable but cannot satisfy or substitute these
 transport probes. Duplicate, forbidden and old-nonce probes refuse. Existing
 readiness, maps, pin, checkpoint, session and wait bounds remain authoritative.
+The fixture takes a fresh complete probe verdict and rechecks B's exact session
+and single connection after all awaited maintenance census probes, immediately
+before PASS. Events received during that final await cannot be hidden by an
+earlier count snapshot; final typed probe counts are retained.

@@ -2,7 +2,7 @@
 // Bounded operator diagnostics. Raw streams/errors stay in one private artifact;
 // public summaries contain typed stages/codes and placement identity only.
 const fs=require('node:fs'),path=require('node:path'),journal=require('./replacement-journal');
-const prefixes=/^(?:PLACEMENT_|REALTIME_|RESTORE_|ACTIVITY_|TENANT_|STORAGE_|SOCKET_|POOL_|SETTINGS_|SHIPPING_MOVE_|SYNTHETIC_|FIXTURE_)[A-Z0-9_]{1,80}$/;
+const prefixes=/^(?:PLACEMENT_|REALTIME_|LIFECYCLE_|RESTORE_|ACTIVITY_|TENANT_|STORAGE_|SOCKET_|POOL_|SETTINGS_|SHIPPING_MOVE_|SYNTHETIC_|FIXTURE_)[A-Z0-9_]{1,80}$/;
 const system=new Set(['EPIPE','ECONNRESET','ETIMEDOUT','ECONNREFUSED','ERR_ASSERTION','ABORT_ERR','ENOSPC','EACCES','ENOENT','EIO','42501','28P01','57014','57P01','42P01','08006','40P01','53300','55P03','25P02']);
 function code(value){return typeof value==='string'&&(prefixes.test(value)||system.has(value))?value:'UNCLASSIFIED_ERROR';}
 function stage(value){return typeof value==='string'&&/^[a-z][a-z0-9-]{0,95}$/.test(value)?value:'unclassified';}
