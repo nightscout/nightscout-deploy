@@ -1,0 +1,124 @@
+TAP version 13
+# Subtest: explicit fresh-generation recovery after before-stop
+ok 1 - explicit fresh-generation recovery after before-stop
+  ---
+  duration_ms: 167.731102
+  type: 'test'
+  ...
+# Subtest: explicit fresh-generation recovery after after-stop
+ok 2 - explicit fresh-generation recovery after after-stop
+  ---
+  duration_ms: 136.827609
+  type: 'test'
+  ...
+# Subtest: explicit fresh-generation recovery after after-assignment
+ok 3 - explicit fresh-generation recovery after after-assignment
+  ---
+  duration_ms: 162.184268
+  type: 'test'
+  ...
+# Subtest: explicit fresh-generation recovery after after-env
+ok 4 - explicit fresh-generation recovery after after-env
+  ---
+  duration_ms: 166.686023
+  type: 'test'
+  ...
+# Subtest: explicit fresh-generation recovery after after-create-effect
+ok 5 - explicit fresh-generation recovery after after-create-effect
+  ---
+  duration_ms: 187.211326
+  type: 'test'
+  ...
+# Subtest: explicit fresh-generation recovery after after-create
+ok 6 - explicit fresh-generation recovery after after-create
+  ---
+  duration_ms: 201.855165
+  type: 'test'
+  ...
+# Subtest: explicit fresh-generation recovery after after-start-effect
+ok 7 - explicit fresh-generation recovery after after-start-effect
+  ---
+  duration_ms: 214.612873
+  type: 'test'
+  ...
+# Subtest: explicit fresh-generation recovery after after-start
+ok 8 - explicit fresh-generation recovery after after-start
+  ---
+  duration_ms: 220.790343
+  type: 'test'
+  ...
+# Subtest: no-stop confirmation refuses before backend generation can advance
+ok 9 - no-stop confirmation refuses before backend generation can advance
+  ---
+  duration_ms: 60.335152
+  type: 'test'
+  ...
+# Subtest: recovery refuses mutated project
+ok 10 - recovery refuses mutated project
+  ---
+  duration_ms: 47.110226
+  type: 'test'
+  ...
+# Subtest: recovery refuses mutated image
+ok 11 - recovery refuses mutated image
+  ---
+  duration_ms: 49.897775
+  type: 'test'
+  ...
+# Subtest: recovery refuses mutated startedAt
+ok 12 - recovery refuses mutated startedAt
+  ---
+  duration_ms: 45.546845
+  type: 'test'
+  ...
+# Subtest: recovery refuses mutated pid
+ok 13 - recovery refuses mutated pid
+  ---
+  duration_ms: 57.151552
+  type: 'test'
+  ...
+# Subtest: recovery refuses mutated container
+ok 14 - recovery refuses mutated container
+  ---
+  duration_ms: 52.032249
+  type: 'test'
+  ...
+# Subtest: recovery refuses mutated env
+ok 15 - recovery refuses mutated env
+  ---
+  duration_ms: 58.147725
+  type: 'test'
+  ...
+# Subtest: recovery refuses mutated backend
+ok 16 - recovery refuses mutated backend
+  ---
+  duration_ms: 55.868606
+  type: 'test'
+  ...
+# Subtest: recovery refuses mutated compose
+ok 17 - recovery refuses mutated compose
+  ---
+  duration_ms: 53.987024
+  type: 'test'
+  ...
+# Subtest: native FD lock rejects concurrent operation and releases after last close
+ok 18 - native FD lock rejects concurrent operation and releases after last close
+  ---
+  duration_ms: 39.7768
+  type: 'test'
+  ...
+# Subtest: crashed host leaves creator FD locked until the actual inherited child exits
+ok 19 - crashed host leaves creator FD locked until the actual inherited child exits
+  ---
+  duration_ms: 70.678832
+  type: 'test'
+  ...
+1..19
+# tests 19
+# suites 0
+# pass 19
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2053.829239

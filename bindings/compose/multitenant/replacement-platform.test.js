@@ -1,6 +1,6 @@
 'use strict';
-// Opt-in native Docker platform discriminator. One owned idle Node container at
-// a time; product PostgreSQL publication/readiness is simulated, not accepted.
+// Opt-in native Docker platform discriminator. One tiny owned project with at
+// most two idle Node containers; product PostgreSQL publication/readiness is simulated, not accepted.
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),crypto=require('node:crypto');
 const {execFileSync,spawn}=require('node:child_process');
@@ -37,11 +37,12 @@ function fixture(){
     docker([...args,'down','--volumes','--remove-orphans']);fs.rmSync(state,{recursive:true,force:true});
   }};
 }
-for(const fault of ['before-stop','after-stop','after-assignment','after-env','after-create-effect','after-create','after-start-effect','after-start'])test('actual Docker recovery after '+fault,{skip:!enabled,timeout:30000},async()=>{
+for(const fault of ['before-stop','after-stop','after-assignment','after-env','after-create-effect','after-create','after-start-effect','after-start','after-routes'])test('actual Docker recovery after '+fault,{skip:!enabled,timeout:30000},async()=>{
   const f=fixture();try{
     const initial=inspect(f.current());
-    await assert.rejects(operator.replace(f.options,{publisher:f.publisher,checkpoint:async phase=>{if(phase===fault)throw Error('OWNED_CRASH:'+fault)}}),/OWNED_CRASH/);
+    await assert.rejects(operator.replace(f.options,{publisher:async args=>{const result=await f.publisher(args);if(fault==='after-routes')throw Error('OWNED_CRASH:'+fault);return result},checkpoint:async phase=>{if(phase===fault)throw Error('OWNED_CRASH:'+fault)}}),/OWNED_CRASH/);
     const interrupted=j.privateJson(path.join(f.state,'placement/operation.json')),generation=j.privateJson(path.join(f.state,'placement/backend.json')).generation;
+    if(fault==='after-routes'){assert.equal(interrupted.phase,'started');assert.deepEqual(j.privateJson(path.join(f.state,'placement/backend.json')),j.privateJson(path.join(f.state,'placement/routes.json')));assert.equal(inspect(f.current()).State.Running,true);await assert.rejects(operator.replace(f.options,{publisher:f.publisher}),/RECOVERY_REQUIRED/);}
     if(fault==='after-assignment'){
       // A creator may already have exited while its one-shot container survives.
       const orphan=docker(['run','-d','--name',interrupted.publisherName,'--label','org.nightscout.recovery.fixture='+f.project,'--label','com.docker.compose.project='+f.project,'--label','com.docker.compose.service=demo','--label','org.nightscout.replacement.operation='+interrupted.operation,image,'node','-e','process.on("SIGTERM",()=>process.exit(0));setInterval(()=>{},1000)']);
@@ -67,4 +68,30 @@ test('actual attached Docker CLI retains inherited lock across creator host cras
     docker(['stop','--time','1',name]);for(let n=0;n<100;n++){try{execFileSync('flock',['-n',path.join(f.state,'placement/operation.lock'),'true']);break}catch{await sleep(10)}}
     execFileSync('flock',['-n',path.join(f.state,'placement/operation.lock'),'true']);
   }finally{host?.kill('SIGKILL');if(cli)try{process.kill(cli,'SIGTERM')}catch{}f.close();}
+});
+for(const mutation of ['restart','recreate'])test('actual changed container/process refuses recovery: '+mutation,{skip:!enabled,timeout:15000},async()=>{
+  const f=fixture();try{
+    await assert.rejects(operator.replace(f.options,{publisher:f.publisher,checkpoint:async p=>{if(p==='before-stop')throw Error('OWNED_CRASH')}}),/OWNED_CRASH/);
+    const original=inspect(f.current());
+    if(mutation==='restart')docker(['restart',original.Id]);
+    else docker([...f.args,'up','-d','--no-build','--pull','never','--no-deps','--force-recreate','realtime']);
+    const changed=inspect(f.current());assert.ok(changed.Id!==original.Id||changed.State.StartedAt!==original.State.StartedAt);
+    await assert.rejects(operator.replace({...f.options,recover:true},{publisher:f.publisher}),/PLACEMENT_(PLATFORM_IDENTITY_CHANGED|RECOVERY_PROCESS_AMBIGUOUS)/);
+    assert.equal(j.privateJson(path.join(f.state,'placement/backend.json')).generation,1);assert.equal(changed.State.Running,true);
+  }finally{f.close();}
+});
+test('actual foreign project and wrong paired source refuse before stop',{skip:!enabled,timeout:15000},async()=>{
+  const f=fixture();try{
+    const id=f.current();await assert.rejects(operator.replace({...f.options,project:f.project+'-foreign'},{publisher:f.publisher}),/FIXED_CONTAINER_REQUIRED/);assert.equal(inspect(id).State.Running,true);
+    const complete=j.privateJson(path.join(f.state,'bootstrap/complete.json'));f.write('bootstrap/complete.json',{...complete,sourceCommit:'f'.repeat(40)});
+    await assert.rejects(operator.replace(f.options,{publisher:f.publisher}),/SOURCE_IDENTITY_CHANGED/);assert.equal(inspect(id).State.Running,true);
+    f.write('bootstrap/complete.json',complete);await operator.replace(f.options,{publisher:f.publisher});assert.equal(j.privateJson(path.join(f.state,'placement/backend.json')).generation,2);
+  }finally{f.close();}
+});
+test('actual still-running owner cannot be confirmed by a successful no-op stop command',{skip:!enabled,timeout:15000},async()=>{
+  const f=fixture();try{
+    const id=f.current();await assert.rejects(operator.replace(f.options,{publisher:f.publisher,docker:args=>args[0]==='stop'?id:docker(args)}));
+    assert.equal(inspect(id).State.Running,true);assert.equal(j.privateJson(path.join(f.state,'placement/backend.json')).generation,1);
+    await operator.replace({...f.options,recover:true},{publisher:f.publisher});assert.equal(j.privateJson(path.join(f.state,'placement/backend.json')).generation,2);
+  }finally{f.close();}
 });

@@ -1,0 +1,40 @@
+{
+  "source": "1db0dbf43d4d724002632eb565e3d7b7ad98312c",
+  "productionFrozenAt": "bb0b7955157247447ab775425f2129cf10342058",
+  "productionDelta": "none in replace-realtime.js, replacement-journal.js or placement-control.js",
+  "files": {
+    "bindings/compose/multitenant/replace-realtime.js": "c772b7e0e030fa7dd5e472d6f02ca0155c21dfc3d5a5bace3cfd8a385060a9cd",
+    "bindings/compose/multitenant/replacement-journal.js": "62d525a7fca15bc4f00ac69887951e722d67dea4dc0faaa549d68c299e1018bd",
+    "bindings/compose/multitenant/placement-control.js": "8836adccceaad4360cde03d3079b6431b384f1b45171b0687f210bcdc309674e",
+    "bindings/compose/multitenant/replacement-recovery.test.js": "db47ab9b57a9fb71c08e762ad1c5564734be0f456c9c4418478db812965e74b1",
+    "bindings/compose/multitenant/replacement-platform.test.js": "8a66dc53cb62f1d0695d1c1e52668edcbeddb2de6c68c4c3bc24881dc8ee7025"
+  },
+  "counts": {
+    "process-faults.tap.txt": {
+      "tests": 20,
+      "pass": 20,
+      "fail": 0,
+      "skipped": 0
+    },
+    "native-platform.tap.txt": {
+      "tests": 14,
+      "pass": 14,
+      "fail": 0,
+      "skipped": 0
+    }
+  },
+  "nativeImage": "sha256:c5e9a6a4b90fd89a0dba07f5a8726e565f5f1d15c52b21a2d0856eb8e9a32435",
+  "addedBoundary": "backend and routes already equal intended candidate; completion lost before operation journal complete",
+  "measuredAssertions": [
+    "journal remains started rather than complete",
+    "actual new container still running",
+    "backend/routes candidate bytes coherent",
+    "retry without --recover refuses",
+    "explicit recovery stops exact current boot and reaches next generation with fresh incarnation and matching routes"
+  ],
+  "faultInjection": "throws after checkpoint effects; actual host SIGKILL occurs separately in creator-FD test; power-loss not measured",
+  "instrumented": "publisher fence and eligible readiness simulated; idle Node Docker platform, not product realtime acceptance",
+  "fullProductAcceptance": "NOT_RUN",
+  "capacity": "NO-MEASUREMENT",
+  "cloud": "NOT_RUN"
+}

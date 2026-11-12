@@ -1,0 +1,87 @@
+{
+  "source": "8a4ee5df0068129e0da3b975e5bbdc153685de38",
+  "base": "62afa90728d2b844ca34e313dc416cd4c7e2a31f",
+  "files": {
+    "bindings/compose/multitenant/replacement-journal.js": "62d525a7fca15bc4f00ac69887951e722d67dea4dc0faaa549d68c299e1018bd",
+    "bindings/compose/multitenant/replacement-platform.test.js": "514f5bd15ecd7809e5b9ab5db7580f9e631d6d249d0bee69e5ab04ff11731d2f",
+    "bindings/compose/multitenant/replacement-recovery.test.js": "b3196f34b1caf011ff700bf2d7cfc43dd6b2754ea038086663701586ded4fd38",
+    "bindings/compose/multitenant/replace-realtime.js": "c772b7e0e030fa7dd5e472d6f02ca0155c21dfc3d5a5bace3cfd8a385060a9cd",
+    "bindings/compose/multitenant/replace-realtime.test.js": "bdecb6796ad2ec862e641b51519a7875290805451fb3e70005f11e97e7281183",
+    "bindings/compose/multitenant/placement-control.js": "8836adccceaad4360cde03d3079b6431b384f1b45171b0687f210bcdc309674e"
+  },
+  "counts": {
+    "native-platform.tap.txt": {
+      "tests": 13,
+      "pass": 13,
+      "fail": 0,
+      "skipped": 0
+    },
+    "process-faults.tap.txt": {
+      "tests": 19,
+      "pass": 19,
+      "fail": 0,
+      "skipped": 0
+    },
+    "existing-cli.tap.txt": {
+      "tests": 3,
+      "pass": 3,
+      "fail": 0,
+      "skipped": 0
+    },
+    "readiness.tap.txt": {
+      "tests": 1,
+      "pass": 1,
+      "fail": 0,
+      "skipped": 0
+    }
+  },
+  "readinessCoreArchive": "079a3b4c9a6ece9610b32025a0826f756fbb23f0",
+  "nativeImage": "sha256:c5e9a6a4b90fd89a0dba07f5a8726e565f5f1d15c52b21a2d0856eb8e9a32435",
+  "nativeImageLabels": {
+    "core": "079a3b4c9a6ece9610b32025a0826f756fbb23f0",
+    "deploy": "072a55d15d5b228596215060f436bb4038a87397"
+  },
+  "nativeImageUse": "existing immutable local image; tiny owned project with at most two idle Node containers, new helper runs on host rather than inside that image",
+  "real": [
+    "fsynced private files and atomic rename",
+    "Linux flock exclusion/release",
+    "host crash retaining actual inherited child FD",
+    "actual attached Docker CLI FD3 survives host SIGKILL",
+    "actual Docker stop/create/start with Id/StartedAt/PID/source labels",
+    "restart/recreate identity refusals",
+    "wrong source/project refusals",
+    "actual owner stays alive after mocked successful no-op stop and publication refuses",
+    "exact labelled orphan container quiescence"
+  ],
+  "instrumented": [
+    "Docker protocol in process-faults tests",
+    "publisher/fence/readiness in platform tests; process is idle Node, not product realtime"
+  ],
+  "notRun": [
+    "full joined product acceptance",
+    "clinical alarm/restore/move acceptance",
+    "capacity",
+    "cloud"
+  ],
+  "faultSites": [
+    "before-stop",
+    "after-stop/pre-rename",
+    "after-assignment/pre-env",
+    "post-env/pre-create",
+    "post-create-effect/pre-Id-record",
+    "post-create-record/pre-start-intent",
+    "post-start-effect/pre-start-record",
+    "post-start-record/pre-route"
+  ],
+  "initialFailures": [
+    {
+      "symptom": "unstarted timestamp expected year0000 instead of Docker year0001",
+      "classification": "fixture/protocol discriminator failure; corrected exact sentinel"
+    },
+    {
+      "symptom": "global Docker ps quiet returned truncated Id; exact orphan lookup refused",
+      "classification": "native refusal before effects; corrected --no-trunc, gate unchanged"
+    }
+  ],
+  "sourceNote": "8a4ee5d executed code and tests; following proof commit only adds this evidence, clarifies documentation and corrects fixture scope comment"
+}

@@ -1,0 +1,88 @@
+TAP version 13
+# Subtest: actual Docker recovery after before-stop
+ok 1 - actual Docker recovery after before-stop
+  ---
+  duration_ms: 1820.899646
+  type: 'test'
+  ...
+# Subtest: actual Docker recovery after after-stop
+ok 2 - actual Docker recovery after after-stop
+  ---
+  duration_ms: 1838.687363
+  type: 'test'
+  ...
+# Subtest: actual Docker recovery after after-assignment
+ok 3 - actual Docker recovery after after-assignment
+  ---
+  duration_ms: 2283.384733
+  type: 'test'
+  ...
+# Subtest: actual Docker recovery after after-env
+ok 4 - actual Docker recovery after after-env
+  ---
+  duration_ms: 1880.736494
+  type: 'test'
+  ...
+# Subtest: actual Docker recovery after after-create-effect
+ok 5 - actual Docker recovery after after-create-effect
+  ---
+  duration_ms: 1978.709876
+  type: 'test'
+  ...
+# Subtest: actual Docker recovery after after-create
+ok 6 - actual Docker recovery after after-create
+  ---
+  duration_ms: 2086.519789
+  type: 'test'
+  ...
+# Subtest: actual Docker recovery after after-start-effect
+ok 7 - actual Docker recovery after after-start-effect
+  ---
+  duration_ms: 2345.19555
+  type: 'test'
+  ...
+# Subtest: actual Docker recovery after after-start
+ok 8 - actual Docker recovery after after-start
+  ---
+  duration_ms: 2427.503158
+  type: 'test'
+  ...
+# Subtest: actual attached Docker CLI retains inherited lock across creator host crash
+ok 9 - actual attached Docker CLI retains inherited lock across creator host crash
+  ---
+  duration_ms: 1053.091896
+  type: 'test'
+  ...
+# Subtest: actual changed container/process refuses recovery: restart
+ok 10 - actual changed container/process refuses recovery: restart
+  ---
+  duration_ms: 1406.776483
+  type: 'test'
+  ...
+# Subtest: actual changed container/process refuses recovery: recreate
+ok 11 - actual changed container/process refuses recovery: recreate
+  ---
+  duration_ms: 1535.900796
+  type: 'test'
+  ...
+# Subtest: actual foreign project and wrong paired source refuse before stop
+ok 12 - actual foreign project and wrong paired source refuse before stop
+  ---
+  duration_ms: 1728.462122
+  type: 'test'
+  ...
+# Subtest: actual still-running owner cannot be confirmed by a successful no-op stop command
+ok 13 - actual still-running owner cannot be confirmed by a successful no-op stop command
+  ---
+  duration_ms: 1741.032488
+  type: 'test'
+  ...
+1..13
+# tests 13
+# suites 0
+# pass 13
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 24134.865593

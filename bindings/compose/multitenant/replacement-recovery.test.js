@@ -47,9 +47,9 @@ function fixture() {
   return {state,options,before,docker,publisher,rows,original,get current(){return rows.get(current)},get journal(){return j.privateJson(path.join(state,'placement/operation.json'))},write,
     stopRefuses(){stopWorks=false},close(){for(const p of processes)try{process.kill(p.pid,'SIGKILL')}catch{}fs.rmSync(state,{recursive:true,force:true});}};
 }
-for(const fault of ['before-stop','after-stop','after-assignment','after-env','after-create-effect','after-create','after-start-effect','after-start'])test('explicit fresh-generation recovery after '+fault,async()=>{
+for(const fault of ['before-stop','after-stop','after-assignment','after-env','after-create-effect','after-create','after-start-effect','after-start','after-routes'])test('explicit fresh-generation recovery after '+fault,async()=>{
   const f=fixture();try{
-    const hooks={docker:f.docker,publisher:f.publisher,checkpoint:async phase=>{if(phase===fault)throw Error('SYNTHETIC_CRASH:'+fault)}};
+    const hooks={docker:f.docker,publisher:async args=>{const result=await f.publisher(args);if(fault==='after-routes')throw Error('SYNTHETIC_CRASH:'+fault);return result},checkpoint:async phase=>{if(phase===fault)throw Error('SYNTHETIC_CRASH:'+fault)}};
     await assert.rejects(operator.replace(f.options,hooks),/SYNTHETIC_CRASH/);
     const interrupted=f.journal,backend=j.privateJson(path.join(f.state,'placement/backend.json'));
     assert.equal(interrupted.phase==='complete',false);
