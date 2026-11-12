@@ -69,7 +69,7 @@ deployment commit. `NS_DEMO_IMAGE`, if customized, belongs in the prepared priva
 `NS_VAULT_AGENT_TOKEN_TTL` defaults to `1h`; `NS_VAULT_AGENT_TOKEN_MAX_TTL` defaults
 to `24h`. Both accept positive seconds/minutes/hours, with TTL no greater than max
 TTL and max TTL bounded to 32 days. Keep the same values on repeat commands.
-`NS_VAULT_AGENT_KEEP_ENV_TOKENS=1` is an explicit static-lab fallback control: it
+`NS_VAULT_AGENT_KEEP_ENV_TOKENS=1` is an explicit static-lab credential-retention control for the no-fallback negative test: it
 keeps previous environment credentials while selecting the sink. Registry bootstrap's
 previous API token file may remain present, but serving config names only the sink;
 its absence or refusal must not fall back to old material.
@@ -119,13 +119,29 @@ Focused checks exercise registry 1/2/4 APIs, constant policy/request cost, priva
 custody, mixed/changed state and repeated identity refusal. Run:
 
 ```bash
-node --test bindings/compose/vault-agent/vault-agent.test.js
+node --test bindings/compose/vault-agent/vault-agent.test.js \
+  bindings/compose/vault-agent/tests/plan.test.cjs \
+  bindings/compose/vault-agent/tests/guards.test.cjs
 ```
 
-Vault HTTP responses are explicitly doubled in these unit checks; they do not
-measure Agent login/renewal or fresh serving-image behavior. The historical
-2026-11-09 union-policy experiment is recorded only in alignment's immutable
-`reports/tenancy/vault-agent-2026-11-09/`; it does not establish this registry
-capability. Fresh Agent/Vault/API lifecycle evidence and controls are required
-before declaring the conversion verified. No default or capacity-pilot activation
-is part of this overlay change.
+Vault HTTP responses are explicitly doubled in the unit checks. Pure roster tests
+use the committed generators and the immutable evaluator interface from
+`962fbdbe8617ed8abe63cad7039fde70f91fcbce`; they do not claim worker runtime scaling.
+The historical 2026-11-09 union-policy experiment remains in alignment's immutable
+`reports/tenancy/vault-agent-2026-11-09/` and does not establish this registry binding.
+
+Fresh finite native lifecycle capture on 2026-11-12 uses core
+`d50502bb6126bda2bb0af384569e1d95de114f2f` paired with deployment
+`43cd1e6a85e9b60a5b1b174a840609ce938169f6`. Its real Agent/Vault and two serving
+APIs pass auto-auth, renewal, max-TTL reauthentication, missing-sink/expired-token/
+seal/transport refusal and recovery, and explicit secret-id replacement. The actual
+production parser also accepts the 1/2/4 API environment shapes. A separate real-Agent
+expiring-secret control fails reauthentication; nonexpiring restoration passes two
+max-TTL cycles. Live four-API capacity and selected realtime/evaluator runtime
+scaling are unmeasured here. All owned serving fixtures are stopped and retained.
+
+Exact source/instrument attribution, role receipts, red controls, stopped resources
+and limitations live in alignment's
+`reports/tenancy/vault-agent-registry-2026-11-12/`. Runtime files in the final delivery
+are unchanged from the measured deployment commit above. Default/pilot activation
+and comprehensive joined-candidate acceptance remain separate coordinator work.
