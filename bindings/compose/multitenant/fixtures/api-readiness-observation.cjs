@@ -1,0 +1,27 @@
+'use strict';
+const assert=require('node:assert/strict');
+function typedCode(value){return typeof value==='string'&&/^[A-Z][A-Z0-9_]{0,79}$/.test(value)?value:null;}
+function observer({wallNow=()=>Date.now(),now=()=>performance.now()}={}){
+ const started=now(),data={version:1,requestsTotal:0,requests:[],requestsTruncated:false,markers:[],failures:[]};
+ function marker(stage,details={}){const row={stage,at:wallNow(),elapsedMs:Math.max(0,now()-started),...details};data.markers.push(row);if(data.markers.length>32)data.markers.shift();return row;}
+ function request({stage,service,tenantOrdinal,workerOrdinal=null,upstreamUnknown=false,startedAt,endedAt,durationMs,status,errorCode=null}){const row={sequence:++data.requestsTotal,stage,service,tenantOrdinal,workerOrdinal,upstreamUnknown,startedAt,endedAt,durationMs,status:Number.isInteger(status)?status:null,errorCode:typedCode(errorCode)};data.requests.push(row);if(data.requests.length>256){data.requests.shift();data.requestsTruncated=true;}if(status!==200&&stage==='measured'&&data.failures.length<16)data.failures.push(row);return row;}
+ return{marker,request,snapshot:()=>JSON.parse(JSON.stringify(data))};
+}
+async function precondition({targets,read,trace=observer(),timeoutMs=20000,now=()=>performance.now(),wallNow=()=>Date.now(),delay=ms=>new Promise(resolve=>setTimeout(resolve,ms))}){
+ assert(Number.isSafeInteger(timeoutMs)&&timeoutMs>=1&&timeoutMs<=20000,'API_READINESS_BUDGET_REQUIRED');assert(Array.isArray(targets)&&targets.length>=1&&targets.length<=32,'API_READINESS_MATRIX_REQUIRED');const key=t=>t.service+':'+t.tenantOrdinal;assert(new Set(targets.map(key)).size===targets.length,'API_READINESS_MATRIX_UNIQUE');
+ const state=targets.map(t=>({service:t.service,tenantOrdinal:t.tenantOrdinal,attempts:0,warming:0,ready:false,firstAt:null,readyAt:null})),deadline=now()+timeoutMs,controller=new AbortController();let next=0,failure=null,closed=false,timer;
+ const fail=(code,row=null)=>{if(!failure)failure={code,observation:row};controller.abort();};trace.marker('precondition-start');
+ const workers=Array.from({length:Math.min(4,targets.length)},async()=>{for(;;){const index=next++;if(index>=targets.length||failure)return;const target=targets[index],slot=state[index];while(!failure&&now()<deadline){const at=wallNow(),mono=now();if(slot.firstAt===null)slot.firstAt=at;slot.attempts++;let result;try{result=await read(target,{timeoutMs:Math.max(1,Math.floor(deadline-now())),signal:controller.signal});}catch(error){if(closed)return;const row=trace.request({stage:'precondition',...target,startedAt:at,endedAt:wallNow(),durationMs:Math.max(0,now()-mono),status:null,errorCode:'API_READINESS_TRANSPORT_REFUSED'});fail('API_READINESS_TRANSPORT_REFUSED',row);return;}
+ if(closed)return;const row=trace.request({stage:'precondition',...target,startedAt:at,endedAt:wallNow(),durationMs:Math.max(0,now()-mono),status:result.status,errorCode:result.code});if(now()>=deadline){fail('API_READINESS_DEADLINE',row);return;}if(result.status===200&&!result.code){slot.ready=true;slot.readyAt=row.endedAt;break;}if(result.status===503&&result.code==='TENANT_WARMING'){slot.warming++;await delay(Math.min(50,Math.max(0,deadline-now())));continue;}fail('API_READINESS_REFUSED',row);return;
+ }if(!slot.ready&&!failure)fail('API_READINESS_DEADLINE');if(failure)return;}});
+ try{await Promise.race([Promise.all(workers),new Promise(resolve=>{timer=setTimeout(()=>{fail('API_READINESS_DEADLINE');resolve();},timeoutMs);})]);}finally{closed=true;clearTimeout(timer);controller.abort();}
+ const passed=!failure&&state.every(row=>row.ready);trace.marker(passed?'precondition-complete':'precondition-failed');return{passed,matrix:state,failure,trace:trace.snapshot()};
+}
+// The measured workload remains four eager public-edge readers. No refusal is retried.
+function traffic({read,trace=observer(),now=()=>performance.now(),wallNow=()=>Date.now()}){
+ let active=true;const errors=[],first=Array(4).fill(false),firstSuccess=Array(4).fill(null);let reads=0,stopped;
+ trace.marker('measured-start',{workers:4,service:'public-edge',upstreamUnknown:true});
+ const tasks=Array.from({length:4},(_,workerOrdinal)=>(async()=>{while(active){const startedAt=wallNow(),mono=now();let recorded=false;try{const seen=await read(workerOrdinal);trace.request({stage:'measured',service:'public-edge',tenantOrdinal:1,workerOrdinal,upstreamUnknown:true,startedAt,endedAt:wallNow(),durationMs:Math.max(0,now()-mono),status:seen.status,errorCode:seen.body?.error});recorded=true;if(seen.status!==200)throw new Error('B_SETTINGS_STATUS_'+seen.status+'_'+(typedCode(seen.body?.error)||'UNKNOWN'));reads++;if(!first[workerOrdinal])firstSuccess[workerOrdinal]=wallNow();first[workerOrdinal]=true;}catch(error){if(!recorded)trace.request({stage:'measured',service:'public-edge',tenantOrdinal:1,workerOrdinal,upstreamUnknown:true,startedAt,endedAt:wallNow(),durationMs:Math.max(0,now()-mono),status:null,errorCode:typedCode(error.code)||'B_SETTINGS_TRANSPORT_REFUSED'});errors.push(typedCode(error.code)||(/^B_SETTINGS_STATUS_[0-9]{3}_[A-Z0-9_]+$/.test(error.message)?error.message:'B_SETTINGS_TRANSPORT_REFUSED'));break;}}})());
+ return{first,errors,get reads(){return reads;},ready(){assert.deepEqual(errors,[],'B settings traffic remains healthy');return first.every(Boolean);},stop(){if(!stopped){active=false;stopped=Promise.all(tasks).then(()=>trace.marker('measured-finish',{reads,firstSuccess,errorCount:errors.length}));}return stopped;}};
+}
+module.exports={observer,precondition,typedCode,traffic};

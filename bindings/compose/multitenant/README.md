@@ -244,3 +244,39 @@ These sessions serialize short registration/completion sections while response
 lifetimes and restore exclusion remain protected. Unselected application profiles
 retain their prior operation path. Four is a synthetic measurement profile, not
 a portable throughput claim; record it alongside the pool sizes.
+
+The opted-in `shipping-sharding.integration.test.js` first proves every fixed API
+instance × synthetic seed tenant through a private, authorized status GET. A bare
+readiness client uses only a short-lived mode-0600 DATA-credential input and three
+read-only fixture/input mounts; it receives no operator, database, Vault or IPC
+configuration. Its single 20-second request-phase budget permits only typed
+`TENANT_WARMING` responses to remain pending. A 200 response must be an object with `status: 'ok'`
+and no error field; malformed/error-bearing successes fail setup, as do other
+refusals. No JWT exchange, socket admission or clinical write precedes this barrier. Metadata inspection and
+client cleanup each have separate bounded commands outside that request phase.
+Successful probes are followed by another exact roster inspection: changed or lost
+container ID, boot time, image or ownership/source labels refuse the barrier.
+
+The restore interval keeps the four original public-edge B status readers.
+Each must have succeeded before restore starts; every subsequent non-200 or
+transport failure still fails continuity. `api-readiness.json` records exact
+instance identities and tuple readiness. `settings-continuity.json` records bounded
+sanitized request chronology, first successes and restore spawn/exit stages.
+Public-edge requests explicitly retain unknown upstream-instance attribution.
+These artifacts contain no credentials, request URLs or response bodies. The
+fixture retains its 120-second total timeout and existing request/restore cadence.
+
+Run the focused host-fixture checks without activating Docker:
+
+```sh
+node bindings/compose/multitenant/api-readiness-observation.test.js
+node bindings/compose/multitenant/api-readiness-host.test.js
+node bindings/compose/multitenant/api-readiness-sequence.test.js
+NS_UI_TEST_CORE=/absolute/core/worktree node bindings/compose/multitenant/api-readiness-carrier.test.js
+```
+
+The last check uses the actual source credential derivation, DATA middleware and
+status handler with synthetic recording store/provider ports and disposable HTTP
+listeners. It is distinct from native PostgreSQL/Compose acceptance. The existing
+shipping native suite remains explicitly selected by `NS_COMPOSE_SHARDING_STATE`;
+unselected native runs are skipped, never evidence that a deployment passed.

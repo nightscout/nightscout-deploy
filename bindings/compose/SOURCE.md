@@ -4,11 +4,11 @@
 |---|---|
 | upstream repository | nightscout/cgm-remote-monitor |
 | upstream path | `deploy/multitenant` |
-| upstream commit | `47b43b6246ce7f94f1f1f0d01830495a78b28add` (joined M7 scheduling, alarm-repeat and observed due-state candidate; final acceptance pending) |
+| upstream commit | `ff5156b984424f1ef34bcef22d5bfa0071354cfa` (joined M7 observations and contract-inventory fixture repair; final acceptance pending) |
 | upstream tree hash of that path | `fdc9f8dd2644b8789c86abeb030fbc0ad7304780` (core's reduced fixture: `config.js`, `demo.js`, `health.js`, `restore.js`, `ui.js`, `README.md`) |
 | import method | Recorded core fixture plus reviewed deployment-owned bootstrap, placement, edge and preparation changes; the patch is checked by `tools/compose-identity-check.sh`. |
 | local delta | [`SOURCE.delta.patch`](SOURCE.delta.patch), against the recorded core fixture. This binding generates fixed API instances and exact maintenance addresses, supports local health probes for network listeners, removes realtime maxSockets and renders explicit per-IP edge budgets. The reduced core fixture stays test-only. |
-| tree hash here | `89f317006cee22526f8aebd759386573aa002e9e` |
+| tree hash here | `3ba19b609af18184082cbd8aa5f978c9cfde016c` |
 | imported on | 2026-11-12 |
 
 History: first imported 2026-11-09 from `ed2ced00c80bd0a6a7d75f834d2c6e2af8c71364` (tree
@@ -159,3 +159,26 @@ retain the original minimum observation period, shared maximum deadline and
 strict effect/fanout oracle, with bounded typed evidence and session SQL timeouts.
 They do not add clinical writes or change runtime producer behavior. The five
 common runtime files and their delta remain unchanged by these instruments.
+
+Clinical-job observations expose only existing runtime running, boot and fixed
+queued-job slots. Read-only stamp checks are not clinical work. Scheduling,
+operation windows and successful-work counters are unchanged; the new paired
+private-v2 schema is required. Idle-safety validation belongs to the separately
+pinned measurement instrument, with quiet explicitly not a TIME-work witness.
+
+The controlled-replacement host and fixture changes from c10 retain uncertainty
+and recovery boundaries, capture typed callback/child diagnostics privately, and
+use exact per-attempt nonce probe identities. Legitimate clinical alarms cannot
+substitute for a probe. The final probe/session verdict follows all awaited
+census checks. Earlier generic publisher failure remains unclassified; a new
+exact image and fresh qualification are required, without replaying old state.
+
+Stock/restore qualification establishes each exact API/tenant status cell before
+socket/JWT setup. A bare DATA-credential client permits only typed warming during
+its bounded request precondition; the measured four public-edge readers still
+permit no errors or retries. Successful status bodies and final API boot identities
+are validated; request/restore chronology retains typed failures without credentials.
+These are host qualification fixtures, with no serving-role or edge behavior change.
+The core advance changes only its generic descriptor-version test; runtime inputs
+and the five reduced fixture files remain unchanged. A new exact image and native
+qualification retain their own source attribution; earlier quiet safety is not TIME work.

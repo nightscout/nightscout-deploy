@@ -1,0 +1,12 @@
+'use strict';
+const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),os=require('node:os'),vm=require('node:vm');
+test('actual shipping fixture holds all socket/JWT/HTTP setup until exact-tuple readiness, and refuses a cold barrier',async()=>{
+ const state=fs.mkdtempSync(path.join(os.tmpdir(),'api-readiness-sequence-'));fs.mkdirSync(path.join(state,'primer'));fs.mkdirSync(path.join(state,'artifacts'));fs.writeFileSync(path.join(state,'primer/tenants.json'),JSON.stringify({tenants:[{id:'A'},{id:'B'}]}));fs.writeFileSync(path.join(state,'primer/provisioned.json'),'[]');let callback,release,clients=0,http=0,barriers=0;
+ const barrier=new Promise((resolve,reject)=>{release=reject;});
+ const sandbox={process:{env:{NS_COMPOSE_SHARDING_STATE:state,NS_UI_TEST_CORE:'/synthetic-core',NS_COMPOSE_SHARDING_PROJECT:'ns-evaluator-binding-proof-20261112-control',NS_COMPOSE_SHARDING_PORT:'18383',NS_COMPOSE_SHARDING_PROFILE:'evaluator'}},console,setTimeout,clearTimeout,Buffer,require:id=>{
+  if(id==='node:test')return{test:(name,options,fn)=>callback=fn};if(id==='/synthetic-core/node_modules/socket.io-client')return{io:()=>{clients++;throw new Error('APPLICATION_REACHED');}};
+  if(id==='./fixtures/api-readiness-host.cjs')return{prepare:async()=>{barriers++;return barrier;}};
+  if(id==='./fixtures/api-readiness-observation.cjs')return require(id);if(id==='node:http')return{request:()=>{http++;throw new Error('HTTP_REACHED');},Agent:class{}};return require(id);
+ }};
+ try{vm.runInNewContext(fs.readFileSync(path.join(__dirname,'shipping-sharding.integration.test.js'),'utf8'),sandbox);const running=callback();const verdict=assert.rejects(running,/API_READINESS_PRECONDITION_FAILED/);await new Promise(setImmediate);assert.equal(barriers,1);assert.equal(clients,0);assert.equal(http,0);release(Object.assign(new Error('API_READINESS_PRECONDITION_FAILED'),{apiReadiness:{passed:false,failure:{code:'API_READINESS_DEADLINE'}}}));await verdict;assert.equal(clients,0);assert.equal(http,0);assert.equal(JSON.parse(fs.readFileSync(path.join(state,'artifacts/api-readiness.json'))).passed,false);const trace=JSON.parse(fs.readFileSync(path.join(state,'artifacts/settings-continuity.json')));assert(!trace.markers.some(row=>row.stage==='restore-spawn'));assert.equal(trace.markers.at(-1).stage,'proof-failed');}finally{fs.rmSync(state,{recursive:true});}
+});
