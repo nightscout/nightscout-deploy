@@ -41,21 +41,18 @@ build input and that commit for this directory, byte for byte (only `.env`,
 `BUILD_INPUTS_DIRTY`. The image is built from the two commits and labelled with
 both (`org.opencontainers.image.revision`, `org.nightscout.deploy.revision`).
 
-`bootstrap` is a deliberate one-shot operation, not an application startup hook.
-It prepares the schema, grants and synthetic tenant configuration before roles
-can pass their own read-only admission checks. `up` repeats the bootstrap entry
-point for its supported restart/unseal handling; it must refuse partial setup
-instead of adopting unknown existing schemas.
+`bootstrap` prepares infrastructure only: schemas, grants, role configurations,
+the private admin service and the metadata feed. `up` starts the private admin,
+provisions the seed through its versioned API, starts the API instances, and runs
+a separate lab-priming API client before starting realtime/evaluator and ingress.
+The primer has no PostgreSQL or Vault credential. Partial setup is refused; source
+and deployment revision changes require fresh synthetic state.
 
-Start order: `up` runs the bootstrap first, then Compose starts the roles in
-dependency order, each waiting for the previous one's healthcheck: PostgreSQL
-and Vault, then api, then realtime and tenant-admin, then evaluator. nginx waits
-only for the services it routes to (api, realtime, ui), so an unhealthy evaluator
-or tenant-admin does not keep the site down. The Compose edge mounts
-`nginx.compose.conf`: `nginx.conf` (which the Kubernetes binding imports) plus
-re-resolution of the upstream names through Docker's DNS (10 s validity), so a
-role container restarted on its own is reached again without an edge restart.
-`check-compose.js` holds the two files equal apart from those lines.
+nginx waits only for the services it routes to, including each API instance.
+An unhealthy evaluator or tenant-admin does not keep ingress down. Preparation
+renders its read-only configuration from `nginx.compose.conf`, retaining Docker
+DNS re-resolution and the selected per-client-IP budgets. `check-compose.js`
+checks the template, private listener exposure and readiness dependencies.
 
 A failed bootstrap prints one JSON line on stderr: the stable `error` code, the
 underlying `detail` message and the top stack frames (`at`). Connection-string
@@ -69,15 +66,11 @@ writes against the same value. It never enters `env.json`. `load-env.js` takes i
 bound on `env.json` from core's reader (`lib/server/serve/config-file.js`), and
 keeps the fixed 1 MiB bound with a core that has no such module.
 
-The tenant count (`NS_DEMO_TENANTS`) is bounded by core's preview tenant ceiling
-(`lib/server/serve/tenant-ceiling.js`, 10,000), which the ui also enforces; the
-bootstrap runs the ui's own parser on the ui configuration it writes. Realtime
-admits at most `NS_DEMO_TENANTS` x `NS_DEMO_SOCKETS_PER_TENANT` sockets (1..100,
-default 2; never below 100), across all tenants and Socket.IO namespaces. It is
-part of the realtime configuration, so a change needs a fresh bootstrap and a
-realtime restart. With a core that predates `tenant-ceiling.js` or
-`config-file.js`, `ui.js` and `config.js` keep their former bounds and say so on
-stderr.
+The synthetic seed count (`NS_DEMO_TENANTS`) is bounded by core's preview
+ceiling of 10,000. It is provisioning input. Runtime roles read tenant membership
+and keys from the registry, not a copied tenant list. Realtime has no process-wide
+socket cap; the edge budgets described below govern new handshakes and per-IP
+connection/request concurrency.
 
 The default public binding is `127.0.0.1:18080`. Add local name resolution for
 the synthetic aliases declared in the generated public UI config, then use that
@@ -109,7 +102,9 @@ network or the fixed private Unix socket paths.
 Each runtime service mounts only its own generated read-only configuration
 directory. The UI and nginx receive no database credentials. Only the one-shot
 bootstrap mounts the full private output directory and initial database/Vault
-material. The separate operator demonstration mounts only its operational
+material. The private admin uses narrowly scoped provisioning credentials; the
+lab primer receives only its seed and API-issued synthetic credentials. The
+separate operator demonstration mounts only its operational
 configuration, artifact directory and participant sockets.
 
 Vault's server certificate is issued by a local, short-lived demo CA. Runtime
@@ -137,7 +132,8 @@ does not accept the socket-only initialization server or become an
 unregistered administrator in the application's restore-session census. Both
 Vault image-declared storage paths have explicit volumes; no anonymous volume
 is needed. The scoped demo Vault credentials expire after 24 hours; restart does
-not renew them.
+not renew them. The separately configured Vault Agent binding supplies renewable
+service credentials for deployment trust acceptance.
 
 ## Tenant-local restore demonstration
 
