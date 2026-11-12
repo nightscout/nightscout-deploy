@@ -1,6 +1,6 @@
 'use strict';
 
-// DB-less rendering of the shipped browser pages. This public projection selects
+// Presentation-only rendering of the shipped browser pages. This public projection selects
 // HTML presentation only; the unchanged client obtains authority, settings and
 // clinical data from the API/realtime roles on the same public origin.
 const fs = require('node:fs');
@@ -37,6 +37,7 @@ const coreModule = (name, former) => {
 const { PREVIEW_MAX_TENANTS } = coreModule('tenant-ceiling', { PREVIEW_MAX_TENANTS: 1000, note: 'using the former fixed ceiling of 1000 tenants' });
 
 function parseConfig(value) {
+  if (value?.version === 2) return require('./ui-registry').parse(value);
   if (!exact(value, ['version', 'tenants']) || value.version !== 1 ||
       !Array.isArray(value.tenants) || !value.tenants.length || value.tenants.length > PREVIEW_MAX_TENANTS) {
     throw new TypeError('UI_PUBLIC_CONFIG_INVALID');
@@ -63,8 +64,9 @@ function requestHost(value) {
   try { return hostname(match[1].toLowerCase()); } catch { return null; }
 }
 
-function createApp({ config, root = ROOT } = {}) {
+function createApp({ config, root = ROOT, presentation } = {}) {
   const hosts = parseConfig(config);
+  if (config.version === 2 && typeof presentation?.resolve !== 'function') throw new Error('UI_REGISTRY_READER_REQUIRED');
   const express = require('express');
   const ejs = require('ejs');
   const app = express();
@@ -87,10 +89,16 @@ function createApp({ config, root = ROOT } = {}) {
   });
   // Private container health probe contains no tenant or credential information.
   app.get('/healthz', (req, res) => res.type('text/plain').send('ok\n'));
-  app.use((req, res, next) => {
-    req.publicPresentation = hosts.get(requestHost(req.headers.host));
-    if (!req.publicPresentation) return res.status(421).end();
-    next();
+  app.use(async (req, res, next) => {
+    try {
+      req.publicPresentation = config.version === 2 ? await presentation.resolve(req) : hosts.get(requestHost(req.headers.host));
+      if (!req.publicPresentation) return res.status(421).end();
+      next();
+    } catch (error) {
+      const code = error?.code || '';
+      const hostRefusal = /^TENANT_(HOST_|HEADERS_|SELECTOR_|PROXY_|ORIGIN_)/.test(code);
+      res.status(hostRefusal ? 421 : 503).end();
+    }
   });
   const locals = Object.freeze({ bundle: '/bundle', mode: 'production', cachebuster });
   for (const [route, page] of Object.entries(PAGES)) {
@@ -137,15 +145,26 @@ const configFile = () => reader || (reader = coreModule('config-file', {
 
 function main(env = process.env) {
   if (!env.UI_PUBLIC_CONFIG) throw new Error('UI_PUBLIC_CONFIG_REQUIRED');
-  // The core's bounded reader: MULTITENANT_CONFIG_MAX_BYTES (default 1 MiB),
-  // checked on size and on the bytes read; refusals carry a stable code.
   const config = configFile().readJson(env.UI_PUBLIC_CONFIG, { source: env, label: 'UI_PUBLIC_CONFIG' });
-  const app = createApp({ config });
+  parseConfig(config);
   const port = env.UI_PORT === undefined ? 1340 : Number(env.UI_PORT);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('UI_PORT_INVALID');
-  const server = app.listen(port, env.UI_HOSTNAME || '0.0.0.0');
-  for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => server.close(() => process.exit(0)));
-  return server;
+  function serve(presentation) {
+    try {
+      const app = createApp({ config, presentation });
+      const server = app.listen(port, env.UI_HOSTNAME || '0.0.0.0');
+      let closing;
+      const close = () => closing || (closing = (async () => {
+        await new Promise(resolve => server.close(resolve));
+        await presentation?.close();
+      })());
+      server.once('error', () => { presentation?.close().catch(() => {}); process.exitCode = 78; });
+      for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => close().then(() => process.exit(0), () => process.exit(1)));
+      return server;
+    } catch (error) { presentation?.close().catch(() => {}); throw error; }
+  }
+  if (config.version === 2) return require('./ui-registry').open({ config, source: env }).then(serve);
+  return serve();
 }
 // The refusal line names the stable cause code and, for the bounded reader, its
 // message (sizes, limit, errno); never the configuration's contents or path.
@@ -156,6 +175,6 @@ function refusal(error) {
   return 'UI_STARTUP_REFUSED: ' + code + detail + '\n';
 }
 if (require.main === module) {
-  try { main(); } catch (error) { process.stderr.write(refusal(error)); process.exitCode = 78; }
+  Promise.resolve().then(() => main()).catch(error => { process.stderr.write(refusal(error)); process.exitCode = 78; });
 }
 module.exports = { parseConfig, requestHost, createApp, main, refusal, PAGES };

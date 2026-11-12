@@ -1,17 +1,18 @@
 # Browser UI and public ingress
 
-This DB-less process renders the repository's actual EJS dashboard, food editor,
+This presentation process renders the repository's actual EJS dashboard, food editor,
 profile editor and reports pages. It serves the production webpack artifacts,
 startup scripts, static assets, translations and service worker from the same
 application image as the API. It imports no test fixture and starts no clinical
-server, database pool or credential verifier.
+server or credential verifier. Registry mode opens only a dedicated metadata resolver
+pool; it has no clinical, settings or secret read capability.
 
 Run `node deploy/multitenant/ui.js` with:
 
 - `UI_PUBLIC_CONFIG=/run/ns-config/config.json`: a read-only **public-only** file.
 - `UI_HOSTNAME=0.0.0.0`, `UI_PORT=1340`: container-private TCP listener.
 
-The public projection has exactly this shape:
+The static lab projection retains this shape:
 
 ```json
 {"version":1,"tenants":[{"aliases":["one.example.test"],"theme":"default"},{"aliases":["two.example.test"],"theme":"modern"}]}
@@ -22,9 +23,49 @@ Aliases contain no port and must be unique. The only permitted theme values are
 refuse startup. An unrecognized Host receives HTTP 421. The projection selects
 only the server-rendered HTML theme; restart the UI after changing it. Current
 tenant settings, identity and clinical records still come through the existing
-API/realtime protocol and its current-authority checks. No credentials are mounted
-in this component or embedded in rendered pages. The existing browser
+API/realtime protocol and its current-authority checks. Static mode mounts no credentials. Registry mode mounts only its dedicated registry
+connection environment, never tenant credentials; neither mode embeds credentials
+in rendered pages. The existing browser
 credential/token interface remains available; this process adds no OIDC routes.
+
+Registry deployments use this exact version-2 shape instead of an alias list:
+
+```json
+{"version":2,"registry":{"connectionEnv":"NS_UI_REGISTRY_PG","namespace":"cohort_registry","maxTenants":10000,"refreshMs":2000,"maxInflight":32},"theme":"default"}
+```
+
+`connectionEnv` names an environment value; no connection string, provider/module
+path or static roster belongs in this public configuration. Load the UI's own
+private environment with `node -r ./deploy/multitenant/load-env.js
+./deploy/multitenant/ui.js`. The dedicated LOGIN/NOSUPERUSER/NOBYPASSRLS/
+NOREPLICATION identity receives only product `tenant-registry/postgres.grants`
+`resolvers` capability (lookup and revision), without `readers`, enumerators,
+control, data, secret or settings grants. Startup refuses memberships, elevated
+role attributes, table/column data access, sequence grants and additional user
+SECURITY DEFINER execution. Product registry catalogue admission pins the exact
+lookup/revision implementations and their owners before resolution.
+
+Positive aliases and unknown aliases use the product resolver's bounded caches;
+revision observation invalidates both without restarting UI. Defaults are 10,000
+positive entries, at most 1,024 negative entries, a 2-second revision poll, two SQL
+clients and at most 32 in-flight resolutions (configurable 1–256). Resolution beyond
+the in-flight bound returns HTTP 503. Invalid, unknown, private/internal and
+untrusted forwarded selectors return HTTP 421. Resolver/database refusals return
+503 without error details. The theme remains a single explicit presentation
+choice; current settings and authority still come from API/realtime. SIGTERM stops
+HTTP admission and closes the component-owned resolver and database pool.
+
+Focused controls:
+
+```bash
+NS_UI_TEST_CORE=/absolute/path/to/pinned/core node bindings/compose/multitenant/ui-registry.test.js
+NS_UI_REGISTRY_NATIVE_TEST=1 NS_UI_TEST_CORE=/absolute/path/to/pinned/core node --test bindings/compose/multitenant/ui-registry.integration.test.js
+```
+
+The native control owns one PostgreSQL container, uses synthetic registry rows,
+actual core resolver/catalogue/template/asset factories, and verifies a real UI
+child closes its database sessions on SIGTERM. It does not execute full provisioning,
+restore census, browser acceptance or capacity; those remain joined deployment gates.
 
 The enabled page routes are `/`, `/food`, `/profile` and `/report`. Serving their
 real HTML does not broaden the API's admitted operations. `/admin`, split frames,
