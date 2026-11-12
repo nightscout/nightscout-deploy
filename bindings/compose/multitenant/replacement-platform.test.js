@@ -37,11 +37,12 @@ function fixture(){
     docker([...args,'down','--volumes','--remove-orphans']);fs.rmSync(state,{recursive:true,force:true});
   }};
 }
-for(const fault of ['before-stop','after-stop','after-assignment','after-env','after-create-effect','after-create','after-start-effect','after-start'])test('actual Docker recovery after '+fault,{skip:!enabled,timeout:30000},async()=>{
+for(const fault of ['before-stop','after-stop','after-assignment','after-env','after-create-effect','after-create','after-start-effect','after-start','after-routes'])test('actual Docker recovery after '+fault,{skip:!enabled,timeout:30000},async()=>{
   const f=fixture();try{
     const initial=inspect(f.current());
-    await assert.rejects(operator.replace(f.options,{publisher:f.publisher,checkpoint:async phase=>{if(phase===fault)throw Error('OWNED_CRASH:'+fault)}}),/OWNED_CRASH/);
+    await assert.rejects(operator.replace(f.options,{publisher:async args=>{const result=await f.publisher(args);if(fault==='after-routes')throw Error('OWNED_CRASH:'+fault);return result},checkpoint:async phase=>{if(phase===fault)throw Error('OWNED_CRASH:'+fault)}}),/OWNED_CRASH/);
     const interrupted=j.privateJson(path.join(f.state,'placement/operation.json')),generation=j.privateJson(path.join(f.state,'placement/backend.json')).generation;
+    if(fault==='after-routes'){assert.equal(interrupted.phase,'started');assert.deepEqual(j.privateJson(path.join(f.state,'placement/backend.json')),j.privateJson(path.join(f.state,'placement/routes.json')));assert.equal(inspect(f.current()).State.Running,true);await assert.rejects(operator.replace(f.options,{publisher:f.publisher}),/RECOVERY_REQUIRED/);}
     if(fault==='after-assignment'){
       // A creator may already have exited while its one-shot container survives.
       const orphan=docker(['run','-d','--name',interrupted.publisherName,'--label','org.nightscout.recovery.fixture='+f.project,'--label','com.docker.compose.project='+f.project,'--label','com.docker.compose.service=demo','--label','org.nightscout.replacement.operation='+interrupted.operation,image,'node','-e','process.on("SIGTERM",()=>process.exit(0));setInterval(()=>{},1000)']);
