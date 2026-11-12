@@ -1,0 +1,22 @@
+TAP version 13
+# Subtest: pinned actual registry settings parser accepts generated env without static origin
+ok 1 - pinned actual registry settings parser accepts generated env without static origin
+  ---
+  duration_ms: 2.181333
+  type: 'test'
+  ...
+# Subtest: pinned actual single settings parser accepts exact origin and rejects malformed cookie
+ok 2 - pinned actual single settings parser accepts exact origin and rejects malformed cookie
+  ---
+  duration_ms: 0.80666
+  type: 'test'
+  ...
+1..2
+# tests 2
+# suites 0
+# pass 2
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 8.52616

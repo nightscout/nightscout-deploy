@@ -1,0 +1,126 @@
+TAP version 13
+# Subtest: registered generic adapter emits exact HTTPS callbacks and no static registry origins
+ok 1 - registered generic adapter emits exact HTTPS callbacks and no static registry origins
+  ---
+  duration_ms: 3.139939
+  type: 'test'
+  ...
+# Subtest: single origin uses same registered adapter and explicit origin
+ok 2 - single origin uses same registered adapter and explicit origin
+  ---
+  duration_ms: 1.580484
+  type: 'test'
+  ...
+# Subtest: unknown provider/module paths and unknown fields refuse
+ok 3 - unknown provider/module paths and unknown fields refuse
+  ---
+  duration_ms: 0.813739
+  type: 'test'
+  ...
+# Subtest: HTTPS and issuer/PKCE/algorithm discovery are exact; redirects may not exfiltrate secrets
+ok 4 - HTTPS and issuer/PKCE/algorithm discovery are exact; redirects may not exfiltrate secrets
+  ---
+  duration_ms: 0.628679
+  type: 'test'
+  ...
+# Subtest: credential files refuse symlink, public mode and empty/malformed material
+ok 5 - credential files refuse symlink, public mode and empty/malformed material
+  ---
+  duration_ms: 1.046327
+  type: 'test'
+  ...
+# Subtest: reference profile rejects mixed source/project, nonregistry ports, real domains and wildcard callbacks
+ok 6 - reference profile rejects mixed source/project, nonregistry ports, real domains and wildcard callbacks
+  ---
+  duration_ms: 0.279137
+  type: 'test'
+  ...
+# Subtest: 1/2/4 API roster and explicit idle/source limits retain exact service names
+ok 7 - 1/2/4 API roster and explicit idle/source limits retain exact service names
+  ---
+  duration_ms: 0.507952
+  type: 'test'
+  ...
+# Subtest: provider and DB stay isolated, only TLSedge joins existing owned app network; pins not tags
+ok 8 - provider and DB stay isolated, only TLSedge joins existing owned app network; pins not tags
+  ---
+  duration_ms: 0.548522
+  type: 'test'
+  ...
+# Subtest: private planes refused and only specific owner paths exposed; no credentials in access logs
+not ok 9 - private planes refused and only specific owner paths exposed; no credentials in access logs
+  ---
+  duration_ms: 3.570402
+  type: 'test'
+  location: '/home/bewest/src/rag-nightscout-ecosystem-alignment/externals/work/deploy-idp-authentik-profile-20261112/providers/identity/authentik/tests/profile.test.js:14:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    The expression evaluated to a falsy value:
+    
+      assert(text.includes(expected))
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: '=='
+  stack: |-
+    TestContext.<anonymous> (/home/bewest/src/rag-nightscout-ecosystem-alignment/externals/work/deploy-idp-authentik-profile-20261112/providers/identity/authentik/tests/profile.test.js:14:364)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: API overlay exposes only read-only public trust bundle, no bootstrap/management/provider credentials
+ok 10 - API overlay exposes only read-only public trust bundle, no bootstrap/management/provider credentials
+  ---
+  duration_ms: 0.375292
+  type: 'test'
+  ...
+# Subtest: optional backchannel refuses unreviewed multi-origin broker; omission is explicit
+ok 11 - optional backchannel refuses unreviewed multi-origin broker; omission is explicit
+  ---
+  duration_ms: 0.465266
+  type: 'test'
+  ...
+# Subtest: human store grants preserve local authority read-only; signer never gains key-management rights
+ok 12 - human store grants preserve local authority read-only; signer never gains key-management rights
+  ---
+  duration_ms: 0.330368
+  type: 'test'
+  ...
+# Subtest: human configuration is separate from prior credentials, never grants owner authority or static origin maps
+ok 13 - human configuration is separate from prior credentials, never grants owner authority or static origin maps
+  ---
+  duration_ms: 0.800172
+  type: 'test'
+  ...
+# Subtest: plan and generated commands keep explicit project-directory and no resource execution by default
+ok 14 - plan and generated commands keep explicit project-directory and no resource execution by default
+  ---
+  duration_ms: 0.379457
+  type: 'test'
+  ...
+# Subtest: command environment rejects ambient application/secrets/loader/TLS controls
+ok 15 - command environment rejects ambient application/secrets/loader/TLS controls
+  ---
+  duration_ms: 0.561801
+  type: 'test'
+  ...
+# Subtest: public or symlink profile state refuses before reading context or any referenced source
+ok 16 - public or symlink profile state refuses before reading context or any referenced source
+  ---
+  duration_ms: 0.342366
+  type: 'test'
+  ...
+1..16
+# tests 16
+# suites 0
+# pass 15
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 23.683121

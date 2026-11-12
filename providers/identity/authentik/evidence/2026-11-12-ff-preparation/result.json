@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "kind": "identity-diagnostic-preparation-source-proof",
+  "source": "769184b3bf9b2c3b33eac70da18640b5a61b239a",
+  "mergedDeploy": "cf5bda3f2d189bac5d60269df5644759c40db9e1",
+  "core": "ff5156b984424f1ef34bcef22d5bfa0071354cfa",
+  "bindingTree": "3ba19b609af18184082cbd8aa5f978c9cfde016c",
+  "sourceFilesSha256": {
+    "providers/identity/authentik/NATIVE-PLAN.md": "42ee76aabcc61ae7e1991f386e51eb514dcf10ddf4f7c3fb9349a5ec5809aa4c",
+    "providers/identity/authentik/README.md": "0069feca71c992ccbe3d71a10b5569f6439cb6de38e8293d4afe0ca681ab0225",
+    "providers/identity/authentik/bootstrap.py": "bc83bdcc214a94f6cedf6a8ade84a038ba50b21691172bb235a1cb8e60cb5ff6",
+    "providers/identity/authentik/images.lock.json": "2a21832ed4399b697ec2c00b0757a8a7aa6902c5b835510601e776faf4a44d1b",
+    "providers/identity/authentik/install.js": "d00be250d466c5988cabcf8345817cd4069a0f46f75be92ad092b5a15506b7e8",
+    "providers/identity/authentik/issuer-control.py": "6a5e269456671b78438fa109fbd19059d47e8bd22f06fd19cd56462a1b753ac8",
+    "providers/identity/authentik/journey.cjs": "6c1a4ce0360cb02a55fd760331f967f66a4cb7db8f41f2b9cea4133f17c82109",
+    "providers/identity/authentik/profile.js": "ef01b65a448f11aa3a478e21ee37567de6d2713adaa25a243221b87e77a7e8ee",
+    "providers/identity/authentik/resources.js": "9bb6e30c948c40279f852e49d643e867f60d56cc5b0f6ed795bfe815a23398ca",
+    "providers/identity/authentik/run.js": "54d6404b27bfbbe144afed0a5847a7ca109e9703275896c771754ed4e78b6443",
+    "providers/identity/authentik/tests/control.cjs": "951e9b53973ccd840879fdf68bfdeb46705aceca2384c0929ddb1229ccc46a89",
+    "providers/identity/authentik/tests/profile.test.js": "ee34c868690f039ab9730f072c91dd60e8854c7668e84899f7e226174cac7390",
+    "providers/identity/authentik/tests/resources.test.js": "51c90eef8f4ca3c0c3a6d2559c37f88fb5acfc0d1bb9e7c50acea0a8c6baa207",
+    "providers/identity/authentik/tests/source-settings.test.js": "3304516ef29d6aea3939b8b0ebbb1a9d21d968f57e16e598e3bdf45abde34b7b",
+    "providers/identity/generic-oidc/adapter.js": "7d43d8880a714f12c6e32e7130ab33915d51cab533084c01e15b829054a99462"
+  },
+  "commands": [
+    {
+      "name": "source-identity",
+      "argv": [
+        "bash",
+        "tools/compose-identity-check.sh",
+        "/home/bewest/src/rag-nightscout-ecosystem-alignment/externals/work/crm-evaluator-idle-opportunity-20261112"
+      ],
+      "exit": 0,
+      "expectedExit": 0
+    },
+    {
+      "name": "normal",
+      "argv": [
+        "node",
+        "providers/identity/authentik/tests/resources.test.js"
+      ],
+      "exit": 0,
+      "expectedExit": 0
+    },
+    {
+      "name": "resource-recreation",
+      "argv": [
+        "node",
+        "providers/identity/authentik/tests/control.cjs",
+        "resource-recreation"
+      ],
+      "exit": 1,
+      "expectedExit": 1
+    },
+    {
+      "name": "resource-authority",
+      "argv": [
+        "node",
+        "providers/identity/authentik/tests/control.cjs",
+        "resource-authority"
+      ],
+      "exit": 1,
+      "expectedExit": 1
+    },
+    {
+      "name": "resource-budget",
+      "argv": [
+        "node",
+        "providers/identity/authentik/tests/control.cjs",
+        "resource-budget"
+      ],
+      "exit": 1,
+      "expectedExit": 1
+    },
+    {
+      "name": "restored",
+      "argv": [
+        "node",
+        "providers/identity/authentik/tests/resources.test.js"
+      ],
+      "exit": 0,
+      "expectedExit": 0
+    },
+    {
+      "name": "source-settings",
+      "argv": [
+        "node",
+        "providers/identity/authentik/tests/source-settings.test.js"
+      ],
+      "exit": 0,
+      "expectedExit": 0
+    },
+    {
+      "name": "syntax-run",
+      "argv": [
+        "node",
+        "--check",
+        "providers/identity/authentik/run.js"
+      ],
+      "exit": 0,
+      "expectedExit": 0
+    },
+    {
+      "name": "syntax-resources",
+      "argv": [
+        "node",
+        "--check",
+        "providers/identity/authentik/resources.js"
+      ],
+      "exit": 0,
+      "expectedExit": 0
+    }
+  ],
+  "sourceScope": "SOURCE check,16 prior pure configuration tests,8 resource tests,2 exact core pure settings-body tests; recording-only resolved/HostConfig fixtures",
+  "verdict": "PASS",
+  "actualComposeEquality": "UNMEASURED",
+  "native": "UNMEASURED",
+  "imageId": null,
+  "resourceActions": 0
+}

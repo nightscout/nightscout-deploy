@@ -1,0 +1,79 @@
+[
+  {
+    "name": "probes",
+    "command": [
+      "node",
+      "providers/identity/authentik/tests/native-probes.test.js"
+    ],
+    "exitCode": 0
+  },
+  {
+    "name": "profile",
+    "command": [
+      "node",
+      "providers/identity/authentik/tests/profile.test.js"
+    ],
+    "exitCode": 0
+  },
+  {
+    "name": "resources",
+    "command": [
+      "node",
+      "providers/identity/authentik/tests/resources.test.js"
+    ],
+    "exitCode": 0
+  },
+  {
+    "name": "probe-trust",
+    "command": [
+      "node",
+      "providers/identity/authentik/tests/control.cjs",
+      "probe-trust"
+    ],
+    "exitCode": 1
+  },
+  {
+    "name": "probe-host",
+    "command": [
+      "node",
+      "providers/identity/authentik/tests/control.cjs",
+      "probe-host"
+    ],
+    "exitCode": 1
+  },
+  {
+    "name": "probe-password",
+    "command": [
+      "node",
+      "providers/identity/authentik/tests/control.cjs",
+      "probe-password"
+    ],
+    "exitCode": 1
+  },
+  {
+    "name": "probe-restored",
+    "command": [
+      "node",
+      "providers/identity/authentik/tests/control.cjs",
+      "probe-restored"
+    ],
+    "exitCode": 1
+  },
+  {
+    "name": "probe-verification",
+    "command": [
+      "node",
+      "providers/identity/authentik/tests/control.cjs",
+      "probe-verification"
+    ],
+    "exitCode": 1
+  },
+  {
+    "name": "restored",
+    "command": [
+      "node",
+      "providers/identity/authentik/tests/native-probes.test.js"
+    ],
+    "exitCode": 0
+  }
+]

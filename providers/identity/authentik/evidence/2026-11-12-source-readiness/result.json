@@ -1,0 +1,185 @@
+{
+  "version": 1,
+  "kind": "identity-profile-source-readiness",
+  "source": "aeec49beeaed021ee8dbc65ea5effae4afe9915f",
+  "baseDeploy": "c10ade28f6e411919a8aa8abc29beefb15c9bc94",
+  "coreParserSource": "2d0ae0354a38b4a88f43bc2ae5ec60c085058f64",
+  "coreRuntimeSha256": "fb2e4cf8cdd2db873858c914d187bea794cd725ded841ad00fd51c21314f882a",
+  "host": {
+    "node": "v22.23.4",
+    "python": "3.12.3",
+    "kernel": "6.18.7-76061807-generic"
+  },
+  "commands": [
+    {
+      "name": "normal",
+      "argv": [
+        "node",
+        "providers/identity/authentik/tests/profile.test.js"
+      ],
+      "exit": 0,
+      "expectedExit": 0
+    },
+    {
+      "name": "control-issuer",
+      "argv": [
+        "node",
+        "providers/identity/authentik/tests/control.cjs",
+        "issuer"
+      ],
+      "exit": 1,
+      "expectedExit": 1
+    },
+    {
+      "name": "control-private-plane",
+      "argv": [
+        "node",
+        "providers/identity/authentik/tests/control.cjs",
+        "private-plane"
+      ],
+      "exit": 1,
+      "expectedExit": 1
+    },
+    {
+      "name": "control-ca-custody",
+      "argv": [
+        "node",
+        "providers/identity/authentik/tests/control.cjs",
+        "ca-custody"
+      ],
+      "exit": 1,
+      "expectedExit": 1
+    },
+    {
+      "name": "control-replicas",
+      "argv": [
+        "node",
+        "providers/identity/authentik/tests/control.cjs",
+        "replicas"
+      ],
+      "exit": 1,
+      "expectedExit": 1
+    },
+    {
+      "name": "control-file-mode",
+      "argv": [
+        "node",
+        "providers/identity/authentik/tests/control.cjs",
+        "file-mode"
+      ],
+      "exit": 1,
+      "expectedExit": 1
+    },
+    {
+      "name": "control-provider-network",
+      "argv": [
+        "node",
+        "providers/identity/authentik/tests/control.cjs",
+        "provider-network"
+      ],
+      "exit": 1,
+      "expectedExit": 1
+    },
+    {
+      "name": "restored",
+      "argv": [
+        "node",
+        "providers/identity/authentik/tests/profile.test.js"
+      ],
+      "exit": 0,
+      "expectedExit": 0
+    },
+    {
+      "name": "pinned-source-settings",
+      "argv": [
+        "node",
+        "providers/identity/authentik/tests/source-settings.test.js"
+      ],
+      "exit": 0,
+      "expectedExit": 0
+    },
+    {
+      "name": "syntax-run.js",
+      "argv": [
+        "node",
+        "--check",
+        "providers/identity/authentik/run.js"
+      ],
+      "exit": 0,
+      "expectedExit": 0
+    },
+    {
+      "name": "syntax-profile.js",
+      "argv": [
+        "node",
+        "--check",
+        "providers/identity/authentik/profile.js"
+      ],
+      "exit": 0,
+      "expectedExit": 0
+    },
+    {
+      "name": "syntax-install.js",
+      "argv": [
+        "node",
+        "--check",
+        "providers/identity/authentik/install.js"
+      ],
+      "exit": 0,
+      "expectedExit": 0
+    },
+    {
+      "name": "syntax-journey.cjs",
+      "argv": [
+        "node",
+        "--check",
+        "providers/identity/authentik/journey.cjs"
+      ],
+      "exit": 0,
+      "expectedExit": 0
+    },
+    {
+      "name": "syntax-bootstrap.py",
+      "argv": [
+        "python3",
+        "-c",
+        "import ast,pathlib; ast.parse(pathlib.Path('providers/identity/authentik/bootstrap.py').read_text())"
+      ],
+      "exit": 0,
+      "expectedExit": 0
+    },
+    {
+      "name": "syntax-issuer-control.py",
+      "argv": [
+        "python3",
+        "-c",
+        "import ast,pathlib; ast.parse(pathlib.Path('providers/identity/authentik/issuer-control.py').read_text())"
+      ],
+      "exit": 0,
+      "expectedExit": 0
+    }
+  ],
+  "sourceFilesSha256": {
+    "providers/identity/authentik/README.md": "9687e70225d0252746f12d72be07ad01c270426049f862f5775780692dbf9145",
+    "providers/identity/authentik/bootstrap.py": "bc83bdcc214a94f6cedf6a8ade84a038ba50b21691172bb235a1cb8e60cb5ff6",
+    "providers/identity/authentik/images.lock.json": "2a21832ed4399b697ec2c00b0757a8a7aa6902c5b835510601e776faf4a44d1b",
+    "providers/identity/authentik/install.js": "d00be250d466c5988cabcf8345817cd4069a0f46f75be92ad092b5a15506b7e8",
+    "providers/identity/authentik/issuer-control.py": "6a5e269456671b78438fa109fbd19059d47e8bd22f06fd19cd56462a1b753ac8",
+    "providers/identity/authentik/journey.cjs": "6c1a4ce0360cb02a55fd760331f967f66a4cb7db8f41f2b9cea4133f17c82109",
+    "providers/identity/authentik/profile.js": "d8c57e2de628db0a9fa985c6f68a46ba621f816b052cc534ec551ff62eb7156b",
+    "providers/identity/authentik/run.js": "2b607c7e77b5b74e670c23cd0360c4dcfe422352ea03da139d9544e33a83d7c9",
+    "providers/identity/authentik/tests/control.cjs": "3ab09dc71eef959492e0e7f247a9b24ebd87b3e50ef0f564170b3175f33dd51c",
+    "providers/identity/authentik/tests/profile.test.js": "ee34c868690f039ab9730f072c91dd60e8854c7668e84899f7e226174cac7390",
+    "providers/identity/authentik/tests/source-settings.test.js": "3304516ef29d6aea3939b8b0ebbb1a9d21d968f57e16e598e3bdf45abde34b7b",
+    "providers/identity/generic-oidc/adapter.js": "7d43d8880a714f12c6e32e7130ab33915d51cab533084c01e15b829054a99462"
+  },
+  "verdict": "PASS",
+  "scope": "Focused source/config/custody contract and exact extracted pure settings function only",
+  "native": "UNMEASURED",
+  "limitations": [
+    "No provider/container/browser execution",
+    "No full serving startup or ORM/migration proof",
+    "No SOURCE refresh or baseline admission",
+    "No capacity/Agent/backchannel lifecycle claim"
+  ]
+}

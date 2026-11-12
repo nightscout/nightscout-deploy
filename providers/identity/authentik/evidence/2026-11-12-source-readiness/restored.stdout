@@ -1,0 +1,106 @@
+TAP version 13
+# Subtest: registered generic adapter emits exact HTTPS callbacks and no static registry origins
+ok 1 - registered generic adapter emits exact HTTPS callbacks and no static registry origins
+  ---
+  duration_ms: 3.125463
+  type: 'test'
+  ...
+# Subtest: single origin uses same registered adapter and explicit origin
+ok 2 - single origin uses same registered adapter and explicit origin
+  ---
+  duration_ms: 1.207121
+  type: 'test'
+  ...
+# Subtest: unknown provider/module paths and unknown fields refuse
+ok 3 - unknown provider/module paths and unknown fields refuse
+  ---
+  duration_ms: 0.343353
+  type: 'test'
+  ...
+# Subtest: HTTPS and issuer/PKCE/algorithm discovery are exact; redirects may not exfiltrate secrets
+ok 4 - HTTPS and issuer/PKCE/algorithm discovery are exact; redirects may not exfiltrate secrets
+  ---
+  duration_ms: 1.1556
+  type: 'test'
+  ...
+# Subtest: credential files refuse symlink, public mode and empty/malformed material
+ok 5 - credential files refuse symlink, public mode and empty/malformed material
+  ---
+  duration_ms: 1.077383
+  type: 'test'
+  ...
+# Subtest: reference profile rejects mixed source/project, nonregistry ports, real domains and wildcard callbacks
+ok 6 - reference profile rejects mixed source/project, nonregistry ports, real domains and wildcard callbacks
+  ---
+  duration_ms: 0.254941
+  type: 'test'
+  ...
+# Subtest: 1/2/4 API roster and explicit idle/source limits retain exact service names
+ok 7 - 1/2/4 API roster and explicit idle/source limits retain exact service names
+  ---
+  duration_ms: 0.518265
+  type: 'test'
+  ...
+# Subtest: provider and DB stay isolated, only TLSedge joins existing owned app network; pins not tags
+ok 8 - provider and DB stay isolated, only TLSedge joins existing owned app network; pins not tags
+  ---
+  duration_ms: 0.566142
+  type: 'test'
+  ...
+# Subtest: private planes refused and only specific owner paths exposed; no credentials in access logs
+ok 9 - private planes refused and only specific owner paths exposed; no credentials in access logs
+  ---
+  duration_ms: 0.352824
+  type: 'test'
+  ...
+# Subtest: API overlay exposes only read-only public trust bundle, no bootstrap/management/provider credentials
+ok 10 - API overlay exposes only read-only public trust bundle, no bootstrap/management/provider credentials
+  ---
+  duration_ms: 0.406607
+  type: 'test'
+  ...
+# Subtest: optional backchannel refuses unreviewed multi-origin broker; omission is explicit
+ok 11 - optional backchannel refuses unreviewed multi-origin broker; omission is explicit
+  ---
+  duration_ms: 0.560872
+  type: 'test'
+  ...
+# Subtest: human store grants preserve local authority read-only; signer never gains key-management rights
+ok 12 - human store grants preserve local authority read-only; signer never gains key-management rights
+  ---
+  duration_ms: 0.38822
+  type: 'test'
+  ...
+# Subtest: human configuration is separate from prior credentials, never grants owner authority or static origin maps
+ok 13 - human configuration is separate from prior credentials, never grants owner authority or static origin maps
+  ---
+  duration_ms: 0.864148
+  type: 'test'
+  ...
+# Subtest: plan and generated commands keep explicit project-directory and no resource execution by default
+ok 14 - plan and generated commands keep explicit project-directory and no resource execution by default
+  ---
+  duration_ms: 0.416653
+  type: 'test'
+  ...
+# Subtest: command environment rejects ambient application/secrets/loader/TLS controls
+ok 15 - command environment rejects ambient application/secrets/loader/TLS controls
+  ---
+  duration_ms: 1.198893
+  type: 'test'
+  ...
+# Subtest: public or symlink profile state refuses before reading context or any referenced source
+ok 16 - public or symlink profile state refuses before reading context or any referenced source
+  ---
+  duration_ms: 0.339027
+  type: 'test'
+  ...
+1..16
+# tests 16
+# suites 0
+# pass 16
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 21.460026

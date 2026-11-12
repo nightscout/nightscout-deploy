@@ -1,0 +1,15 @@
+'use strict';
+// Finite upper budgets for this disposable diagnostic only, not production sizing.
+const {isDeepStrictEqual}=require('node:util');
+const {fail}=require('../generic-oidc/adapter');
+const M=1048576;
+const BASE=['postgres','vault','bootstrap','feed-reader','admin','primer','api','realtime','evaluator','tenant-admin','ui','nginx','placement-operator','demo'];
+function limit(cpus,mib,pids=256){return{cpus,mem_limit:mib*M,memswap_limit:mib*M,pids_limit:pids};}
+function application(apis){if(!Array.isArray(apis)||![1,2,4].includes(apis.length)||apis.some((s,i)=>s!==(i?'api-'+(i+1):'api')))fail('IDP_RESOURCE_ROSTER');const limits={postgres:limit(1.5,2048),vault:limit(.5,512),bootstrap:limit(1,1536),'feed-reader':limit(.5,384),admin:limit(.5,512),primer:limit(.5,512),realtime:limit(1,1024),evaluator:limit(1,1024),'tenant-admin':limit(.5,512),ui:limit(.25,256),nginx:limit(.25,128),'placement-operator':limit(.5,512),demo:limit(.5,512)};for(const name of apis)limits[name]=limit(1,768);return{services:limits};}
+function provider(){return{services:{'authentik-db':limit(1,1024),'authentik-server':limit(2,2048,512),'authentik-worker':limit(1,1536,512),'identity-edge':limit(.25,128)}};}
+function sourceRoster(text){const services=text.split('\nservices:\n')[1]?.split('\nnetworks:')[0];if(!services)fail('IDP_RESOURCE_SOURCE_ROSTER');const actual=[...services.matchAll(/^  ([a-z][a-z0-9-]*):$/gm)].map(m=>m[1]).sort();if(!isDeepStrictEqual(actual,[...BASE].sort()))fail('IDP_RESOURCE_SOURCE_ROSTER');return actual;}
+function validateOverlay(actual,expected){if(!isDeepStrictEqual(actual,expected))fail('IDP_RESOURCE_OVERLAY_CHANGED');return actual;}
+function verifyResolved(before,after,overlay){if(!before?.services||!after?.services||!isDeepStrictEqual(Object.keys(before.services).sort(),Object.keys(overlay.services).sort())||!isDeepStrictEqual(Object.keys(after.services).sort(),Object.keys(before.services).sort()))fail('IDP_RESOURCE_RESOLVED_ROSTER');const stripped=structuredClone(after);for(const[name,limits]of Object.entries(overlay.services)){for(const[key,value]of Object.entries(limits)){if(typeof value!=='number'||!Number.isFinite(value)||value<=0||Number(after.services[name][key])!==value)fail('IDP_RESOURCE_RESOLVED_LIMIT');if(Object.hasOwn(before.services[name],key))stripped.services[name][key]=before.services[name][key];else delete stripped.services[name][key];}}if(!isDeepStrictEqual(stripped,before))fail('IDP_RESOURCE_NOT_ONLY_LIMITS');return true;}
+function verifyActual(row,limits){const actual=row?.HostConfig;if(!limits||!actual||actual.NanoCpus!==limits.cpus*1e9||actual.Memory!==limits.mem_limit||actual.MemorySwap!==limits.memswap_limit||actual.PidsLimit!==limits.pids_limit)fail('IDP_ACTUAL_RESOURCE_LIMITS');return true;}
+function budget(overlay){return Object.values(overlay.services).reduce((total,row)=>({services:total.services+1,cpus:total.cpus+row.cpus,memoryBytes:total.memoryBytes+row.mem_limit,pids:total.pids+row.pids_limit}),{services:0,cpus:0,memoryBytes:0,pids:0});}
+module.exports={application,provider,sourceRoster,validateOverlay,verifyResolved,verifyActual,budget};
