@@ -3,6 +3,11 @@
 // failed invariant. Final success still requires the unchanged strict verdict.
 const assert=require('node:assert/strict'),{verdict}=require('./clinical-effect-oracle.cjs');
 const live=new Set(['pending','attempting','uncertain','accepted']);
+function sqlBudget(timeout){
+ if(timeout===undefined)return{execOptions:[],timeout:undefined};
+ assert(Number.isSafeInteger(timeout)&&timeout>=1&&timeout<=20000,'BOUNDED_COMPLETION_SQL_BUDGET_REQUIRED');
+ return{execOptions:['-e','PGOPTIONS=-c statement_timeout='+timeout+'ms'],timeout};
+}
 function observe(input){
  const {a,b,first,after,deadlines,now,fanout}=input;
  assert(after.length<=128,'BOUNDED_EFFECT_ROWS_REQUIRED');
@@ -41,4 +46,4 @@ async function wait({a,b,first,deadlines,deadline,read,fanout,frameReady=()=>tru
   await delay(Math.min(50,Math.max(0,deadline-now())));
  }throw new Error('CLINICAL_COMPLETION_DEADLINE');}catch(error){error.observation=summary;throw error;}
 }
-module.exports={observe,wait};
+module.exports={observe,wait,sqlBudget};

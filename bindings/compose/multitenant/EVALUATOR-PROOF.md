@@ -79,3 +79,8 @@ PASS/FAIL output retains bounded final typed rows/fanout, SQL read start/end,
 fanout-copy time, observation count and a last-16 trajectory. The acceptedAt
 field is an application finishedAt timestamp taken before the finish commit;
 its difference from created is not measured SQL commit latency.
+
+Completion reads also pass a numeric remaining-budget PostgreSQL session
+`statement_timeout` through psql PGOPTIONS; killing a timed-out Docker CLI alone
+is not treated as cancellation of its remote query. Generic pre-transition
+reads retain their existing session settings. No durable database setting changes.
