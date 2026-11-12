@@ -11,7 +11,7 @@ test('actual evaluator two-to-three membership preserves clinical alarm effects,
  const tenants=JSON.parse(fs.readFileSync(path.join(state,'primer/tenants.json'),'utf8')).tenants,roots=JSON.parse(fs.readFileSync(path.join(state,'primer/provisioned.json'),'utf8'));
  const [a,b]=tenants;assert.equal(tenants.length,2);
  const {io}=require(path.join(core,'node_modules/socket.io-client')),bucket=require(path.join(core,'lib/pool-membership/slice')).bucket,notification=require(path.join(core,'lib/tenant-notifications/contract'));
- const oracle=require('./fixtures/clinical-effect-oracle.cjs');
+ const oracle=require('./fixtures/clinical-effect-oracle.cjs'),clientDiagnostics=require('./fixtures/evaluator-client-diagnostics.cjs');
  const sockets=[],agents=[],cwd=path.join(core,'deploy/multitenant');
  const files=require('./fixtures/shipping-compose-files.cjs').files({core,state});
  assert(files.some(file=>path.basename(file)==='compose.evaluator.yaml'),'EXPLICIT_EVALUATOR_PROFILE_REQUIRED');
@@ -25,9 +25,7 @@ test('actual evaluator two-to-three membership preserves clinical alarm effects,
  async function clock(tenant){const raw=await docker(['exec','-T','postgres','psql','-X','-q','-At','-U','postgres','-d','nightscout_compose_test','-c',"SELECT last_stamp FROM nsdemo_clock.tenant_write_clock WHERE tenant_id='"+tenant.id+"'"]);return Number(raw.trim());}
  async function until(fn,label,ms=20000){const end=performance.now()+ms;while(performance.now()<end){const result=await fn();if(result)return result;await new Promise(resolve=>setTimeout(resolve,50));}throw new Error('EVALUATOR_SHIPPING_WAIT '+label);}
  function agent(){const value=new http.Agent({keepAlive:true,lookup:(host,options,done)=>options.all?done(null,[{address:'127.0.0.1',family:4}]):done(null,'127.0.0.1',4)});agents.push(value);return value;}
- function socket(tenant,namespace){const value=io('http://'+tenant.host+':'+port+namespace,{forceNew:true,autoUnref:true,transports:['websocket'],agent:agent(),timeout:2000});sockets.push(value);const seen={socket:value,acks:[],alarms:[],frames:[],connections:0};
-  value.on('connect',()=>{seen.connections++;if(namespace==='/'){value.emit('authorize',{secret:crypto.createHash('sha1').update(roots.find(row=>row.id===tenant.id).rootSecret).digest('hex')});}else value.emit('subscribe',{accessToken:tenant.dataToken},reply=>seen.acks.push(reply));});
-  for(const event of ['alarm','urgent_alarm'])value.on(event,payload=>seen.alarms.push({event,payload}));value.on('dataUpdate',frame=>seen.frames.push(frame));return seen;}
+ function socket(tenant,namespace){const seen=clientDiagnostics.connect({io,origin:'http://'+tenant.host+':'+port,namespace,agent:agent(),name:(tenant.id===a.id?'A':'B')+namespace,accessToken:tenant.dataToken,secret:namespace==='/'?crypto.createHash('sha1').update(roots.find(row=>row.id===tenant.id).rootSecret).digest('hex'):undefined});sockets.push(seen.socket);return seen;}
  async function request(tenant,route,{method='GET',token,body}={}){return new Promise((resolve,reject)=>{const bytes=body===undefined?null:Buffer.from(JSON.stringify(body));const req=http.request({host:'127.0.0.1',port,path:route,method,timeout:10000,headers:{host:tenant.host,accept:'application/json',...(token?{authorization:'Bearer '+token}:{}),...(bytes?{'content-type':'application/json','content-length':bytes.length}:{})}},res=>{const chunks=[];res.on('data',chunk=>chunks.push(chunk));res.on('end',()=>{try{resolve({status:res.statusCode,body:JSON.parse(Buffer.concat(chunks).toString())});}catch{reject(new Error('EVALUATOR_SHIPPING_HTTP_SHAPE'));}});});req.on('error',()=>reject(new Error('EVALUATOR_SHIPPING_HTTP')));req.on('timeout',()=>req.destroy());req.end(bytes);});}
  async function jwt(tenant){const reply=await request(tenant,'/api/v2/authorization/request/'+encodeURIComponent(tenant.dataToken));assert.equal(reply.status,200);assert.equal(typeof reply.body.token,'string');return reply.body.token;}
  async function upload(tenant,token,value){const marker={identifier:'evaluator-shipping-'+crypto.randomUUID(),type:'sgv',sgv:value,date:Date.now(),utcOffset:0,app:'synthetic-evaluator-proof'};const reply=await request(tenant,'/api/v3/entries',{method:'POST',token,body:marker});assert.equal(reply.status,201);return marker;}
@@ -35,7 +33,9 @@ test('actual evaluator two-to-three membership preserves clinical alarm effects,
   const two=await until(async()=>{const rows=await inspection();return rows.length===3&&rows.every(row=>row.gate.eligible&&row.observed.effectiveMembers===2)?rows:null;},'two-member agreement');
   assert(two.find(row=>row.configured.ordinal===2).tenants.every(row=>!row.admitted&&row.cycles===0),'third fixed participant is honestly idle');
   for(const tenant of tenants)assert(two.find(row=>row.configured.ordinal===bucket(tenant.id,2)).tenants.some(row=>row.tenant===tenant.id&&row.ready&&row.cycles>0));
-  const aa=socket(a,'/alarm'),ba=socket(b,'/alarm'),bb=socket(b,'/');await until(()=>aa.acks.some(row=>row.success)&&ba.acks.some(row=>row.success)&&bb.frames.length,'actual alarm subscriptions');const bSession=bb.socket.id;
+  const aa=socket(a,'/alarm'),ba=socket(b,'/alarm'),bb=socket(b,'/');
+  try{await until(()=>clientDiagnostics.prerequisites(aa,ba,bb),'actual alarm subscriptions');}finally{console.log('EVALUATOR_CLIENT_PREREQUISITES '+JSON.stringify([aa,ba,bb].map(clientDiagnostics.summary)));}
+  const bSession=bb.socket.id;
   const before=await effects(),oldIds=new Set(before.map(row=>row.request)),aToken=await jwt(a),bToken=await jwt(b);
   await Promise.all([upload(a,aToken,400),upload(b,bToken,400)]);
   await until(()=>aa.alarms.length&&ba.alarms.length,'clinical alarm generation by two members');

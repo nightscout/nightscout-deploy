@@ -54,3 +54,12 @@ early. Cancelled superseded rows are classified separately, accepted clears and
 extra live/pending effects refuse, socket fanout matches those typed effects, and
 the new B frame must carry its exact upload timestamp. The verdict must finish
 before both original durable repeat deadlines; it never changes heartbeat cadence.
+
+Initial client diagnostics record bounded typed connect/error/disconnect/reconnect,
+subscribe ACK, root-authorize ACK and initial-frame metadata without credentials
+or event bodies. They retain the same two successful alarm ACKs plus B frame
+predicate and20-second bound. An authorize ACK can follow the initial frame;
+its absence alone does not identify denial. The separate
+`fixtures/evaluator-client-prerequisites.cjs <core> <state> <port>` observes only
+that pre-mutation predicate and explicitly does not qualify clinical effects.
+A later successful observation cannot reclassify an earlier unclassified timeout.
