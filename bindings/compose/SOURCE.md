@@ -4,12 +4,12 @@
 |---|---|
 | upstream repository | nightscout/cgm-remote-monitor |
 | upstream path | `deploy/multitenant` |
-| upstream commit | `d5e2e874659155c952b5b5deb862f12f982ac02e` (joined M7 diagnostics and controlled-placement source; final acceptance pending) |
+| upstream commit | `195c932293f3abc648da8fbe4356bf7360acd002` (joined M7 scheduler/completion and controlled-placement candidate; final acceptance pending) |
 | upstream tree hash of that path | `fdc9f8dd2644b8789c86abeb030fbc0ad7304780` (core's reduced fixture: `config.js`, `demo.js`, `health.js`, `restore.js`, `ui.js`, `README.md`) |
 | import method | Recorded core fixture plus reviewed deployment-owned bootstrap, placement, edge and preparation changes; the patch is checked by `tools/compose-identity-check.sh`. |
 | local delta | [`SOURCE.delta.patch`](SOURCE.delta.patch), against the recorded core fixture. This binding generates fixed API instances and exact maintenance addresses, supports local health probes for network listeners, removes realtime maxSockets and renders explicit per-IP edge budgets. The reduced core fixture stays test-only. |
-| tree hash here | `8c12259b1dcc179be0738f0ce775c0bd6cd62626` |
-| imported on | 2026-11-11 |
+| tree hash here | `c6d2ec190d55375f0f855e3012a0d077df99b1d7` |
+| imported on | 2026-11-12 |
 
 History: first imported 2026-11-09 from `ed2ced00c80bd0a6a7d75f834d2c6e2af8c71364` (tree
 `8be3d761cbe592428357d6cee29612affafe4122`) by `git subtree`, which keeps the per-file history; the
@@ -116,3 +116,20 @@ enumerator capabilities, without raw registry/key table reads. The strict source
 readiness guard remains unchanged. Selected placement launchers include every fixed
 worker and the socket edge. Default-topology fresh-image diagnostics and controlled
 move/recovery acceptance retain their separate evidence scopes.
+
+## Current joined binding boundary — 2026-11-12
+
+The refreshed delta records already joined deployment-owned behavior: optional fixed
+evaluator workers and their narrow pool metadata roles; separate listen-only feed
+and placement-publisher custody; registry-based common maintenance coverage; and
+bounded retries only for known read/exchange warming. It preserves the source's
+DATA write behavior and strict independent SQL actor census. Native proof fixtures
+use explicit owned projects with bounded unique suffixes; they do not add a
+shipping configuration-authority bootstrap API.
+
+The reduced upstream fixture tree is unchanged; its reviewed deployment delta and
+the complete committed binding tree are now pinned together. The optional Vault
+Agent overlay lives beside this tree and keeps its separate exact-source lifecycle
+evidence. This metadata refresh enables paired-image qualification; it does not
+claim comprehensive, paired deployment or capacity acceptance. Additional component
+profile/runtime wiring remains deferred until that acceptance boundary.

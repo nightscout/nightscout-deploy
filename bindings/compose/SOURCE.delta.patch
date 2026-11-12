@@ -1,6 +1,8 @@
+diff --git a/config.js b/config.js
+index 8eb49c9..af74aab 100644
 --- a/config.js
 +++ b/config.js
-@@ -7,6 +7,29 @@
+@@ -7,6 +7,29 @@ const ordered = Object.freeze(['entries','treatments','devicestatus','profile','
  const serviceRoles = Object.freeze(['api','realtime','evaluator','tenant-admin']);
  const A = '11111111-1111-4111-8111-111111111111', B = '22222222-2222-4222-8222-222222222222';
  const subject = '000000000000000000000001';
@@ -30,7 +32,14 @@
  function quote(name) {
    if (typeof name !== 'string' || !/^[a-z][a-z0-9_]{0,62}$/.test(name) || name.startsWith('pg_')) throw new TypeError('Explicit deployment SQL identifier required');
    return '"' + name + '"';
-@@ -20,14 +43,21 @@
+@@ -14,20 +37,28 @@ function quote(name) {
+ function catalogues() {
+   const domains = require('../../lib/server/serve/postgres-domains');
+   const successors = require('../../lib/server/tenant-socket-order-port').catalogues;
+-  return {...Object.fromEntries([...clinical,'settings'].map(name => [name,successors[name] || domains.get(name).catalogue])),
++  return {...(require('./evaluator-workers').selection() ? {pool:require('../../lib/pool-membership/postgres-candidate.json')} : {}),...Object.fromEntries([...clinical,'settings'].map(name => [name,successors[name] || domains.get(name).catalogue])),
+     authorization:require('../../lib/tenant-authorization/postgres-candidate.json'), secrets:require('../../lib/secrets/postgres-candidate.json'),
+     legacy:require('../../lib/secrets/legacy-credentials-candidate.json'), access:require('../../lib/tenant-authorization/access-candidate.json'),
      clock:require('../../migrations/candidates/postgres-write-clock-v1.json'), rt_checkpoint:require('../../migrations/candidates/postgres-consumer-checkpoint-v1.json'),
      eval_checkpoint:require('../../migrations/candidates/postgres-consumer-checkpoint-v1.json'), alarm:require('../../migrations/candidates/postgres-alarm-suppression-v1.json'),
      outbox:require('../../lib/tenant-notifications/postgres-candidate.json'),control:require('../../lib/tenant-lifecycle/postgres-candidate.json'),
@@ -48,14 +57,15 @@
    quote(prefix);
    if (prefix.length > 24) throw new TypeError('Deployment prefix too long');
 -  const names = ['api','readiness','realtime','evaluator','alarm','suppression','outbox','owner_writer','owner_reader','root_writer','operator','ownership_operator',
-+  const names = ['api','readiness','realtime','evaluator','alarm','suppression','outbox','owner_writer','owner_reader','root_writer','operator','provisioner','display_reader','activity_reader','feed_reader','ownership_operator','connector_writer','management_issuer','ui_registry',
++  const names = ['api','readiness','realtime','evaluator','alarm','suppression','outbox','owner_writer','owner_reader','root_writer','operator','provisioner','display_reader','activity_reader','feed_reader','feed_listener','placement_publisher','ownership_operator','connector_writer','management_issuer','ui_registry',
++    ...(require('./evaluator-workers').selection() ? ['pool_member','pool_operator'] : []),
      ...serviceRoles.map(name=>'lifetime_'+name.replace('-','_'))];
 -  return {prefix,owner:prefix+'_owner',namespaces:Object.fromEntries(Object.keys(catalogues()).map(name=>[name,prefix+'_'+name])),
 +  return {prefix,owner:prefix+'_owner',feedOwner:prefix+'_feed_owner',managementAuthorityOwner:prefix+'_management_authority',namespaces:Object.fromEntries(Object.keys(catalogues()).map(name=>[name,prefix+'_'+name])),
      roles:Object.fromEntries(names.map(name=>[name,prefix+'_'+name])),mount:prefix+'_transit'};
  }
  function insertionGrants({namespace,domain,role,mode='serving'}) {
-@@ -85,20 +115,19 @@
+@@ -85,20 +116,19 @@ function grants(l) {
    grant('INSERT',table('authorization','tenant_subject_admin_audit'),'root_writer');
    for(const name of ['tenant_authorization_config','tenant_owner_policy'])grant('SELECT,UPDATE(owner_fence)',table('authorization',name),'root_writer');
    grant('SELECT',table('authorization','tenant_owner_actors'),'root_writer');
@@ -79,11 +89,11 @@
 -  for(const who of Object.keys(r).filter(name=>!['operator','ownership_operator'].includes(name))){
 +  // subject-admin and read-only settings/activity connections join the tenant
 +  // operation window; its admission requires these three metadata reads.
-+  for(const who of Object.keys(r).filter(name=>!['operator','ownership_operator','provisioner','feed_reader','connector_writer','management_issuer','ui_registry'].includes(name))){
++  for(const who of Object.keys(r).filter(name=>!['operator','ownership_operator','provisioner','feed_reader','feed_listener','connector_writer','management_issuer','ui_registry','pool_member','pool_operator'].includes(name))){
      schema('control',who);for(const name of ['schema_migrations','tenant_lifecycle_windows','tenant_lifecycle_operations'])grant('SELECT',table('control',name),who);
      if(who.startsWith('lifetime_')){
        grant('INSERT(tenant_id,operation_id,generation),UPDATE(finished)',table('control','tenant_lifecycle_operations'),who);
-@@ -119,14 +148,24 @@
+@@ -119,14 +149,25 @@ function grants(l) {
    // Decision change-stamp-definer-function: search_path pinned, EXECUTE for realtime and evaluator only;
    // both read the function's catalogue ledger at readiness (write-clock-complete: the evaluator adopts it).
    sql.push(...require('../../lib/change-stamps/postgres').grants({namespace:ns.change_stamps,clockNamespace:ns.clock,roles:[r.realtime,r.evaluator]}));
@@ -93,9 +103,10 @@
 +  grant('EXECUTE','FUNCTION '+quote(ns.display_settings)+'.tenant_settings_values_valid(jsonb)','provisioner');
 +  for(const name of ['display_settings','operator_policy']){schema(name,'display_reader');grant('SELECT','ALL TABLES IN SCHEMA '+quote(ns[name]),'display_reader');}
 +  schema('control','activity_reader');grant('SELECT',table('control','schema_migrations'),'activity_reader');grant('SELECT',table('control','tenant_activity'),'activity_reader');
-+  sql.push(...require('../../lib/tenant-registry/postgres').grants({namespace:ns.registry,resolvers:[r.api,r.owner_reader,r.ui_registry,r.realtime],enumerators:[r.realtime,r.evaluator,r.operator],readers:[r.api,r.owner_reader]}));
++  sql.push(...require('../../lib/tenant-registry/postgres').grants({namespace:ns.registry,resolvers:[r.api,r.owner_reader,r.ui_registry,r.realtime],enumerators:[r.realtime,r.evaluator,r.operator,r.placement_publisher],readers:[r.api,r.owner_reader]}));
 +  sql.push(...require('../../lib/tenant-registry/provision').provisionerGrants({namespaces:require('./registry-plan').provisioningNamespaces(ns),role:r.provisioner,
 +    checkpoints:[{namespace:ns.rt_checkpoint},{namespace:ns.eval_checkpoint}]}));
++  if(ns.pool)sql.push(...require('../../lib/pool-membership/postgres').grants({namespace:ns.pool,member:r.pool_member,operator:r.pool_operator}));
    return sql;
  }
 -function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress}) {
@@ -112,7 +123,7 @@
    const pgAddress=new URL(urls.evaluator);
    const evaluator={version:1,datastore:{hostname:pgAddress.hostname,port:Number(pgAddress.port||5432),database:decodeURIComponent(pgAddress.pathname.slice(1))},postgres:{connectionEnv:'NS_EVALUATOR_PG',namespaces:{...domainNamespaces,clock:ns.clock,checkpoint:ns.eval_checkpoint,changeStamps:ns.change_stamps}},
      consumer:'evaluator-compose-demo',...limits,timeIntervalMs:1000,socketOrderDomains:['treatments','devicestatus','profile'],tenants,
-@@ -146,7 +185,7 @@
+@@ -146,7 +187,7 @@ function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress}
      vault:{address:vaultAddress,mount:l.mount,timeoutMs:5000},resolution:{mode:'direct-alias'},tenants:tenants.map((tenant,i)=>({id:tenant.id,aliases:aliases[i],settings:tenant.settings,
        vault:{tokenEnv:'NS_VAULT_'+i,encryptionKey:'tenant-'+i+'-data',signingKey:'tenant-'+i+'-signing',signingVersion:1}})),
      accessTokens:{issuer:'nightscout-compose-demo',audience:'nightscout-data',keys:publicKeys},
@@ -121,7 +132,7 @@
        alarm:{connectionEnv:'NS_ALARM_PG',namespace:ns.alarm},consumerState:{evaluatorConfigEnv:'MULTITENANT_EVALUATOR_CONFIG'}}};
    const owner={version:1,postgres:{writerConnectionEnv:'NS_OWNER_WRITER_PG',accessConnectionEnv:'NS_OWNER_READER_PG',namespaces:{authorization:ns.authorization,credentials:ns.legacy,access:ns.access}},
      ownerPolicy:{catalogue:ownerCatalogue.slice()},resolution:{mode:'direct-alias'},tenants:api.tenants.map(({id,aliases})=>({id,aliases})),
-@@ -157,35 +196,57 @@
+@@ -157,35 +198,62 @@ function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress}
    const socketOf=role=>ipc+'/'+role+'.sock';
    const common={...Object.fromEntries(serviceRoles.map(role=>[require('../../lib/server/internal-api/listener-config').envName(role)+'SOCKET',socketOf(role)])),NODE_EXTRA_CA_CERTS:'/run/ns-ca/ca.crt'};
    const own=role=>({NS_SERVE_INTERNAL_SOCKET:socketOf(role)});
@@ -142,7 +153,7 @@
 +  if(registryMode) docs = require('./registry-plan').expand(docs,{layout:l,urls,vaultAddress});
 +  else for(const env of Object.values(environments)) env.MULTITENANT_STATIC_TENANTS='lab';
 +  if (realtimePlacement && !registryMode) throw new TypeError('Realtime placement requires durable registry mode');
-+  return require('./realtime-workers').expand(require('./replicas').expand(docs), realtimePlacement);
++  return require('./evaluator-workers').expand(require('./realtime-workers').expand(require('./replicas').expand(docs), realtimePlacement), {layout:l,urls});
  }
  function lifecycle(l) {
 -  const aliases={rt_checkpoint:'checkpoint',eval_checkpoint:'evaluator_checkpoint',alarm:'alarm_suppression',outbox:'notification_outbox'};
@@ -152,14 +163,14 @@
 +  const aliases={rt_checkpoint:'checkpoint',eval_checkpoint:'evaluator_checkpoint',alarm:'alarm_suppression',outbox:'notification_outbox',display_settings:'tenant_settings'};
 +  const selected=catalogues(), admitted=new Map(require('../../lib/tenant-lifecycle').admittedCatalogue().map(row=>[row.kind,row]));
 +  const tables={}, extensions={alarm:['tenant_alarm_suppression'],outbox:['tenant_notification_state','tenant_notification_heads','tenant_notification_requests']};
-+  for(const key of Object.keys(selected).filter(name=>!['control','change_stamps','registry','feed'].includes(name))){
++  for(const key of Object.keys(selected).filter(name=>!['control','change_stamps','registry','feed','pool'].includes(name))){
 +    const kind=aliases[key]||key, row=admitted.get(key==='eval_checkpoint'?'checkpoint':kind);
 +    if(!row&&!Object.hasOwn(extensions,key))throw new TypeError('Product lifecycle catalogue missing '+kind);
 +    tables[key]=require('../../lib/tenant-lifecycle/insertion-inventory').tableOrder(kind,selected[key],row?row.tables:extensions[key]);
 +    const sourceTables=require('../../lib/tenant-operations/catalogues').createdTables(selected[key]);
 +    if(JSON.stringify([...tables[key]].sort())!==JSON.stringify([...sourceTables].sort()))throw new TypeError('Product lifecycle table inventory mismatch '+kind);
 +  }
-+  return {namespaces:Object.fromEntries(Object.entries(l.namespaces).filter(([name])=>!['control','change_stamps','registry','feed'].includes(name)).map(([name,namespace])=>[aliases[name]||name,namespace])),
++  return {namespaces:Object.fromEntries(Object.entries(l.namespaces).filter(([name])=>!['control','change_stamps','registry','feed','pool'].includes(name)).map(([name,namespace])=>[aliases[name]||name,namespace])),
      catalogues:Object.entries(tables).map(([name,tables])=>({kind:aliases[name]||name,candidate:selected[name],tables,secrets:name==='secrets'?['secret_records']:[]}))};
  }
  function validateFiles(directory, docs) {
@@ -172,15 +183,17 @@
 -    const parsed=parsers[role](env,internal),operation=require('../../lib/server/serve/operation-cohort-config').load(env,internal);
 -    const participant=operation.participants.find(row=>row.id===role);
 -    if(JSON.stringify(namespaces(parsed).sort())!==JSON.stringify(participant.namespaces))throw new TypeError('Deployment participant namespace mismatch');
--  }
--}
--module.exports={A,B,subject,clinical,ordered,serviceRoles,quote,catalogues,layout,insertionGrants,grants,documents,lifecycle,validateFiles};
 +  for(const role of Object.keys(docs.configs)){
-+    const productRole = role.startsWith('api-') ? 'api' : role.startsWith('realtime-') ? 'realtime' : role;
++    const productRole = role.startsWith('api-') ? 'api' : role.startsWith('realtime-') ? 'realtime' : role.startsWith('evaluator-') ? 'evaluator' : role;
 +    const env=Object.fromEntries(Object.entries(docs.environments[role]).map(([key,value])=>[key,typeof value==='string'?value.replace('/run/ns-config',path.join(directory,role)).replace('/run/ns-placement',path.join(directory,'placement')):value]));
 +    const internal=require('../../lib/server/internal-api/listener-config').resolve([productRole],env);
 +    const parsed=parsers[productRole](env,internal),operation=require('../../lib/server/serve/operation-cohort-config').load(env,internal);
 +    const participant=operation.participants.find(row=>row.id===operation.participantId);
++    if(docs.evaluatorPool){
++      const expected=require('./evaluator-workers').services(docs.evaluatorPool),peers=operation.participants.filter(row=>row.roles.includes('evaluator'));
++      if(peers.length!==expected.length||expected.some((service,index)=>!peers.some(row=>row.id==='evaluator-'+(index+1)&&row.endpoint.socketPath==='/run/ns-ipc/evaluator-'+(index+1)+'.sock')))throw new TypeError('Deployment evaluator pool coverage mismatch');
++      if(productRole==='evaluator'&&(!parsed.partition.partitioned||parsed.partition.ordinal!==expected.indexOf(role)))throw new TypeError('Deployment evaluator ordinal mismatch');
++    }
 +    if(JSON.stringify(namespaces(parsed).filter(name => name !== operation.namespace).sort())!==JSON.stringify(participant.namespaces))throw new TypeError('Deployment participant namespace mismatch');
 +    if (operation.placement) {
 +      const map = operation.placement.current(), peers = operation.participants.filter(row => row.roles.includes('realtime'));
@@ -188,16 +201,73 @@
 +      if (peers.length !== map.workers.size || new Set(peers.map(row => row.worker)).size !== peers.length ||
 +          peers.some(row => !map.workers.has(row.worker) || key(row.endpoint) !== key(map.workers.get(row.worker).endpoint))) throw new TypeError('Deployment realtime placement coverage mismatch');
 +    }
-+  }
+   }
 +  // The ui's own parser (tenant ceiling, aliases), on the written file when there is one, so a
 +  // refusal surfaces at bootstrap instead of when the ui starts.
 +  const uiFile=path.join(directory,'ui','config.json'),fs=require('node:fs');
 +  require('./ui').parseConfig(fs.existsSync(uiFile)?JSON.parse(fs.readFileSync(uiFile,'utf8')):docs.ui);
-+}
+ }
+-module.exports={A,B,subject,clinical,ordered,serviceRoles,quote,catalogues,layout,insertionGrants,grants,documents,lifecycle,validateFiles};
 +module.exports={A,B,subject,tenantCount,tenantIds,tenantAlias,clinical,ordered,serviceRoles,quote,catalogues,layout,insertionGrants,grants,documents,lifecycle,validateFiles};
+diff --git a/demo.js b/demo.js
+index 897d67f..dd758e3 100644
+--- a/demo.js
++++ b/demo.js
+@@ -38,14 +38,24 @@ function privateFetch (url, options) {
+   });
+ }
+ 
+-async function responseJson (url, options, fetchImpl, prefix, statuses) {
+-  let response;
+-  try { response = await fetchImpl(url, options); } catch { throw fail(prefix + '_UNAVAILABLE'); }
+-  if (!statuses.includes(response.status)) {
+-    try { await response.body?.cancel(); } catch { /* Preserve the redacted refusal. */ }
+-    throw fail(prefix + '_REFUSED');
++async function responseJson (url, options, fetchImpl, prefix, statuses, retryWarming = false) {
++  for (;;) {
++    let response;
++    try { response = await fetchImpl(url, options); } catch { throw fail(prefix + '_UNAVAILABLE'); }
++    if (!statuses.includes(response.status)) {
++      let warming = false;
++      if (retryWarming && response.status === 503) {
++        try { warming = (await response.json())?.error === 'TENANT_WARMING'; } catch { /* Unknown refusal stays terminal. */ }
++      }
++      try { await response.body?.cancel(); } catch { /* Preserve the redacted refusal. */ }
++      if (warming && !options.signal.aborted) {
++        await new Promise(resolve => setTimeout(resolve, 100));
++        if (!options.signal.aborted) continue;
++      }
++      throw fail(prefix + '_REFUSED');
++    }
++    try { return { status: response.status, value: await response.json() }; } catch { throw fail(prefix + '_SHAPE'); }
+   }
+-  try { return { status: response.status, value: await response.json() }; } catch { throw fail(prefix + '_SHAPE'); }
+ }
+ 
+ async function exchange (config, tenant, { env = process.env, fetchImpl = privateFetch } = {}) {
+@@ -58,7 +68,7 @@ async function exchange (config, tenant, { env = process.env, fetchImpl = privat
+   const issued = (await responseJson(config.apiOrigin + '/api/v2/authorization/request/' + encodeURIComponent(credential), {
+     method: 'GET', redirect: 'error', signal: AbortSignal.timeout(10000),
+     headers: { host: tenant.host, accept: 'application/json' }
+-  }, fetchImpl, 'COMPOSE_DEMO_EXCHANGE', [200])).value;
++  }, fetchImpl, 'COMPOSE_DEMO_EXCHANGE', [200], true)).value;
+   if (!issued || typeof issued !== 'object' || Array.isArray(issued) ||
+       Object.keys(issued).sort().join(',') !== 'exp,iat,permissionGroups,sub,token' ||
+       typeof issued.token !== 'string' || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(issued.token) ||
+@@ -78,7 +88,7 @@ async function request (config, tenant, route, { method = 'GET', body, env = pro
+   const { status, value } = await responseJson(config.apiOrigin + route, { method, redirect: 'error', signal: AbortSignal.timeout(10000),
+     headers: { host: tenant.host, accept: 'application/json', authorization: 'Bearer ' + token,
+       ...(body === undefined ? {} : { 'content-type': 'application/json' }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) },
+-  fetchImpl, 'COMPOSE_DEMO_HTTP', [200, 201]);
++  fetchImpl, 'COMPOSE_DEMO_HTTP', [200, 201], method === 'GET');
+   if (value?.status !== status) throw fail('COMPOSE_DEMO_HTTP_SHAPE');
+   return value;
+ }
+diff --git a/health.js b/health.js
+index 6c58bdd..8a947dd 100644
 --- a/health.js
 +++ b/health.js
-@@ -7,16 +7,24 @@
+@@ -7,16 +7,24 @@ const net = require('node:net');
  const role = process.argv[2];
  // Each role process serves its internal contracts on one serve.internal socket.
  const roles = {api: {port: 1337}, realtime: {port: 1339}, evaluator: {}, 'tenant-admin': {port: 1341}};
@@ -224,7 +294,7 @@
    if (spec.port) await new Promise((resolve, reject) => {
      const socket = net.connect({host: '127.0.0.1', port: spec.port});
      socket.setTimeout(1500);
-@@ -24,8 +32,9 @@
+@@ -24,8 +32,9 @@ async function main () {
      socket.once('timeout', () => { socket.destroy(); reject(new Error()); });
      socket.once('error', reject);
    });
@@ -236,9 +306,21 @@
 +  if (reply.request !== request || reply.participant !== operation.participantId || JSON.stringify(reply.roles) !== JSON.stringify([role])) throw new Error();
  }
  main().catch(() => { process.exitCode = 1; });
+diff --git a/restore.js b/restore.js
+index 30a0177..fbcf1fc 100644
 --- a/restore.js
 +++ b/restore.js
-@@ -37,7 +37,7 @@
+@@ -19,7 +19,8 @@ function validateConfig (value, env = process.env) {
+       !value.tenants.every(t => exact(t, ['id', 'host', 'tokenEnv']) && UUID.test(t.id) && /^[a-z0-9.-]+$/.test(t.host) &&
+         /^[A-Z][A-Z0-9_]*$/.test(t.tokenEnv) && typeof env[t.tokenEnv] === 'string' && env[t.tokenEnv].length > 0) ||
+       new Set(value.tenants.map(t => t.id)).size !== 2 || new Set(value.tenants.map(t => t.host)).size !== 2 ||
+-      !exact(value.control, ['namespace', 'locks', 'participants']) || !validName(value.control.namespace) ||
++      !exact(value.control, ['namespace', 'locks', 'participants', ...(Object.hasOwn(value.control || {}, 'registry') ? ['registry'] : [])]) || !validName(value.control.namespace) ||
++      value.control.registry !== undefined && (!exact(value.control.registry, ['namespace']) || !validName(value.control.registry.namespace)) ||
+       !Array.isArray(value.control.locks) || value.control.locks.length !== 2 ||
+       !value.control.locks.every(row => exact(row, ['tenant', 'key']) && value.tenants.some(t => t.id === row.tenant) &&
+         typeof row.key === 'string' && /^[1-9][0-9]{0,18}$/.test(row.key) && BigInt(row.key) <= 9223372036854775807n) ||
+@@ -37,7 +38,7 @@ function validateConfig (value, env = process.env) {
    let origin, pg;
    try { origin = new URL(value.apiOrigin); pg = new URL(env.NS_OPERATOR_PG); } catch { throw fail('COMPOSE_OPERATOR_CONFIG_REFUSED'); }
    // The demo uses the Compose private service, not a user-provided public site.
@@ -247,7 +329,7 @@
        !['postgres:', 'postgresql:'].includes(pg.protocol) || !pg.username || !pg.password || !pg.pathname.slice(1) || pg.hash ||
        [...pg.searchParams.keys()].some(k => k !== 'sslmode')) throw fail('COMPOSE_OPERATOR_CONFIG_REFUSED');
    return structuredClone(value);
-@@ -50,20 +50,8 @@
+@@ -50,20 +51,8 @@ function loadConfig (file = process.env.NS_OPERATOR_CONFIG || '/run/ns-config/co
  }
  
  function expectedCandidates () {
@@ -270,7 +352,7 @@
  }
  
  function lifecycleFor (config) {
-@@ -88,9 +76,16 @@
+@@ -88,9 +77,18 @@ async function capture (config, tenant, env = process.env) {
    finally { await connection.end(); }
  }
  
@@ -280,23 +362,33 @@
 +  return require('../../lib/realtime-placement').load(env, { internal });
 +}
 +
++function cohortTenants(config) { return config.control.registry ? ['registry:' + config.control.registry.namespace] : config.tenants.map(t => t.id); }
++
  async function ready (config) {
 +  const placement = operationPlacement();
    const cohort = await require('../../lib/server/serve/operation-cohort').createRemote({namespace: config.control.namespace,
 -    tenants: config.tenants.map(t => t.id), participants: config.control.participants});
-+    tenants: config.tenants.map(t => t.id), participants: config.control.participants, placement});
++    tenants: cohortTenants(config), participants: config.control.participants, placement});
    await cohort.close();
  }
  
-@@ -99,7 +94,7 @@
+@@ -99,7 +97,7 @@ async function restore (config, artifact, env = process.env, hooks = {}) {
    const lifecycle = lifecycleFor(config);
    // createRemote reads actual participants. Missing peers fail before suspension.
    const cohort = await require('../../lib/server/serve/operation-cohort').createRemote({ namespace: config.control.namespace,
 -    tenants: config.tenants.map(t => t.id), participants: config.control.participants });
-+    tenants: config.tenants.map(t => t.id), participants: config.control.participants, placement: operationPlacement(env) });
++    tenants: cohortTenants(config), participants: config.control.participants, placement: operationPlacement(env) });
    const { Pool } = require('pg');
    const pool = new Pool({ connectionString: env.NS_OPERATOR_PG, max: 1, connectionTimeoutMillis: 5000,
      statement_timeout: 10000, options: '-c search_path=pg_catalog' });
+@@ -152,4 +150,4 @@ if (require.main === module) main().then(result => process.stdout.write(JSON.str
+     recovery: 'Inspect persisted operation state. Do not automatically replay or reopen the tenant.' }) + '\n');
+   process.exitCode = 1;
+ });
+-module.exports = { validateConfig, loadConfig, lifecycleFor, tenantFor, ready, capture, restore, argumentsFor, main };
++module.exports = { validateConfig, loadConfig, lifecycleFor, tenantFor, cohortTenants, ready, capture, restore, argumentsFor, main };
+diff --git a/ui.js b/ui.js
+index 77180f1..0d822b0 100644
 --- a/ui.js
 +++ b/ui.js
 @@ -1,6 +1,6 @@
@@ -307,7 +399,7 @@
  // HTML presentation only; the unchanged client obtains authority, settings and
  // clinical data from the API/realtime roles on the same public origin.
  const fs = require('node:fs');
-@@ -26,9 +26,18 @@
+@@ -26,9 +26,18 @@ function hostname(value) {
  }
  
  // The preview's one tenant ceiling (lib/server/serve/tenant-ceiling.js).
@@ -327,7 +419,7 @@
    if (!exact(value, ['version', 'tenants']) || value.version !== 1 ||
        !Array.isArray(value.tenants) || !value.tenants.length || value.tenants.length > PREVIEW_MAX_TENANTS) {
      throw new TypeError('UI_PUBLIC_CONFIG_INVALID');
-@@ -55,8 +64,9 @@
+@@ -55,8 +64,9 @@ function requestHost(value) {
    try { return hostname(match[1].toLowerCase()); } catch { return null; }
  }
  
@@ -338,7 +430,7 @@
    const express = require('express');
    const ejs = require('ejs');
    const app = express();
-@@ -79,10 +89,16 @@
+@@ -79,10 +89,16 @@ function createApp({ config, root = ROOT } = {}) {
    });
    // Private container health probe contains no tenant or credential information.
    app.get('/healthz', (req, res) => res.type('text/plain').send('ok\n'));
@@ -359,7 +451,7 @@
    });
    const locals = Object.freeze({ bundle: '/bundle', mode: 'production', cachebuster });
    for (const [route, page] of Object.entries(PAGES)) {
-@@ -115,27 +131,50 @@
+@@ -115,27 +131,50 @@ function createApp({ config, root = ROOT } = {}) {
    return app;
  }
  
