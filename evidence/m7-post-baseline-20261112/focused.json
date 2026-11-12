@@ -1,0 +1,162 @@
+{
+  "kind": "post-baseline-focused-preparation-v1",
+  "sourceCommit": "7dde6f60d3f59c44d6b143df352a827768c60829",
+  "coreCommit": "9db0ce94f072c8f34aab889f0181afa4269a6758",
+  "baseDeployCommit": "d76ef17878edb610cdeae75aeef9c07f94b60753",
+  "bindingTree": "56183e354d33c0d7e83d5ba3656f4cceb9d1ca58",
+  "originalHistories": [
+    "4b0579eace51bc5cd3c02b5a98f0978a41a9cbb1",
+    "6d2cb6722e9a65f361679f7f9d96c84a39b87c68"
+  ],
+  "changedBindingPaths": [
+    "bindings/compose/multitenant/README.md",
+    "bindings/compose/multitenant/fixtures/shipping-live-add.cjs",
+    "bindings/compose/multitenant/prime-incremental.test.js",
+    "bindings/compose/multitenant/prime.js",
+    "bindings/compose/multitenant/shipping-live-add.integration.test.js"
+  ],
+  "otherBaselineBindingBytesPreserved": true,
+  "reducedFixtureDeltaPreserved": true,
+  "dependencyLockSha256": "6418fe21c18346435f643b8496d6b7ec23c9c6de28f1925c3bb2028eb575e93e",
+  "dependencyScope": "Read-only prior lane-owned exact-lock npm ci --ignore-scripts tree; no new install",
+  "results": [
+    {
+      "name": "identity",
+      "command": [
+        "bash",
+        "tools/compose-identity-check.sh",
+        "<owned-core>"
+      ],
+      "returnCode": 0,
+      "elapsedSeconds": 0.0646061897277832,
+      "privateRawSha256": "5636d9e9d0f6cb2f6fea0161a4724fb3f1e15c0ee2c015a45addecd9d8a46fff"
+    },
+    {
+      "name": "package",
+      "command": [
+        "npm",
+        "test"
+      ],
+      "returnCode": 0,
+      "elapsedSeconds": 0.3149082660675049,
+      "privateRawSha256": "6911bb0c5342d5d647d6977a468db76011960695ec970148a39f271023e3746b",
+      "pass": 2,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "name": "profile",
+      "command": [
+        "node",
+        "providers/identity/authentik/tests/profile.test.js"
+      ],
+      "returnCode": 0,
+      "elapsedSeconds": 0.06441688537597656,
+      "privateRawSha256": "19edefb2799c3ff1a02410aa542654fbf4c1f34497a6d26bf05dd5b8f8fa34f8",
+      "pass": 16,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "name": "resources",
+      "command": [
+        "node",
+        "providers/identity/authentik/tests/resources.test.js"
+      ],
+      "returnCode": 0,
+      "elapsedSeconds": 0.11437416076660156,
+      "privateRawSha256": "3120373717e4581a8e3e23b107012545372a8adf0943d2919de63d63cbfc22ee",
+      "pass": 24,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "name": "probes",
+      "command": [
+        "node",
+        "providers/identity/authentik/tests/native-probes.test.js"
+      ],
+      "returnCode": 0,
+      "elapsedSeconds": 0.06403160095214844,
+      "privateRawSha256": "3e69cb9e158ce6d67d0d9ecd2a0fed4ec5d79c51a8ba86bb52eb66f8c24c357c",
+      "pass": 10,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "name": "source-settings",
+      "command": [
+        "node",
+        "providers/identity/authentik/tests/source-settings.test.js"
+      ],
+      "returnCode": 0,
+      "elapsedSeconds": 0.06407713890075684,
+      "privateRawSha256": "708911991e3c2d992e5b7fb863318bf3a4dda741f5a728e8087cfe90628f36dc",
+      "pass": 2,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "name": "source-admission",
+      "command": [
+        "node",
+        "providers/identity/authentik/tests/joined-source-admission.test.js"
+      ],
+      "returnCode": 0,
+      "elapsedSeconds": 4.373493194580078,
+      "privateRawSha256": "f90c6cf1b3a54ec7578127a228857d350c371bca7322bdaa70c7e6e56398b792",
+      "pass": 4,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "name": "primer",
+      "command": [
+        "node",
+        "deploy/multitenant/prime-incremental.test.js"
+      ],
+      "returnCode": 0,
+      "elapsedSeconds": 0.21431875228881836,
+      "privateRawSha256": "fa5d845d58d05b5bf6fe4ff52765ffe55c1974ff8e23ab655d982717004b879b",
+      "pass": 6,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "name": "bootstrap",
+      "command": [
+        "node",
+        "deploy/multitenant/bootstrap.test.js"
+      ],
+      "returnCode": 0,
+      "elapsedSeconds": 0.2645719051361084,
+      "privateRawSha256": "36bccf47566c924abd5fc92cd99554a7dce4f21ad113e65aedd52a590da03d14",
+      "pass": 10,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "name": "source-overlay-control",
+      "returnCode": 1,
+      "privateRawSha256": "f1e18b1ee0df755f081e38d6199524c59723746400c964ea7aeaac799b5eaf73",
+      "pass": 3,
+      "fail": 1,
+      "skipped": 0,
+      "observedSymptom": "Missing expected exception: copied primer mutation no longer refused"
+    },
+    {
+      "name": "source-overlay-restored",
+      "returnCode": 0,
+      "privateRawSha256": "081a89693168a080ea3b577ed17f1500692eabf2f8444f5e6e2185d2aa9ec373",
+      "pass": 4,
+      "fail": 0,
+      "skipped": 0
+    }
+  ],
+  "limits": [
+    "No Docker build/start, database, application/provider/browser or cloud execution",
+    "Live-add native and real-provider native UNMEASURED",
+    "Resource/probe/profile suites share cases; counts must not be summed as unique coverage",
+    "Earlier histories retain their original execution attribution"
+  ]
+}
