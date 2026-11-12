@@ -8,7 +8,7 @@
 | upstream tree hash of that path | `fdc9f8dd2644b8789c86abeb030fbc0ad7304780` (core's reduced fixture: `config.js`, `demo.js`, `health.js`, `restore.js`, `ui.js`, `README.md`) |
 | import method | Recorded core fixture plus reviewed deployment-owned bootstrap, placement, edge and preparation changes; the patch is checked by `tools/compose-identity-check.sh`. |
 | local delta | [`SOURCE.delta.patch`](SOURCE.delta.patch), against the recorded core fixture. This binding generates fixed API instances and exact maintenance addresses, supports local health probes for network listeners, removes realtime maxSockets and renders explicit per-IP edge budgets. The reduced core fixture stays test-only. |
-| tree hash here | `c6d2ec190d55375f0f855e3012a0d077df99b1d7` |
+| tree hash here | `1550fceb5ef1835e22ea1442b3f6bff238e8cbd8` |
 | imported on | 2026-11-12 |
 
 History: first imported 2026-11-09 from `ed2ced00c80bd0a6a7d75f834d2c6e2af8c71364` (tree
@@ -133,3 +133,8 @@ Agent overlay lives beside this tree and keeps its separate exact-source lifecyc
 evidence. This metadata refresh enables paired-image qualification; it does not
 claim comprehensive, paired deployment or capacity acceptance. Additional component
 profile/runtime wiring remains deferred until that acceptance boundary.
+
+The final selected-topology native instruments derive every explicitly prepared
+API/realtime/evaluator overlay and reject missing, extra or symlink selections.
+This test-only composition repair changes the complete tree identity; it leaves
+the five-file runtime delta and production binding behavior unchanged.
