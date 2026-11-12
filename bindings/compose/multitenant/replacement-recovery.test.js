@@ -30,7 +30,7 @@ function fixture() {
     if(args[0]==='image')return JSON.stringify([{Id:image,Config:{Labels:{'org.opencontainers.image.revision':complete.sourceCommit,'org.nightscout.deploy.revision':complete.deployCommit}}}]);
     if(args[0]==='stop') { const r=rows.get(args.at(-1));assert.ok(r);if(stopWorks&&r.State.Running){process.kill(r.State.Pid,'SIGKILL');for(let n=0;n<100&&live(r.State.Pid);n++)Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,2);assert.equal(live(r.State.Pid),false,'actual old OS process terminated');r.State.Running=false;r.State.Pid=0;}return r.Id; }
     if(args[0]==='start'){start(rows.get(args[1]));return args[1];}
-    if(args.includes('config'))return JSON.stringify({services:{'placement-operator':{image},realtime:{image}}});
+    if(args.includes('config'))return JSON.stringify({services:{'placement-operator':{image,profiles:['ops'],environment:{},volumes:[{source:path.join(state,'placement-operator'),target:'/run/ns-config',read_only:true},{source:path.join(state,'placement'),target:'/run/ns-placement',read_only:false}]},realtime:{image}}});
     if(args.includes('ps'))return current;
     if(args.includes('--no-start')){const file=args[args.lastIndexOf('-f')+1];const labels=j.privateJson(file).services.realtime.labels;const r=row(labels);rows.set(r.Id,r);current=r.Id;return '';}
     throw Error('UNIMPLEMENTED_DOCKER:'+args.join(' '));

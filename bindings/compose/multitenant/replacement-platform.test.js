@@ -21,7 +21,7 @@ function fixture(){
   write('placement/backend.json',before);write('placement/routes.json',before);write('realtime/env.json',{REALTIME_WORKER_ID:'realtime-1',REALTIME_WORKER_INCARNATION:before.workers[0].incarnation});
   const project='ns-recovery-native-'+crypto.randomBytes(6).toString('hex'),compose=path.join(state,'compose.json');
   const service={image,restart:'no',command:['node','-e','process.on("SIGTERM",()=>process.exit(0));setInterval(()=>{},1000)'],labels:{'org.nightscout.recovery.fixture':project}};
-  fs.writeFileSync(compose,JSON.stringify({services:{'placement-operator':service,realtime:service}}));fs.writeFileSync(path.join(state,'.env'),'');
+  fs.writeFileSync(compose,JSON.stringify({services:{'placement-operator':{...service,profiles:['ops'],volumes:[path.join(state,'placement-operator')+':/run/ns-config:ro',path.join(state,'placement')+':/run/ns-placement:rw']},realtime:service}}));fs.writeFileSync(path.join(state,'.env'),'');
   const options={state,project,compose:[compose],worker:'realtime-1',timeout:1000},args=['compose','-p',project,'--env-file',path.join(state,'.env'),'-f',compose];
   const current=()=>docker([...args,'ps','--all','--quiet','realtime']);
   docker([...args,'up','-d','--no-build','--pull','never','--no-deps','realtime']);
