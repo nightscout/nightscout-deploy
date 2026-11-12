@@ -6,6 +6,7 @@ const clients=require('/opt/app/lib/server/internal-api/clients');
 const operator=require('/opt/app/deploy/multitenant/restore');
 const internal=require('/opt/app/lib/server/internal-api/listener-config').observer(process.env);
 const config=operator.loadConfig(),mode=process.env.NS_SHIP_PROBE;
+const proofPayloads=['cold','alarm-a','alarm-b'].includes(mode)?require('/tmp/replacement-probe-contract.cjs').expected(process.env.NS_SHIP_PROBE_NONCE,require('/opt/app/lib/tenant-notifications/contract').effectIdentity):null;
 const map=which=>require('/opt/app/lib/realtime-placement').load({...process.env,MULTITENANT_REALTIME_PLACEMENT:'/run/ns-placement/'+which+'.json'},{internal});
 async function call(origin,host,path){return new Promise((resolve,reject)=>{const request=http.get(origin+path,{headers:{host},timeout:2000},response=>{const chunks=[];response.on('data',c=>chunks.push(c));response.on('end',()=>resolve({status:response.statusCode,body:Buffer.concat(chunks).toString()}));});request.on('error',()=>reject(new Error('PRIVATE_HTTP_UNAVAILABLE')));request.on('timeout',()=>request.destroy());});}
 (async()=>{
@@ -13,13 +14,13 @@ async function call(origin,host,path){return new Promise((resolve,reject)=>{cons
  if(mode==='cold'){
   const tenant=config.tenants[0],placement=map('backend'),route=placement.route(tenant.id);
   const handshake=await call(route.consumerOrigin,tenant.host,'/socket.io/?EIO=4&transport=polling');console.log('COLD_HTTP_STATUS '+handshake.status);assert.equal(handshake.status,403);
-  await assert.rejects(clients.alarmDelivery(route.endpoint).deliverAlarm({tenant:tenant.id,id:require('node:crypto').randomUUID(),attempt:1,notification:{level:1,title:'Synthetic cold target'},receipts:[],placement:{generation:route.generation,shard:route.shard,worker:route.worker,incarnation:route.incarnation}}));
-  console.log('COLD_TARGET handshake403 handoffRefused');return;
+  await assert.rejects(clients.alarmDelivery(route.endpoint).deliverAlarm({tenant:tenant.id,id:require('node:crypto').randomUUID(),attempt:1,notification:proofPayloads.payloads.cold,receipts:[],placement:{generation:route.generation,shard:route.shard,worker:route.worker,incarnation:route.incarnation}}));
+  console.log('COLD_TARGET handshake403 handoffRefused effectDigest'+proofPayloads.digests.cold);return;
  }
  if(mode==='alarm-a'||mode==='alarm-b'){
   const tenant=config.tenants[mode==='alarm-a'?0:1],route=map('routes').route(tenant.id);
-  const result=await clients.alarmDelivery(route.endpoint).deliverAlarm({tenant:tenant.id,id:require('node:crypto').randomUUID(),attempt:1,notification:{level:1,title:'Synthetic shipping '+mode},receipts:[],placement:{generation:route.generation,shard:route.shard,worker:route.worker,incarnation:route.incarnation}});
-  assert.equal(result.accepted,true);console.log('ALARM_ACCEPTED '+mode+' generation'+route.generation);return;
+  const result=await clients.alarmDelivery(route.endpoint).deliverAlarm({tenant:tenant.id,id:require('node:crypto').randomUUID(),attempt:1,notification:proofPayloads.payloads[mode==='alarm-a'?'alarmA':'alarmB'],receipts:[],placement:{generation:route.generation,shard:route.shard,worker:route.worker,incarnation:route.incarnation}});
+  assert.equal(result.accepted,true);console.log('ALARM_ACCEPTED '+mode+' generation'+route.generation+' effectDigest'+proofPayloads.digests[mode==='alarm-a'?'alarmA':'alarmB']);return;
  }
  const client=new(require('/opt/app/node_modules/pg').Client)({connectionString:process.env.NS_OPERATOR_PG});await client.connect();let pin,cohort;
  try{

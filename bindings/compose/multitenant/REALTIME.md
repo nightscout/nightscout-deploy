@@ -138,3 +138,25 @@ authority bytes, and the private protocol checks that digest before opening
 connections. Missing, extra or changed authority/source refuses. An incomplete
 operation from a different source/custody tuple must be retained and inspected;
 changing its authority is not an implicit recovery permission.
+
+### Replacement diagnostics and synthetic transport proof
+
+Host replacement keeps bounded typed checkpoint/action durations, child exit and
+signal, completion receipt, known stderr codes, journal phase and map-generation
+identities. Raw child stdout/stderr and caught host errors are capped and stored
+mode0600 in host-only `state/operator-diagnostics` (directory0700), outside the
+shared placement mount. Public summaries contain no raw args, credentials or
+notification bodies. Truncation/capture errors are explicit. This does not change
+publication refusal, uncertainty, recovery or rollback behavior; diagnostics
+cannot turn an incomplete publication into success.
+
+The shipping move fixture retains bounded client connect/ACK/error/disconnect
+and alarm metadata, holder commit/exit and before/after stage observations.
+Synthetic cold/A/B probes share one bounded per-attempt nonce in their MESSAGE,
+whose exact source effect digest is exported. Envelope UUIDs and ignored debug
+fields are not socket-payload identity. Held routing requires exactly one B probe
+on B's alarm client and no cold/A/wrong-client probe. Post-cutover requires
+exactly one intended A probe and the same single B probe. Unrelated clinical
+notifications remain visible/countable but cannot satisfy or substitute these
+transport probes. Duplicate, forbidden and old-nonce probes refuse. Existing
+readiness, maps, pin, checkpoint, session and wait bounds remain authoritative.

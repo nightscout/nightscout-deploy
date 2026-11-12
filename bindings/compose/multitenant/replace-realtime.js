@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 // Host-side fixed-roster operator. Docker authority stays on the host; the
-// private publisher container gets only its existing operator/reader custody.
+// private publisher container gets only its explicit placement/reader custody.
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
@@ -109,8 +109,9 @@ async function replaceLocked(options, hooks) {
     newIncarnation: candidate.workers[index].incarnation, oldIdentity: journal.identity(original),
     ...(recovery ? { recovery: { prior: prior.operation, digest: journal.digest(prior), ...recovery } } : {}) };
   if (prior) atomicJson(path.join(state, 'placement/history-' + prior.operation + '.json'), prior, true);
-  const persist = phase => { record.phase = phase; atomicJson(journalFile, record, true); };
-  const checkpoint = hooks.checkpoint || (async () => {});
+  const observation = require('./replacement-observation').create({state,operation,identity:{source:record.source,image:record.image,worker:record.worker,beforeGeneration:before.generation,candidateGeneration:candidate.generation,oldIdentity:record.oldIdentity}});
+  const persist = phase => { record.phase = phase; atomicJson(journalFile, record, true); observation.event('journal',{stage:phase}); };
+  const checkpoint = phase => observation.around('checkpoint',phase,()=>hooks.checkpoint ? hooks.checkpoint(phase) : undefined);
   persist('prepared');
   const exactOld = owner => owner?.worker === options.worker && owner.incarnation === before.workers[index].incarnation;
   function stopped() {
@@ -118,7 +119,7 @@ async function replaceLocked(options, hooks) {
     if (row.Id !== original.Id || row.State.StartedAt !== original.State.StartedAt || row.State.Running && row.State.Pid !== original.State.Pid || row.Config.Labels?.['com.docker.compose.project'] !== options.project || row.Config.Labels?.['com.docker.compose.service'] !== service) throw fail('PLACEMENT_PLATFORM_IDENTITY_CHANGED');
     return row.State.Running === false && row.State.Pid === 0;
   }
-  const action = async event => {
+  const performAction = async event => {
     if (journal.bytesDigest(authorityFile) !== authority.sha256) throw fail('PLACEMENT_AUTHORITY_REFUSED');
     let ok = false;
     if (event.name === 'confirm' && exactOld(event.owner)) ok = stopped();
@@ -148,16 +149,17 @@ async function replaceLocked(options, hooks) {
     }
     return ok;
   };
-  const result = await (hooks.publisher || publish)({ options, state, compose, candidate, action, docker, operation, authority, lockFd: hooks.lockFd });
-  persist('complete');
-  return result;
+  const action = event => observation.around('host-action',event?.name,()=>performAction(event));
+  try{const result = await (hooks.publisher || publish)({ options, state, compose, candidate, action, docker, operation, authority, lockFd: hooks.lockFd, observation, spawnPublisher:hooks.spawnPublisher });
+    persist('complete');return result;
+  }finally{const current={journalPhase:record.phase,newIdentity:record.newIdentity||null};for(const [name,file]of [['backendGeneration','backend.json'],['routesGeneration','routes.json']]){try{current[name]=privateJson(path.join(state,'placement',file)).generation;}catch{current[name]=null;}}observation.finish(current);}
 }
-async function publish({ options, state, compose, candidate, action, docker, operation, authority, lockFd }) {
+async function publish({ options, state, compose, candidate, action, docker, operation, authority, lockFd, observation, spawnPublisher=spawn }) {
   const name = options.project + '-placement-' + operation;
-  const child = spawn('docker', [...compose,'run','--rm','-T','--no-deps','--name',name,'--label','org.nightscout.replacement.operation=' + operation,
+  const child = spawnPublisher('docker', [...compose,'run','--rm','-T','--no-deps','--name',name,'--label','org.nightscout.replacement.operation=' + operation,
     '-v',path.join(state,'placement') + ':/run/ns-placement:rw', '-v',path.join(state,'placement-operator') + ':/run/ns-config:ro',
     'placement-operator','node','-r','./deploy/multitenant/load-env.js','deploy/multitenant/placement-control.js'], { stdio: ['pipe','pipe','pipe',lockFd] });
-  let result, refused = false, errors = '', processing = Promise.resolve();
+  let result, refused = false, processing = Promise.resolve();
   const timer = setTimeout(() => {
     refused = true;
     // This exact one-shot container belongs to this invocation. Stopping it
@@ -166,25 +168,26 @@ async function publish({ options, state, compose, candidate, action, docker, ope
     child.kill('SIGTERM');
   }, options.timeout + 30000); timer.unref();
   const lines = require('node:readline').createInterface({ input: child.stdout });
-  child.stderr.on('data', bytes => { if (errors.length < 4096) errors += bytes.toString().slice(0,4096 - errors.length); });
-  child.stdin.on('error', () => { refused = true; });
+  child.stdout.on('data',bytes=>observation?.stream('stdout',bytes));
+  child.stderr.on('data', bytes => { observation?.stream('stderr',bytes); });
+  child.stdin.on('error', error => { observation?.failure('stdin',error,'publisher');refused = true; });
   lines.on('line', line => {
     processing = processing.then(async () => {
       if (line.length > 4096) throw fail('PLACEMENT_PLATFORM_PROTOCOL_REFUSED');
       const event = JSON.parse(line);
-      if (event.kind === 'placement-complete') { result = event; return; }
+      if (event.kind === 'placement-complete') { observation?.complete(event.generation);result = event; return; }
       if (event.kind !== 'placement-action' || !Number.isSafeInteger(event.id)) throw fail('PLACEMENT_PLATFORM_PROTOCOL_REFUSED');
       const ok = await action(event);
       child.stdin.write(JSON.stringify({ id: event.id, ok }) + '\n');
-    }).catch(() => { refused = true; child.stdin.end(); });
+    }).catch(error => { observation?.failure('action-channel',error,error?.stage);refused = true; child.stdin.end(); });
   });
   child.stdin.write(JSON.stringify({ candidate, timeoutMs: options.timeout, authorityDigest: authority.sha256 }) + '\n');
   try {
-    const code = await new Promise((resolve, reject) => { child.once('exit', resolve); child.once('error', reject); });
+    const code = await new Promise((resolve, reject) => { child.once('exit', (code,signal)=>{observation?.childExit(code,signal);resolve(code);}); child.once('error', error=>{observation?.failure('spawn',error,'publisher');reject(error);}); });
     await processing;
-    if (code !== 0 || refused || !result) throw fail('PLACEMENT_REPLACEMENT_FAILED_OR_UNCERTAIN');
+    if (code !== 0 || refused || !result) {const error=fail('PLACEMENT_REPLACEMENT_FAILED_OR_UNCERTAIN');error.replacementObservation=observation?.summary();throw error;}
     return result;
   } finally { clearTimeout(timer); lines.close(); child.stdin.end(); }
 }
 if (require.main === module) Promise.resolve().then(() => replace(argumentsFor(process.argv.slice(2)))).then(result => process.stdout.write(JSON.stringify(result) + '\n')).catch(error => { process.stderr.write((/^[A-Z0-9_]+$/.test(error?.code || '') ? error.code : 'PLACEMENT_REPLACEMENT_FAILED_OR_UNCERTAIN') + '\n'); process.exitCode = 1; });
-module.exports = { argumentsFor, replacement, privateJson, atomicJson, replace };
+module.exports = { argumentsFor, replacement, privateJson, atomicJson, replace, publish };
