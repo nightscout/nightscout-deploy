@@ -1,0 +1,17 @@
+TAP version 13
+# ACTUAL_PUBLISHER_ADMISSION baselineAccepted unusedOpsIPCandPGenvRefusedBeforeEffects
+# Subtest: actual merged publisher custody is admitted by the host helper before journal/child/platform effects
+ok 1 - actual merged publisher custody is admitted by the host helper before journal/child/platform effects
+  ---
+  duration_ms: 753.789677
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 796.241587

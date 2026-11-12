@@ -1,0 +1,52 @@
+TAP version 13
+# Subtest: operator config refuses a public target, shared lock and missing explicit drain bound
+ok 1 - operator config refuses a public target, shared lock and missing explicit drain bound
+  ---
+  duration_ms: 2.682837
+  type: 'test'
+  ...
+# Subtest: operator CLI requires an explicit tenant, private directory and exact restore digest
+ok 2 - operator CLI requires an explicit tenant, private directory and exact restore digest
+  ---
+  duration_ms: 0.401697
+  type: 'test'
+  ...
+# Subtest: HTTP failures with sensitive bodies are refused without returning their payload
+ok 3 - HTTP failures with sensitive bodies are refused without returning their payload
+  ---
+  duration_ms: 1.050767
+  type: 'test'
+  ...
+# Subtest: demo ordinary protocol passes; missing A restoration, deletion, B progress or B fidelity fail
+ok 4 - demo ordinary protocol passes; missing A restoration, deletion, B progress or B fidelity fail
+  ---
+  duration_ms: 7.115269
+  type: 'test'
+  ...
+# Subtest: missing cohort refuses before the first demo mutation
+ok 5 - missing cohort refuses before the first demo mutation
+  ---
+  duration_ms: 0.295175
+  type: 'test'
+  ...
+# Subtest: registry operator cohort uses one exact typed namespace label while static compatibility stays explicit
+ok 6 - registry operator cohort uses one exact typed namespace label while static compatibility stays explicit
+  ---
+  duration_ms: 0.930342
+  type: 'test'
+  ...
+# Subtest: demo retries only typed warming GET exchange/read with the original absolute signal; other refusals and writes stay terminal
+ok 7 - demo retries only typed warming GET exchange/read with the original absolute signal; other refusals and writes stay terminal
+  ---
+  duration_ms: 202.861087
+  type: 'test'
+  ...
+1..7
+# tests 7
+# suites 0
+# pass 7
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 265.306334

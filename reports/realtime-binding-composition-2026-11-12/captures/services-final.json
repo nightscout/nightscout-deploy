@@ -1,0 +1,67 @@
+[
+  {
+    "service": "admin",
+    "state": "running",
+    "health": "healthy"
+  },
+  {
+    "service": "api",
+    "state": "running",
+    "health": "healthy"
+  },
+  {
+    "service": "api-2",
+    "state": "running",
+    "health": "healthy"
+  },
+  {
+    "service": "evaluator",
+    "state": "running",
+    "health": "healthy"
+  },
+  {
+    "service": "feed-reader",
+    "state": "running",
+    "health": ""
+  },
+  {
+    "service": "nginx",
+    "state": "running",
+    "health": ""
+  },
+  {
+    "service": "postgres",
+    "state": "running",
+    "health": "healthy"
+  },
+  {
+    "service": "realtime",
+    "state": "running",
+    "health": "healthy"
+  },
+  {
+    "service": "realtime-2",
+    "state": "running",
+    "health": "healthy"
+  },
+  {
+    "service": "socket-edge",
+    "state": "running",
+    "health": "healthy"
+  },
+  {
+    "service": "tenant-admin",
+    "state": "running",
+    "health": "healthy"
+  },
+  {
+    "service": "ui",
+    "state": "running",
+    "health": "healthy"
+  },
+  {
+    "service": "vault",
+    "state": "running",
+    "health": "healthy"
+  }
+]

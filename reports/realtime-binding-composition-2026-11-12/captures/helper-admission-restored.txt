@@ -1,0 +1,155 @@
+TAP version 13
+# Subtest: publisher authority is exact readonly-custody shape with pinned source and no unused serving/operator credentials
+ok 1 - publisher authority is exact readonly-custody shape with pinned source and no unused serving/operator credentials
+  ---
+  duration_ms: 3.848256
+  type: 'test'
+  ...
+# Subtest: private publisher never adopts an operator fallback or reaches SQL without explicit narrow connection
+ok 2 - private publisher never adopts an operator fallback or reaches SQL without explicit narrow connection
+  ---
+  duration_ms: 12.028434
+  type: 'test'
+  ...
+# ACTUAL_PUBLISHER_ADMISSION baselineAccepted unusedOpsIPCandPGenvRefusedBeforeEffects
+# Subtest: actual merged publisher custody is admitted by the host helper before journal/child/platform effects
+ok 3 - actual merged publisher custody is admitted by the host helper before journal/child/platform effects
+  ---
+  duration_ms: 717.682087
+  type: 'test'
+  ...
+# Subtest: explicit fresh-generation recovery after before-stop
+ok 4 - explicit fresh-generation recovery after before-stop
+  ---
+  duration_ms: 154.742484
+  type: 'test'
+  ...
+# Subtest: explicit fresh-generation recovery after after-stop
+ok 5 - explicit fresh-generation recovery after after-stop
+  ---
+  duration_ms: 180.482384
+  type: 'test'
+  ...
+# Subtest: explicit fresh-generation recovery after after-assignment
+ok 6 - explicit fresh-generation recovery after after-assignment
+  ---
+  duration_ms: 160.557736
+  type: 'test'
+  ...
+# Subtest: explicit fresh-generation recovery after after-env
+ok 7 - explicit fresh-generation recovery after after-env
+  ---
+  duration_ms: 165.840387
+  type: 'test'
+  ...
+# Subtest: explicit fresh-generation recovery after after-create-effect
+ok 8 - explicit fresh-generation recovery after after-create-effect
+  ---
+  duration_ms: 191.747764
+  type: 'test'
+  ...
+# Subtest: explicit fresh-generation recovery after after-create
+ok 9 - explicit fresh-generation recovery after after-create
+  ---
+  duration_ms: 191.544798
+  type: 'test'
+  ...
+# Subtest: explicit fresh-generation recovery after after-start-effect
+ok 10 - explicit fresh-generation recovery after after-start-effect
+  ---
+  duration_ms: 229.923067
+  type: 'test'
+  ...
+# Subtest: explicit fresh-generation recovery after after-start
+ok 11 - explicit fresh-generation recovery after after-start
+  ---
+  duration_ms: 239.874606
+  type: 'test'
+  ...
+# Subtest: explicit fresh-generation recovery after after-routes
+ok 12 - explicit fresh-generation recovery after after-routes
+  ---
+  duration_ms: 223.285202
+  type: 'test'
+  ...
+# Subtest: no-stop confirmation refuses before backend generation can advance
+ok 13 - no-stop confirmation refuses before backend generation can advance
+  ---
+  duration_ms: 51.986511
+  type: 'test'
+  ...
+# Subtest: recovery refuses mutated project
+ok 14 - recovery refuses mutated project
+  ---
+  duration_ms: 62.6392
+  type: 'test'
+  ...
+# Subtest: recovery refuses mutated image
+ok 15 - recovery refuses mutated image
+  ---
+  duration_ms: 48.638147
+  type: 'test'
+  ...
+# Subtest: recovery refuses mutated startedAt
+ok 16 - recovery refuses mutated startedAt
+  ---
+  duration_ms: 52.420515
+  type: 'test'
+  ...
+# Subtest: recovery refuses mutated pid
+ok 17 - recovery refuses mutated pid
+  ---
+  duration_ms: 58.972354
+  type: 'test'
+  ...
+# Subtest: recovery refuses mutated container
+ok 18 - recovery refuses mutated container
+  ---
+  duration_ms: 49.998037
+  type: 'test'
+  ...
+# Subtest: recovery refuses mutated env
+ok 19 - recovery refuses mutated env
+  ---
+  duration_ms: 59.752402
+  type: 'test'
+  ...
+# Subtest: recovery refuses mutated backend
+ok 20 - recovery refuses mutated backend
+  ---
+  duration_ms: 59.510045
+  type: 'test'
+  ...
+# Subtest: recovery refuses mutated compose
+ok 21 - recovery refuses mutated compose
+  ---
+  duration_ms: 51.406227
+  type: 'test'
+  ...
+# Subtest: recovery refuses mutated authority
+ok 22 - recovery refuses mutated authority
+  ---
+  duration_ms: 61.697545
+  type: 'test'
+  ...
+# Subtest: native FD lock rejects concurrent operation and releases after last close
+ok 23 - native FD lock rejects concurrent operation and releases after last close
+  ---
+  duration_ms: 48.463249
+  type: 'test'
+  ...
+# Subtest: crashed host leaves creator FD locked until the actual inherited child exits
+ok 24 - crashed host leaves creator FD locked until the actual inherited child exits
+  ---
+  duration_ms: 86.208508
+  type: 'test'
+  ...
+1..24
+# tests 24
+# suites 0
+# pass 24
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2478.098578

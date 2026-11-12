@@ -1,0 +1,1 @@
+{"kind":"placement-complete","generation":7,"digest":"b60e802fdeb1449d81887ea3af038598e1d99ec2ceafddb04819d4cd5d4b568a","affectedTenants":2}

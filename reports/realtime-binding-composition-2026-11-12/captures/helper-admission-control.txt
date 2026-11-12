@@ -1,0 +1,47 @@
+TAP version 13
+# Subtest: actual merged publisher custody is admitted by the host helper before journal/child/platform effects
+not ok 1 - actual merged publisher custody is admitted by the host helper before journal/child/platform effects
+  ---
+  duration_ms: 484.501929
+  type: 'test'
+  location: '<binding>/bindings/compose/multitenant/publisher-admission.integration.test.js:7:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+    
+      Comparison {
+    +   code: 'STOP_BEFORE_PLATFORM'
+    -   code: 'PLACEMENT_PUBLISHER_CUSTODY_REFUSED'
+      }
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    code: 'PLACEMENT_PUBLISHER_CUSTODY_REFUSED'
+  actual:
+  error: 'STOP_BEFORE_PLATFORM'
+  stack: |-
+    publisher (<binding>/bindings/compose/multitenant/publisher-admission.integration.test.js:21:187)
+    replaceLocked (<binding>/bindings/compose/multitenant/replace-realtime.js:150:52)
+    <binding>/bindings/compose/multitenant/replace-realtime.js:43:50
+    Object.locked (<binding>/bindings/compose/multitenant/replacement-journal.js:33:18)
+    Object.replace (<binding>/bindings/compose/multitenant/replace-realtime.js:43:18)
+    TestContext.<anonymous> (<binding>/bindings/compose/multitenant/publisher-admission.integration.test.js:21:48)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)
+  operator: 'rejects'
+  stack: |-
+    async TestContext.<anonymous> (<binding>/bindings/compose/multitenant/publisher-admission.integration.test.js:22:4)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 0
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 525.721222

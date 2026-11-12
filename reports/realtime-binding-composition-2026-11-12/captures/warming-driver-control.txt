@@ -1,0 +1,28 @@
+TAP version 13
+# Subtest: demo retries only typed warming GET exchange/read with the original absolute signal; other refusals and writes stay terminal
+not ok 1 - demo retries only typed warming GET exchange/read with the original absolute signal; other refusals and writes stay terminal
+  ---
+  duration_ms: 1.131767
+  type: 'test'
+  location: '<binding>/bindings/compose/multitenant/restore.test.js:96:1'
+  failureType: 'testCodeFailure'
+  error: 'COMPOSE_DEMO_EXCHANGE_REFUSED'
+  code: 'COMPOSE_DEMO_EXCHANGE_REFUSED'
+  stack: |-
+    fail (<binding>/bindings/compose/multitenant/demo.js:9:36)
+    responseJson (<binding>/bindings/compose/multitenant/demo.js:46:11)
+    async exchange (<binding>/bindings/compose/multitenant/demo.js:58:19)
+    async request (<binding>/bindings/compose/multitenant/demo.js:77:17)
+    async TestContext.<anonymous> (<binding>/bindings/compose/multitenant/restore.test.js:101:21)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 0
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 50.503353

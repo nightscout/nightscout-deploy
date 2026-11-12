@@ -1,0 +1,1 @@
+PUBLISHER_CUSTODY_PROOF onlyScopedEnv onlyPlacementRW noServingRestoreTokensOrIPC readonlyAdmission noClinicalCounterAuthority

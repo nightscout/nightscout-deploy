@@ -1,0 +1,2 @@
+{"service":"realtime","status":200,"configured":2,"feedConnected":true,"feedDegraded":false,"heartbeatAgeMs":825}
+{"service":"realtime-2","status":200,"configured":0,"feedConnected":true,"feedDegraded":false,"heartbeatAgeMs":833}
