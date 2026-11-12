@@ -74,8 +74,12 @@ keeps previous environment credentials while selecting the sink. Registry bootst
 previous API token file may remain present, but serving config names only the sink;
 its absence or refusal must not fall back to old material.
 
-The Agent consumes and removes its secret-id file, retaining it in memory for
-max-TTL reauthentication. After stopping/restarting that Agent, explicitly replace
+The machine AppRole secret-id has no expiry and allows reuse; this private login
+credential is distinct from its bounded serving tokens. A finite secret-id can
+expire before token max TTL and prevent the Agent from logging in again. The
+Agent consumes and removes its secret-id input file, retaining it only in memory
+for max-TTL reauthentication. Operator revocation and replacement through Vault
+remain explicit; no application endpoint gains credential-management authority. After stopping/restarting that Agent, explicitly replace
 its secret-id before starting it:
 
 ```bash

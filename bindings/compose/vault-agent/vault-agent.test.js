@@ -41,6 +41,9 @@ test('registry1/2/4 API instances all use sink; one fixed policy/AppRole, no ten
       for (const name of bootstrap.apiNames(replicas)) assert.equal(f.read(name + '/config.json').vault.tokenFile, bootstrap.SINK);
       assert.equal(v.calls.filter(row => row.resource.startsWith('sys/policies/')).length, 1);
       assert.equal(v.calls.filter(row => /auth\/approle\/role\/[^/]+$/.test(row.resource)).length, 1);
+      const machineRole = v.calls.find(row => /auth\/approle\/role\/[^/]+$/.test(row.resource)).body;
+      assert.equal(machineRole.secret_id_ttl, 0); assert.equal(machineRole.secret_id_num_uses, 0);
+      assert.equal(machineRole.token_ttl, '10s'); assert.equal(machineRole.token_max_ttl, '30s');
       assert.equal(v.calls.some(row => /tenant|lease/.test(row.resource)), false);
       const calls = v.calls.length; assert.equal((await bootstrap.run('provision', f.options)).state, 'existing-vault-agent-provisioned'); assert.equal(v.calls.length, calls);
       fs.unlinkSync(path.join(f.output, 'vault-agent/creds/secret_id')); await bootstrap.run('secret-id', f.options);

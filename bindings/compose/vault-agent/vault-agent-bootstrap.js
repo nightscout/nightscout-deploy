@@ -137,7 +137,7 @@ function preflight (options) {
   if (rows.some(row => row.mode !== mode || digest(row.config) !== digest(rows[0].config)) || (imported.registryMode === true) !== (mode === 'registry')) throw fail('VAULT_AGENT_API_MODE_MISMATCH');
   const rules = policyRules(layout, mode), role = layout.prefix + '_vault_agent';
   const identity = { version: 3, sourceCommit, deployCommit, project: options.project, bootstrapDigest: digest(imported), layoutDigest: digest(layout), mode,
-    tokenTtl: ttl, tokenMaxTtl: maxTtl, envTokensKept: !!keepEnvTokens, vaultOrigin: vault.origin, sink: SINK, role, policy: role, policySha256: digest(rules),
+    tokenTtl: ttl, tokenMaxTtl: maxTtl, secretIdTtl: 0, secretIdNumUses: 0, envTokensKept: !!keepEnvTokens, vaultOrigin: vault.origin, sink: SINK, role, policy: role, policySha256: digest(rules),
     apiInstances: names, files: rows.map(row => ({ name: row.name, config: digest(row.config), environment: digest(row.environment), operation: row.operationDigest })) };
   if (previous) {
     const { roleIdDigest, ...recorded } = previous;
@@ -188,7 +188,7 @@ async function run (command, options) {
   if (!auth['approle/']) await request('sys/auth/approle', { type: 'approle' });
   await request('sys/policies/acl/' + identity.policy, { policy: state.rules }, 'PUT');
   await request('auth/approle/role/' + identity.role, { token_policies: [identity.policy], token_no_default_policy: true, token_type: 'service', token_ttl: options.ttl, token_max_ttl: options.maxTtl,
-    secret_id_num_uses: 0, secret_id_ttl: '24h', bind_secret_id: true });
+    secret_id_num_uses: 0, secret_id_ttl: 0, bind_secret_id: true });
   const role = await request('auth/approle/role/' + identity.role + '/role-id'), secret = await request('auth/approle/role/' + identity.role + '/secret-id', {});
   if (typeof role?.data?.role_id !== 'string' || !role.data.role_id || role.data.role_id.length > 8192 || typeof secret?.data?.secret_id !== 'string' || !secret.data.secret_id || secret.data.secret_id.length > 8192) throw fail('VAULT_AGENT_ROLE_MATERIAL_MISSING');
   createDirectory(path.join(root, 'creds')); createDirectory(path.join(root, 'sink'));
