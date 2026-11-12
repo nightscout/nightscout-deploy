@@ -43,14 +43,21 @@ function catalogues() {
     clock:require('../../migrations/candidates/postgres-write-clock-v1.json'), rt_checkpoint:require('../../migrations/candidates/postgres-consumer-checkpoint-v1.json'),
     eval_checkpoint:require('../../migrations/candidates/postgres-consumer-checkpoint-v1.json'), alarm:require('../../migrations/candidates/postgres-alarm-suppression-v1.json'),
     outbox:require('../../lib/tenant-notifications/postgres-candidate.json'),control:require('../../lib/tenant-lifecycle/postgres-candidate.json'),
-    change_stamps:require('../../lib/change-stamps/postgres-candidate.json')};
+    change_stamps:require('../../lib/change-stamps/postgres-candidate.json'),
+    registry:require('../../lib/tenant-registry/postgres-candidate.json'),
+    feed:require('../../lib/change-feed/postgres-candidate.json'),
+    display_settings:require('../../lib/tenant-settings/postgres-candidate.json'),
+    operator_policy:require('../../lib/operator-policy/postgres-candidate.json'),
+    human_session:require('../../lib/human-session/candidate.json'),
+    subject_policy:require('../../lib/subject-policy/postgres-candidate.json'),
+    owner_configuration:require('../../lib/tenant-settings/owner-authority-candidate.json')};
 }
 function layout(prefix = 'nsdemo') {
   quote(prefix);
   if (prefix.length > 24) throw new TypeError('Deployment prefix too long');
-  const names = ['api','readiness','realtime','evaluator','alarm','suppression','outbox','owner_writer','owner_reader','root_writer','operator',
+  const names = ['api','readiness','realtime','evaluator','alarm','suppression','outbox','owner_writer','owner_reader','root_writer','operator','provisioner','display_reader','activity_reader','feed_reader',
     ...serviceRoles.map(name=>'lifetime_'+name.replace('-','_'))];
-  return {prefix,owner:prefix+'_owner',namespaces:Object.fromEntries(Object.keys(catalogues()).map(name=>[name,prefix+'_'+name])),
+  return {prefix,owner:prefix+'_owner',feedOwner:prefix+'_feed_owner',namespaces:Object.fromEntries(Object.keys(catalogues()).map(name=>[name,prefix+'_'+name])),
     roles:Object.fromEntries(names.map(name=>[name,prefix+'_'+name])),mount:prefix+'_transit'};
 }
 function insertionGrants({namespace,domain,role,mode='serving'}) {
@@ -111,7 +118,7 @@ function grants(l) {
   // ownership_operator: added by ../ownership-admin/ownership-grants.js, not by this plan.
   // Decision root-writer-fenced: root_writer joins the lower-role window reads; the api opens its
   // subject-admin store connection under the tenant operation window, whose admission reads these.
-  for(const who of Object.keys(r).filter(name=>!['operator','ownership_operator'].includes(name))){
+  for(const who of Object.keys(r).filter(name=>!['operator','ownership_operator','provisioner','display_reader','activity_reader','feed_reader'].includes(name))){
     schema('control',who);for(const name of ['schema_migrations','tenant_lifecycle_windows','tenant_lifecycle_operations'])grant('SELECT',table('control',name),who);
     if(who.startsWith('lifetime_')){
       grant('INSERT(tenant_id,operation_id,generation),UPDATE(finished)',table('control','tenant_lifecycle_operations'),who);
@@ -132,9 +139,14 @@ function grants(l) {
   // Decision change-stamp-definer-function: search_path pinned, EXECUTE for realtime and evaluator only;
   // both read the function's catalogue ledger at readiness (write-clock-complete: the evaluator adopts it).
   sql.push(...require('../../lib/change-stamps/postgres').grants({namespace:ns.change_stamps,clockNamespace:ns.clock,roles:[r.realtime,r.evaluator]}));
+  for(const name of ['display_settings','operator_policy']){schema(name,'display_reader');grant('SELECT','ALL TABLES IN SCHEMA '+quote(ns[name]),'display_reader');}
+  schema('control','activity_reader');grant('SELECT',table('control','schema_migrations'),'activity_reader');grant('SELECT',table('control','tenant_activity'),'activity_reader');
+  sql.push(...require('../../lib/tenant-registry/postgres').grants({namespace:ns.registry,resolvers:[r.api,r.owner_reader],enumerators:[r.realtime,r.evaluator,r.operator],readers:[r.api,r.owner_reader,r.realtime]}));
+  sql.push(...require('../../lib/tenant-registry/provision').provisionerGrants({namespaces:require('./registry-plan').provisioningNamespaces(ns),role:r.provisioner,
+    checkpoints:[{namespace:ns.rt_checkpoint},{namespace:ns.eval_checkpoint}]}));
   return sql;
 }
-function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress}) {
+function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress,registryMode=false}) {
   const ns=l.namespaces, base='/run/ns-config',ipc='/run/ns-ipc';
   const domainNamespaces=Object.fromEntries(clinical.map(name=>[name,ns[name]]));
   const ids=tenantIds(),n=ids.length;
@@ -181,13 +193,20 @@ function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress}
   for(const role of serviceRoles){operations[role]={version:2,namespace:ns.control,connectionEnv:'NS_LIFETIME_PG',locks,participantId:role,participants};Object.assign(environments[role],{NS_LIFETIME_PG:urls['lifetime_'+role.replace('-','_')],MULTITENANT_OPERATION_CONFIG:base+'/operation.json'});}
   const admission={version:1,mode:'preview-socket-allowlist',tenants:api.tenants.map(({id,aliases})=>({id,enabled:true,aliases}))};
   const remote=participants.map(peer=>({id:peer.id,roles:peer.roles,namespaces:peer.namespaces,endpoint:{socketPath:socketOf(peer.id),maxBytes:peer.maxMessageBytes,timeoutMs:peer.timeoutMs}}));
-  return require('./replicas').expand({configs,environments,operations,admission,remote,locks,ui:{version:1,tenants:aliases.map(aliases=>({aliases,theme:'default'}))}});
+  let docs = {configs,environments,operations,admission,remote,locks,ui:{version:1,tenants:aliases.map(aliases=>({aliases,theme:'default'}))}};
+  if(registryMode) docs = require('./registry-plan').expand(docs,{layout:l,urls,vaultAddress});
+  else for(const env of Object.values(environments)) env.MULTITENANT_STATIC_TENANTS='lab';
+  return require('./replicas').expand(docs);
 }
 function lifecycle(l) {
-  const aliases={rt_checkpoint:'checkpoint',eval_checkpoint:'evaluator_checkpoint',alarm:'alarm_suppression',outbox:'notification_outbox'};
+  const aliases={rt_checkpoint:'checkpoint',eval_checkpoint:'evaluator_checkpoint',alarm:'alarm_suppression',outbox:'notification_outbox',display_settings:'tenant_settings'};
   const tables={...Object.fromEntries([...clinical,'settings'].map(name=>[name,[...(ordered.includes(name)?['tenant_insertion_ordinal']:[]),name]])),authorization:['tenant_authorization_config','tenant_authorization_roles','tenant_authorization_subjects','tenant_authorization_subject_roles','tenant_subject_admin_audit','tenant_owner_policy','tenant_owner_actors'],secrets:['secret_records','secret_audit'],legacy:['legacy_credential_config','legacy_credential_subjects'],access:['access_tenants','access_credentials','access_sessions','access_keys'],clock:['tenant_write_clock'],rt_checkpoint:['tenant_consumer_checkpoint'],eval_checkpoint:['tenant_consumer_checkpoint'],alarm:['tenant_alarm_suppression'],outbox:['tenant_notification_state','tenant_notification_heads','tenant_notification_requests']};
   const selected=catalogues();
-  return {namespaces:Object.fromEntries(Object.entries(l.namespaces).filter(([name])=>name!=='control'&&name!=='change_stamps').map(([name,namespace])=>[aliases[name]||name,namespace])),
+  for(const key of ['display_settings','operator_policy','human_session','subject_policy','owner_configuration']){
+    const kind=aliases[key]||key;
+    tables[key]=require('../../lib/tenant-lifecycle').admittedCatalogue().find(row=>row.kind===kind).tables;
+  }
+  return {namespaces:Object.fromEntries(Object.entries(l.namespaces).filter(([name])=>!['control','change_stamps','registry','feed'].includes(name)).map(([name,namespace])=>[aliases[name]||name,namespace])),
     catalogues:Object.entries(tables).map(([name,tables])=>({kind:aliases[name]||name,candidate:selected[name],tables,secrets:name==='secrets'?['secret_records']:[]}))};
 }
 function validateFiles(directory, docs) {

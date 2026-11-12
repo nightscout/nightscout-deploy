@@ -61,7 +61,7 @@ function checkEdgeSame (sharedText, composeText) {
 }
 function check (config) {
   checkNetworks(config);
-  const runtime = ['api', 'realtime', 'evaluator', 'tenant-admin', 'ui', 'nginx', ...Object.keys(config.services).filter(name => /^api-\d+$/.test(name))];
+  const runtime = ['api', 'realtime', 'evaluator', 'tenant-admin', 'ui', 'nginx', 'admin', 'feed-reader', ...Object.keys(config.services).filter(name => /^api-\d+$/.test(name))];
   for (const name of runtime) {
     const service = config.services[name];
     assert(service, 'Missing service: ' + name);
@@ -79,6 +79,8 @@ function check (config) {
     assert(!(service.volumes || []).some(v => v.target === '/run/ns-ipc'), name + ' must not mount private IPC');
     assert(!Object.keys(service.environment || {}).some(k => /TOKEN|PASSWORD|PG|DATABASE/.test(k)), name + ' receives private credentials');
   }
+  assert(config.services.primer.profiles.includes('ops'), 'Lab priming must remain explicit');
+  assert(!Object.keys(config.services.primer.environment || {}).some(name => /PG|PASSWORD|TOKEN|VAULT/.test(name)), 'Lab primer must not receive database or Vault credentials');
   assert(config.services.bootstrap.profiles.includes('ops'), 'Bootstrap must remain explicit');
   assert(config.services.demo.profiles.includes('ops'), 'Restore demonstration must remain explicit');
   checkOrder(config);
@@ -91,7 +93,7 @@ if (require.main === module) {
     const bytes = execFileSync('docker', ['compose', '--profile', '*', '-f', 'compose.yaml', 'config', '--format', 'json'], {
       cwd: __dirname, encoding: 'utf8', env: {...process.env,
         NS_DEMO_STATE: process.env.NS_DEMO_STATE || '/tmp/ns-compose-source-check',
-        NS_SOURCE_COMMIT: process.env.NS_SOURCE_COMMIT || '0'.repeat(40)}
+        NS_SOURCE_COMMIT: process.env.NS_SOURCE_COMMIT || '0'.repeat(40), NS_DEPLOY_COMMIT: process.env.NS_DEPLOY_COMMIT || '0'.repeat(40)}
     });
     const config = JSON.parse(bytes); check(config);
     const broken = structuredClone(config);

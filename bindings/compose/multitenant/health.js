@@ -8,6 +8,11 @@ const role = process.argv[2];
 // Each role process serves its internal contracts on one serve.internal socket.
 const roles = {api: {port: 1337}, realtime: {port: 1339}, evaluator: {}, 'tenant-admin': {port: 1341}};
 async function main () {
+  if (role === 'admin') {
+    const response = await fetch('http://127.0.0.1:1342/v1/openapi.json', {signal: AbortSignal.timeout(1500)});
+    if (!response.ok || typeof (await response.json()).openapi !== 'string') throw new Error();
+    return;
+  }
   if (role === 'ui') {
     const response = await fetch('http://127.0.0.1:1340/healthz', {signal: AbortSignal.timeout(1500)});
     if (!response.ok || await response.text() !== 'ok\n') throw new Error();

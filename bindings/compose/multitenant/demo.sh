@@ -29,8 +29,13 @@ case "${1:-}" in
   up)
     node build.js --check-image
     "${compose[@]}" --profile ops run --rm bootstrap
+    "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 90 admin feed-reader
+    "${compose[@]}" --profile ops run --rm primer node deploy/multitenant/prime.js provision
     replicas=$(node -e 'const fs=require("node:fs"),lines=fs.readFileSync(".env","utf8").split("\n");const n=Number((lines.find(x=>x.startsWith("NS_API_REPLICAS="))||"NS_API_REPLICAS=1").slice(16));if(!Number.isSafeInteger(n)||n<1||n>16)process.exit(1);console.log(Array.from({length:n},(_,i)=>i?"api-"+(i+1):"api").join(" "));')
-    exec "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 900 $replicas realtime evaluator tenant-admin ui nginx
+    "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 900 $replicas
+    "${compose[@]}" --profile ops run --rm --no-deps primer node deploy/multitenant/prime.js prime
+    node publish-primer.js "$(dirname "$replica_file")"
+    exec "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 900 realtime evaluator tenant-admin ui nginx
     ;;
   demo)
     node build.js --check-image

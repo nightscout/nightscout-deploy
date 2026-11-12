@@ -1,5 +1,5 @@
 diff --git a/config.js b/config.js
-index 335a122..14fe4e0 100644
+index 335a122..610e547 100644
 --- a/config.js
 +++ b/config.js
 @@ -7,6 +7,29 @@ const ordered = Object.freeze(['entries','treatments','devicestatus','profile','
@@ -32,16 +32,32 @@ index 335a122..14fe4e0 100644
  function quote(name) {
    if (typeof name !== 'string' || !/^[a-z][a-z0-9_]{0,62}$/.test(name) || name.startsWith('pg_')) throw new TypeError('Explicit deployment SQL identifier required');
    return '"' + name + '"';
-@@ -25,7 +48,7 @@ function catalogues() {
+@@ -20,14 +43,21 @@ function catalogues() {
+     clock:require('../../migrations/candidates/postgres-write-clock-v1.json'), rt_checkpoint:require('../../migrations/candidates/postgres-consumer-checkpoint-v1.json'),
+     eval_checkpoint:require('../../migrations/candidates/postgres-consumer-checkpoint-v1.json'), alarm:require('../../migrations/candidates/postgres-alarm-suppression-v1.json'),
+     outbox:require('../../lib/tenant-notifications/postgres-candidate.json'),control:require('../../lib/tenant-lifecycle/postgres-candidate.json'),
+-    change_stamps:require('../../lib/change-stamps/postgres-candidate.json')};
++    change_stamps:require('../../lib/change-stamps/postgres-candidate.json'),
++    registry:require('../../lib/tenant-registry/postgres-candidate.json'),
++    feed:require('../../lib/change-feed/postgres-candidate.json'),
++    display_settings:require('../../lib/tenant-settings/postgres-candidate.json'),
++    operator_policy:require('../../lib/operator-policy/postgres-candidate.json'),
++    human_session:require('../../lib/human-session/candidate.json'),
++    subject_policy:require('../../lib/subject-policy/postgres-candidate.json'),
++    owner_configuration:require('../../lib/tenant-settings/owner-authority-candidate.json')};
+ }
  function layout(prefix = 'nsdemo') {
    quote(prefix);
    if (prefix.length > 24) throw new TypeError('Deployment prefix too long');
 -  const names = ['api','readiness','realtime','evaluator','alarm','suppression','outbox','owner_writer','owner_reader','root_writer','operator','ownership_operator',
-+  const names = ['api','readiness','realtime','evaluator','alarm','suppression','outbox','owner_writer','owner_reader','root_writer','operator',
++  const names = ['api','readiness','realtime','evaluator','alarm','suppression','outbox','owner_writer','owner_reader','root_writer','operator','provisioner','display_reader','activity_reader','feed_reader',
      ...serviceRoles.map(name=>'lifetime_'+name.replace('-','_'))];
-   return {prefix,owner:prefix+'_owner',namespaces:Object.fromEntries(Object.keys(catalogues()).map(name=>[name,prefix+'_'+name])),
+-  return {prefix,owner:prefix+'_owner',namespaces:Object.fromEntries(Object.keys(catalogues()).map(name=>[name,prefix+'_'+name])),
++  return {prefix,owner:prefix+'_owner',feedOwner:prefix+'_feed_owner',namespaces:Object.fromEntries(Object.keys(catalogues()).map(name=>[name,prefix+'_'+name])),
      roles:Object.fromEntries(names.map(name=>[name,prefix+'_'+name])),mount:prefix+'_transit'};
-@@ -85,17 +108,7 @@ function grants(l) {
+ }
+ function insertionGrants({namespace,domain,role,mode='serving'}) {
+@@ -85,20 +115,10 @@ function grants(l) {
    grant('INSERT',table('authorization','tenant_subject_admin_audit'),'root_writer');
    for(const name of ['tenant_authorization_config','tenant_owner_policy'])grant('SELECT,UPDATE(owner_fence)',table('authorization',name),'root_writer');
    grant('SELECT',table('authorization','tenant_owner_actors'),'root_writer');
@@ -59,9 +75,24 @@ index 335a122..14fe4e0 100644
 +  // ownership_operator: added by ../ownership-admin/ownership-grants.js, not by this plan.
    // Decision root-writer-fenced: root_writer joins the lower-role window reads; the api opens its
    // subject-admin store connection under the tenant operation window, whose admission reads these.
-   for(const who of Object.keys(r).filter(name=>!['operator','ownership_operator'].includes(name))){
-@@ -124,9 +137,10 @@ function grants(l) {
- function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress}) {
+-  for(const who of Object.keys(r).filter(name=>!['operator','ownership_operator'].includes(name))){
++  for(const who of Object.keys(r).filter(name=>!['operator','ownership_operator','provisioner','display_reader','activity_reader','feed_reader'].includes(name))){
+     schema('control',who);for(const name of ['schema_migrations','tenant_lifecycle_windows','tenant_lifecycle_operations'])grant('SELECT',table('control',name),who);
+     if(who.startsWith('lifetime_')){
+       grant('INSERT(tenant_id,operation_id,generation),UPDATE(finished)',table('control','tenant_lifecycle_operations'),who);
+@@ -119,14 +139,20 @@ function grants(l) {
+   // Decision change-stamp-definer-function: search_path pinned, EXECUTE for realtime and evaluator only;
+   // both read the function's catalogue ledger at readiness (write-clock-complete: the evaluator adopts it).
+   sql.push(...require('../../lib/change-stamps/postgres').grants({namespace:ns.change_stamps,clockNamespace:ns.clock,roles:[r.realtime,r.evaluator]}));
++  for(const name of ['display_settings','operator_policy']){schema(name,'display_reader');grant('SELECT','ALL TABLES IN SCHEMA '+quote(ns[name]),'display_reader');}
++  schema('control','activity_reader');grant('SELECT',table('control','schema_migrations'),'activity_reader');grant('SELECT',table('control','tenant_activity'),'activity_reader');
++  sql.push(...require('../../lib/tenant-registry/postgres').grants({namespace:ns.registry,resolvers:[r.api,r.owner_reader],enumerators:[r.realtime,r.evaluator,r.operator],readers:[r.api,r.owner_reader,r.realtime]}));
++  sql.push(...require('../../lib/tenant-registry/provision').provisionerGrants({namespaces:require('./registry-plan').provisioningNamespaces(ns),role:r.provisioner,
++    checkpoints:[{namespace:ns.rt_checkpoint},{namespace:ns.eval_checkpoint}]}));
+   return sql;
+ }
+-function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress}) {
++function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress,registryMode=false}) {
    const ns=l.namespaces, base='/run/ns-config',ipc='/run/ns-ipc';
    const domainNamespaces=Object.fromEntries(clinical.map(name=>[name,ns[name]]));
 -  const tenants=[A,B].map(id=>({id,revision:'compose-demo-v1',settings:{enable:['bgnow','delta','direction','simplealarms','treatmentnotify']}}));
@@ -74,7 +105,7 @@ index 335a122..14fe4e0 100644
    const pgAddress=new URL(urls.evaluator);
    const evaluator={version:1,datastore:{hostname:pgAddress.hostname,port:Number(pgAddress.port||5432),database:decodeURIComponent(pgAddress.pathname.slice(1))},postgres:{connectionEnv:'NS_EVALUATOR_PG',namespaces:{...domainNamespaces,clock:ns.clock,checkpoint:ns.eval_checkpoint,changeStamps:ns.change_stamps}},
      consumer:'evaluator-compose-demo',...limits,timeIntervalMs:1000,socketOrderDomains:['treatments','devicestatus','profile'],tenants,
-@@ -146,7 +160,7 @@ function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress}
+@@ -146,7 +172,7 @@ function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress}
      vault:{address:vaultAddress,mount:l.mount,timeoutMs:5000},resolution:{mode:'direct-alias'},tenants:tenants.map((tenant,i)=>({id:tenant.id,aliases:aliases[i],settings:tenant.settings,
        vault:{tokenEnv:'NS_VAULT_'+i,encryptionKey:'tenant-'+i+'-data',signingKey:'tenant-'+i+'-signing',signingVersion:1}})),
      accessTokens:{issuer:'nightscout-compose-demo',audience:'nightscout-data',keys:publicKeys},
@@ -83,7 +114,7 @@ index 335a122..14fe4e0 100644
        alarm:{connectionEnv:'NS_ALARM_PG',namespace:ns.alarm},consumerState:{evaluatorConfigEnv:'MULTITENANT_EVALUATOR_CONFIG'}}};
    const owner={version:1,postgres:{writerConnectionEnv:'NS_OWNER_WRITER_PG',accessConnectionEnv:'NS_OWNER_READER_PG',namespaces:{authorization:ns.authorization,credentials:ns.legacy,access:ns.access}},
      ownerPolicy:{catalogue:ownerCatalogue.slice()},resolution:{mode:'direct-alias'},tenants:api.tenants.map(({id,aliases})=>({id,aliases})),
-@@ -157,17 +171,17 @@ function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress}
+@@ -157,35 +183,47 @@ function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress}
    const socketOf=role=>ipc+'/'+role+'.sock';
    const common={...Object.fromEntries(serviceRoles.map(role=>[require('../../lib/server/internal-api/listener-config').envName(role)+'SOCKET',socketOf(role)])),NODE_EXTRA_CA_CERTS:'/run/ns-ca/ca.crt'};
    const own=role=>({NS_SERVE_INTERNAL_SOCKET:socketOf(role)});
@@ -100,11 +131,25 @@ index 335a122..14fe4e0 100644
    const admission={version:1,mode:'preview-socket-allowlist',tenants:api.tenants.map(({id,aliases})=>({id,enabled:true,aliases}))};
    const remote=participants.map(peer=>({id:peer.id,roles:peer.roles,namespaces:peer.namespaces,endpoint:{socketPath:socketOf(peer.id),maxBytes:peer.maxMessageBytes,timeoutMs:peer.timeoutMs}}));
 -  return {configs,environments,operations,admission,remote,locks,ui:{version:1,tenants:aliases.map(aliases=>({aliases,theme:'default'}))}};
-+  return require('./replicas').expand({configs,environments,operations,admission,remote,locks,ui:{version:1,tenants:aliases.map(aliases=>({aliases,theme:'default'}))}});
++  let docs = {configs,environments,operations,admission,remote,locks,ui:{version:1,tenants:aliases.map(aliases=>({aliases,theme:'default'}))}};
++  if(registryMode) docs = require('./registry-plan').expand(docs,{layout:l,urls,vaultAddress});
++  else for(const env of Object.values(environments)) env.MULTITENANT_STATIC_TENANTS='lab';
++  return require('./replicas').expand(docs);
  }
  function lifecycle(l) {
-   const aliases={rt_checkpoint:'checkpoint',eval_checkpoint:'evaluator_checkpoint',alarm:'alarm_suppression',outbox:'notification_outbox'};
-@@ -180,12 +194,17 @@ function validateFiles(directory, docs) {
+-  const aliases={rt_checkpoint:'checkpoint',eval_checkpoint:'evaluator_checkpoint',alarm:'alarm_suppression',outbox:'notification_outbox'};
++  const aliases={rt_checkpoint:'checkpoint',eval_checkpoint:'evaluator_checkpoint',alarm:'alarm_suppression',outbox:'notification_outbox',display_settings:'tenant_settings'};
+   const tables={...Object.fromEntries([...clinical,'settings'].map(name=>[name,[...(ordered.includes(name)?['tenant_insertion_ordinal']:[]),name]])),authorization:['tenant_authorization_config','tenant_authorization_roles','tenant_authorization_subjects','tenant_authorization_subject_roles','tenant_subject_admin_audit','tenant_owner_policy','tenant_owner_actors'],secrets:['secret_records','secret_audit'],legacy:['legacy_credential_config','legacy_credential_subjects'],access:['access_tenants','access_credentials','access_sessions','access_keys'],clock:['tenant_write_clock'],rt_checkpoint:['tenant_consumer_checkpoint'],eval_checkpoint:['tenant_consumer_checkpoint'],alarm:['tenant_alarm_suppression'],outbox:['tenant_notification_state','tenant_notification_heads','tenant_notification_requests']};
+   const selected=catalogues();
+-  return {namespaces:Object.fromEntries(Object.entries(l.namespaces).filter(([name])=>name!=='control'&&name!=='change_stamps').map(([name,namespace])=>[aliases[name]||name,namespace])),
++  for(const key of ['display_settings','operator_policy','human_session','subject_policy','owner_configuration']){
++    const kind=aliases[key]||key;
++    tables[key]=require('../../lib/tenant-lifecycle').admittedCatalogue().find(row=>row.kind===kind).tables;
++  }
++  return {namespaces:Object.fromEntries(Object.entries(l.namespaces).filter(([name])=>!['control','change_stamps','registry','feed'].includes(name)).map(([name,namespace])=>[aliases[name]||name,namespace])),
+     catalogues:Object.entries(tables).map(([name,tables])=>({kind:aliases[name]||name,candidate:selected[name],tables,secrets:name==='secrets'?['secret_records']:[]}))};
+ }
+ function validateFiles(directory, docs) {
    const parsers={api:require('../../lib/server/serve/preview-config').load,realtime:require('../../lib/server/realtime/config').load,
      evaluator:require('../../lib/server/serve/evaluator-config').load,'tenant-admin':require('../../lib/server/serve/owner-preview-config').load};
    const namespaces=require('../../lib/server/serve/operation-cohort').protectedNamespaces;
@@ -128,18 +173,23 @@ index 335a122..14fe4e0 100644
 -module.exports={A,B,subject,clinical,ordered,serviceRoles,quote,catalogues,layout,insertionGrants,grants,documents,lifecycle,validateFiles};
 +module.exports={A,B,subject,tenantCount,tenantIds,tenantAlias,clinical,ordered,serviceRoles,quote,catalogues,layout,insertionGrants,grants,documents,lifecycle,validateFiles};
 diff --git a/health.js b/health.js
-index 6c58bdd..1b90433 100644
+index 6c58bdd..d6e9f82 100644
 --- a/health.js
 +++ b/health.js
-@@ -7,7 +7,6 @@ const net = require('node:net');
+@@ -7,16 +7,23 @@ const net = require('node:net');
  const role = process.argv[2];
  // Each role process serves its internal contracts on one serve.internal socket.
  const roles = {api: {port: 1337}, realtime: {port: 1339}, evaluator: {}, 'tenant-admin': {port: 1341}};
 -const internalSocket = name => '/run/ns-ipc/' + name + '.sock';
  async function main () {
++  if (role === 'admin') {
++    const response = await fetch('http://127.0.0.1:1342/v1/openapi.json', {signal: AbortSignal.timeout(1500)});
++    if (!response.ok || typeof (await response.json()).openapi !== 'string') throw new Error();
++    return;
++  }
    if (role === 'ui') {
      const response = await fetch('http://127.0.0.1:1340/healthz', {signal: AbortSignal.timeout(1500)});
-@@ -15,8 +14,11 @@ async function main () {
+     if (!response.ok || await response.text() !== 'ok\n') throw new Error();
      return;
    }
    if (!Object.hasOwn(roles, role)) throw new Error();
@@ -152,7 +202,7 @@ index 6c58bdd..1b90433 100644
    if (spec.port) await new Promise((resolve, reject) => {
      const socket = net.connect({host: '127.0.0.1', port: spec.port});
      socket.setTimeout(1500);
-@@ -24,8 +26,9 @@ async function main () {
+@@ -24,8 +31,9 @@ async function main () {
      socket.once('timeout', () => { socket.destroy(); reject(new Error()); });
      socket.once('error', reject);
    });
