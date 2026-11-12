@@ -147,6 +147,10 @@ function grants(l) {
   // Decision change-stamp-definer-function: search_path pinned, EXECUTE for realtime and evaluator only;
   // both read the function's catalogue ledger at readiness (write-clock-complete: the evaluator adopts it).
   sql.push(...require('../../lib/change-stamps/postgres').grants({namespace:ns.change_stamps,clockNamespace:ns.clock,roles:[r.realtime,r.evaluator]}));
+  // The D15 CHECK validator is an invoker function. Its default PUBLIC EXECUTE
+  // would violate the private issuer/lifetime identities' exact function surface.
+  sql.push('REVOKE ALL ON FUNCTION '+quote(ns.display_settings)+'.tenant_settings_values_valid(jsonb) FROM PUBLIC');
+  grant('EXECUTE','FUNCTION '+quote(ns.display_settings)+'.tenant_settings_values_valid(jsonb)','provisioner');
   for(const name of ['display_settings','operator_policy']){schema(name,'display_reader');grant('SELECT','ALL TABLES IN SCHEMA '+quote(ns[name]),'display_reader');}
   schema('control','activity_reader');grant('SELECT',table('control','schema_migrations'),'activity_reader');grant('SELECT',table('control','tenant_activity'),'activity_reader');
   sql.push(...require('../../lib/tenant-registry/postgres').grants({namespace:ns.registry,resolvers:[r.api,r.owner_reader,r.ui_registry],enumerators:[r.realtime,r.evaluator,r.operator],readers:[r.api,r.owner_reader,r.realtime]}));
