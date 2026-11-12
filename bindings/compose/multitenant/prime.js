@@ -9,6 +9,7 @@ function load(file) {
   const config = JSON.parse(fs.readFileSync(file, 'utf8'));
   if (config.version !== 1 || !Array.isArray(config.seed) || !config.seed.length || config.seed.length > 10000) throw fail('PRIMER_CONFIG_INVALID');
   for (const raw of [config.adminOrigin, config.apiOrigin]) { const url = new URL(raw); if (url.protocol !== 'http:' || url.username || url.password || url.search || url.hash || url.pathname !== '/') throw fail('PRIMER_ORIGIN_INVALID'); }
+  if (typeof config.ownerConsumer !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(config.ownerConsumer)) throw fail('PRIMER_CONFIG_INVALID');
   return config;
 }
 function request(origin, route, { method = 'GET', body, headers = {} } = {}) {
@@ -55,6 +56,9 @@ async function prime(config, directory) {
   const completed = path.join(directory, 'primed.json');
   if (fs.existsSync(completed)) return JSON.parse(fs.readFileSync(completed, 'utf8'));
   const results = [];
+  const ownership = require('../../lib/server/internal-api/clients').ownershipOperations({ url: config.adminOrigin, trust: 'network', maxBytes: 1048576, timeoutMs: 60000 });
+  const requestFile = path.join(directory, 'management-requests.json');
+  const managementRequests = fs.existsSync(requestFile) ? JSON.parse(fs.readFileSync(requestFile, 'utf8')) : {};
   for (const [index, row] of saved.entries()) {
     const headers = { host: row.hosts[0], 'api-secret': crypto.createHash('sha1').update(row.rootSecret).digest('hex') };
     const call = async (route, options = {}) => {
@@ -69,9 +73,28 @@ async function prime(config, directory) {
     subjects = await call('/api/v2/authorization/subjects');
     const subject = subjects.find(subject => subject.name === 'Synthetic demo uploader');
     if (!subject?._id || !subject.accessToken) throw fail('PRIMER_SUBJECT_TOKEN_MISSING');
+    if (!subjects.some(subject => subject.name === 'Synthetic demo owner')) await call('/api/v2/authorization/subjects', { method: 'POST', body: { name: 'Synthetic demo owner', roles: ['demo'] } });
+    subjects = await call('/api/v2/authorization/subjects');
+    const ownerSubject = subjects.find(subject => subject.name === 'Synthetic demo owner');
+    if (!ownerSubject?._id) throw fail('PRIMER_OWNER_SUBJECT_MISSING');
+    const owner = { principal: ownerSubject._id, consumer: config.ownerConsumer };
+    const listed = await ownership.listOwners({ tenant: row.id });
+    if (listed.outcome !== 'listed') throw fail('PRIMER_OWNERSHIP_REFUSED');
+    if (!listed.owners.some(value => value.principal === owner.principal && value.consumer === owner.consumer)) {
+      if (listed.owners.length) throw fail('PRIMER_OWNERSHIP_ALREADY_ASSIGNED');
+      const assigned = await ownership.addOwner({ tenant: row.id, owner, delegable: ['*'], expectedOwners: [] });
+      if (assigned.outcome !== 'applied') throw fail('PRIMER_OWNERSHIP_REFUSED');
+    }
+    // Persist the request identity before sending, so ambiguous responses retry
+    // that same issuance and never create a second credential implicitly.
+    if (!managementRequests[row.id]) { managementRequests[row.id] = crypto.randomUUID(); privateWrite(requestFile, managementRequests); }
+    const requestId = managementRequests[row.id];
+    const management = await request(config.adminOrigin, '/v1/tenants/' + row.id + '/management-sessions', {
+      method: 'POST', body: { subjectId: ownerSubject._id, requestId }, headers: { 'idempotency-key': requestId } });
+    if (![200, 201].includes(management.status) || typeof management.body.token !== 'string' || !Number.isSafeInteger(management.body.expiresAt)) throw fail('PRIMER_MANAGEMENT_SESSION_REFUSED');
     const now = Date.now();
     await call('/api/v1/entries', { method: 'POST', body: { _id: 'synthetic-reading-' + index, type: 'sgv', sgv: index ? 177 : 123, date: now - 1000, dateString: new Date(now - 1000).toISOString(), direction: 'Flat', device: 'synthetic-compose-demo' }, headers: { 'api-secret': subject.accessToken } });
-    results.push({ id: row.id, host: row.hosts[0], subject: subject._id, dataToken: subject.accessToken });
+    results.push({ id: row.id, host: row.hosts[0], subject: subject._id, dataToken: subject.accessToken, ownerSubject: ownerSubject._id, managementToken: management.body.token, managementExpiresAt: management.body.expiresAt });
     privateWrite(path.join(directory, 'tenants.json'), { version: 1, tenants: results });
   }
   const state = { state: 'synthetic-data-primed', tenants: results.length };

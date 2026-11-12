@@ -81,6 +81,7 @@ async function bootstrap(options) {
     await admin.query('REVOKE CREATE ON DATABASE '+q(decodeURIComponent(pg.pathname.slice(1)))+' FROM PUBLIC');
     await admin.query('CREATE ROLE '+q(l.owner)+' NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION');
     await admin.query('CREATE ROLE '+q(l.feedOwner)+' NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE REPLICATION');
+    await admin.query('CREATE ROLE '+q(l.managementAuthorityOwner)+' NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION');
     for(const [kind,role]of Object.entries(l.roles)){
       const password=random();await admin.query('CREATE ROLE '+q(role)+" LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD '"+password+"'");
       const url=new URL(pg);url.username=role;url.password=password;roleURLs[kind]=url.toString();
@@ -99,7 +100,9 @@ async function bootstrap(options) {
       await admin.query('ALTER SCHEMA '+q(namespace)+' OWNER TO '+q(l.owner));
     }
     for(const sql of plan.grants(l))await admin.query(sql);
-    for(const sql of require('../../lib/change-feed/postgres').provision({namespace:l.namespaces.feed,clockNamespace:l.namespaces.clock,activityNamespace:l.namespaces.control,
+    const managementGrants=require('../../lib/management-sessions/authority').grants({namespaces:{registry:l.namespaces.registry,authorization:l.namespaces.authorization,access:l.namespaces.access,control:l.namespaces.control},issuer:l.roles.management_issuer,authorityOwner:l.managementAuthorityOwner});
+    for(const sql of [...managementGrants.authorityOwner,...managementGrants.issuer])await admin.query(sql);
+    for(const sql of require('../../lib/change-feed/postgres').provision({namespace:l.namespaces.feed,clockNamespace:l.namespaces.clock,activityNamespace:l.namespaces.control,settingsNamespace:l.namespaces.display_settings,policyNamespace:l.namespaces.operator_policy,
       slot:l.prefix+'_feed_slot',publication:l.prefix+'_feed_publication',owner:l.feedOwner,reader:l.roles.feed_reader}))await admin.query(sql);
     return require('./registry-bootstrap').finish({options,request,rootToken:initialization.root_token,layout:l,roleURLs,writePrivate});
   }finally{await admin.end();}

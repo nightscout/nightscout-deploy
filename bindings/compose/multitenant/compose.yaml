@@ -200,7 +200,7 @@ services:
 
   ui:
     <<: *app
-    command: [node, deploy/multitenant/ui.js]
+    command: [node, -r, ./deploy/multitenant/load-env.js, deploy/multitenant/ui.js]
     environment:
       UI_HOSTNAME: 0.0.0.0
       UI_PORT: "1340"

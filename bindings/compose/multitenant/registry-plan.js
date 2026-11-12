@@ -40,7 +40,7 @@ function expand(docs, { layout, urls, vaultAddress }) {
     delete docs.operations[role].locks; docs.operations[role].registry = { namespace: ns.registry };
   }
   for (const role of ['evaluator','realtime']) docs.configs[role].changeFeed = { connectionEnv: role === 'evaluator' ? 'NS_EVALUATOR_PG' : 'NS_REALTIME_PG', channel: layout.prefix + '_changes', pageSize: 256, degradedPages: 4, intervalMs: 1000, heartbeatTimeoutMs: 5000 };
-  docs.feed = { config: { connectionEnv: 'NS_FEED_PG', namespace: ns.feed, clockNamespace: ns.clock, activityNamespace: ns.control,
+  docs.feed = { config: { connectionEnv: 'NS_FEED_PG', namespace: ns.feed, clockNamespace: ns.clock, activityNamespace: ns.control, settingsNamespace: ns.display_settings, policyNamespace: ns.operator_policy,
     slot: layout.prefix + '_feed_slot', publication: layout.prefix + '_feed_publication', owner: layout.feedOwner, channel: layout.prefix + '_changes',
     pollMs: 50, heartbeatMs: 1000, targetChanges: 128, maxMessages: 10000, maxBytes: 1048576, statementTimeoutMs: 2000, rssRefuseBytes: 268435456 },
     environment: { MULTITENANT_FEED_CONFIG: '/run/ns-config/config.json', NS_FEED_PG: urls.feed_reader } };
@@ -53,6 +53,11 @@ function expand(docs, { layout, urls, vaultAddress }) {
     endpoint: { socketPath: '/run/ns-ipc/' + peer.id + '.sock', maxBytes: peer.maxMessageBytes, timeoutMs: peer.timeoutMs } }));
   docs.locks = docs.locks.map(row => ({ tenant: row.tenant, key: require('../../lib/tenant-registry/rules').lockKey(row.tenant) }));
   docs.admin = { config: { version: 1, maxBytes: 1048576, timeoutMs: 60000,
+    managementSessions: { connectionEnv: 'NS_MANAGEMENT_SESSIONS_PG',
+      namespaces: { registry: ns.registry, authorization: ns.authorization, access: ns.access, control: ns.control },
+      issuer: 'nightscout-compose-management', audience: 'nightscout-management', consumer: 'compose-owner', maxLifetimeSeconds: 600,
+      vault: { address: vaultAddress, mount: layout.mount, tokenFile: '/run/ns-config/management-vault-token', timeoutMs: 10000 },
+      operator: { principal: 'compose-operator', consumer: 'compose-management' } },
     ownership: { connectionEnv: 'NS_OWNERSHIP_PG', namespace: ns.authorization, lifecycleNamespace: ns.control,
       registry: { ...registry }, operator: { principal: 'compose-operator', consumer: 'compose-ownership' } },
     connectorSources: { connectionEnv: 'NS_CONNECTOR_SOURCES_PG', namespaces: { settings: ns.display_settings, registry: ns.registry, secrets: ns.secrets, control: ns.control },
@@ -60,7 +65,9 @@ function expand(docs, { layout, urls, vaultAddress }) {
     provisioning: { connectionEnv: 'NS_PROVISIONER_PG', namespaces: provisioningNamespaces(ns), checkpoints: checkpoints(docs, ns),
       vault: { address: vaultAddress, mount: layout.mount, tokenFile: '/run/ns-config/vault-token', timeoutMs: 10000 },
       ownerPolicy: { catalogue: ['*'] }, operator: { principal: 'compose-operator', consumer: 'compose-provisioning' } } },
-    environment: { ADMIN_HOSTNAME: 'admin', ADMIN_PORT: '1342', ADMIN_INSECURE_BIND_ACKNOWLEDGED: 'true', MULTITENANT_ADMIN_CONFIG: '/run/ns-config/config.json', NS_PROVISIONER_PG: urls.provisioner, NS_OWNERSHIP_PG: urls.ownership_operator, NS_CONNECTOR_SOURCES_PG: urls.connector_writer } };
+    environment: { ADMIN_HOSTNAME: 'admin', ADMIN_PORT: '1342', ADMIN_INSECURE_BIND_ACKNOWLEDGED: 'true', MULTITENANT_ADMIN_CONFIG: '/run/ns-config/config.json', NS_PROVISIONER_PG: urls.provisioner, NS_OWNERSHIP_PG: urls.ownership_operator, NS_CONNECTOR_SOURCES_PG: urls.connector_writer, NS_MANAGEMENT_SESSIONS_PG: urls.management_issuer } };
+  docs.ui = { version: 2, registry: { connectionEnv: 'NS_UI_REGISTRY_PG', namespace: ns.registry, maxTenants: 10000, refreshMs: 2000 }, theme: 'default' };
+  docs.uiEnvironment = { NS_UI_REGISTRY_PG: urls.ui_registry };
   delete docs.admission;
   return docs;
 }
