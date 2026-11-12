@@ -214,6 +214,12 @@ not measured production limits. Established Engine.IO sessions do not consume th
 new-handshake rate budget. Refusal returns 429 at the edge; there is no application
 process-wide socket cap. Record these settings in capacity results and size them
 for the deployment, including clients sharing an egress address.
+`NS_EDGE_WORKER_CONNECTIONS` independently sets nginx connections per worker
+(default 16,384, range 128..32,768); these slots include upstream connections.
+The container supplies a 65,536 file-descriptor soft/hard limit per process.
+This replaces the template's fixed 1,024-slot renderer input, which could bound
+viewer capacity before the per-IP policy. These are synthetic reference resource
+budgets; the capacity campaign must measure the resulting envelope.
 
 Generated edge and replica files live in private deployment state. Their input
 policy changes take effect through explicit preparation rather than mutating running
