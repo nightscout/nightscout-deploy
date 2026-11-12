@@ -1,0 +1,70 @@
+TAP version 13
+# Subtest: untrusted CA is specifically a chain refusal between exact discovery positives
+ok 1 - untrusted CA is specifically a chain refusal between exact discovery positives
+  ---
+  duration_ms: 3.688052
+  type: 'test'
+  ...
+# Subtest: accepted wrong trust, generic outage, timeout, hostname failure cannot pass TLS negative
+ok 2 - accepted wrong trust, generic outage, timeout, hostname failure cannot pass TLS negative
+  ---
+  duration_ms: 2.006496
+  type: 'test'
+  ...
+# Subtest: dead before/restored negative is refused
+ok 3 - dead before/restored negative is refused
+  ---
+  duration_ms: 0.857049
+  type: 'test'
+  ...
+# Subtest: unknown HTTP Host retains known URL and CA, exact session before and restored
+ok 4 - unknown HTTP Host retains known URL and CA, exact session before and restored
+  ---
+  duration_ms: 0.678854
+  type: 'test'
+  ...
+# Subtest: unknown host cannot credit 200, generic 404/503, untrusted edge or dead restored session
+ok 5 - unknown host cannot credit 200, generic 404/503, untrusted edge or dead restored session
+  ---
+  duration_ms: 0.843565
+  type: 'test'
+  ...
+# Subtest: password denial is exact pinned challenge, not generic HTTP rejection or UI text
+ok 6 - password denial is exact pinned challenge, not generic HTTP rejection or UI text
+  ---
+  duration_ms: 0.182867
+  type: 'test'
+  ...
+# Subtest: actual wrong-credential browser helper observes one bad submit then healthy restored flow
+ok 7 - actual wrong-credential browser helper observes one bad submit then healthy restored flow
+  ---
+  duration_ms: 0.984532
+  type: 'test'
+  ...
+# Subtest: wrong-credential helper rejects issued cookie or untyped challenge without restoring
+ok 8 - wrong-credential helper rejects issued cookie or untyped challenge without restoring
+  ---
+  duration_ms: 0.432549
+  type: 'test'
+  ...
+# Subtest: wrong-credential flow cannot pass dead initial or restored app
+ok 9 - wrong-credential flow cannot pass dead initial or restored app
+  ---
+  duration_ms: 0.541805
+  type: 'test'
+  ...
+# Subtest: actual HTTPS helper explicitly pins TLS verification, SNI, isolated lookup and body bounds
+ok 10 - actual HTTPS helper explicitly pins TLS verification, SNI, isolated lookup and body bounds
+  ---
+  duration_ms: 1.279114
+  type: 'test'
+  ...
+1..10
+# tests 10
+# suites 0
+# pass 10
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 19.566797

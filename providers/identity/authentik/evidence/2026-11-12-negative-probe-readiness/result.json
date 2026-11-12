@@ -1,0 +1,157 @@
+{
+  "version": 1,
+  "kind": "idp-negative-probe-recording-proof",
+  "source": "f2704e8a29d71c76fcd321e9a820515f23b82783",
+  "base": "fba0f82408712a4963a005064f9276dc30721a8c",
+  "applicationCore": "ff5156b984424f1ef34bcef22d5bfa0071354cfa",
+  "bindingTree": "3ba19b609af18184082cbd8aa5f978c9cfde016c",
+  "recordingChecks": [
+    {
+      "name": "probes",
+      "command": [
+        "node",
+        "providers/identity/authentik/tests/native-probes.test.js"
+      ],
+      "exitCode": 0,
+      "counts": {
+        "tests": 10,
+        "pass": 10,
+        "fail": 0,
+        "skipped": 0
+      }
+    },
+    {
+      "name": "profile",
+      "command": [
+        "node",
+        "providers/identity/authentik/tests/profile.test.js"
+      ],
+      "exitCode": 0,
+      "counts": {
+        "tests": 16,
+        "pass": 16,
+        "fail": 0,
+        "skipped": 0
+      }
+    },
+    {
+      "name": "resources",
+      "command": [
+        "node",
+        "providers/identity/authentik/tests/resources.test.js"
+      ],
+      "exitCode": 0,
+      "counts": {
+        "tests": 24,
+        "pass": 24,
+        "fail": 0,
+        "skipped": 0
+      }
+    },
+    {
+      "name": "probe-trust",
+      "command": [
+        "node",
+        "providers/identity/authentik/tests/control.cjs",
+        "probe-trust"
+      ],
+      "exitCode": 1,
+      "counts": {
+        "tests": 10,
+        "pass": 9,
+        "fail": 1,
+        "skipped": 0
+      }
+    },
+    {
+      "name": "probe-host",
+      "command": [
+        "node",
+        "providers/identity/authentik/tests/control.cjs",
+        "probe-host"
+      ],
+      "exitCode": 1,
+      "counts": {
+        "tests": 10,
+        "pass": 9,
+        "fail": 1,
+        "skipped": 0
+      }
+    },
+    {
+      "name": "probe-password",
+      "command": [
+        "node",
+        "providers/identity/authentik/tests/control.cjs",
+        "probe-password"
+      ],
+      "exitCode": 1,
+      "counts": {
+        "tests": 10,
+        "pass": 9,
+        "fail": 1,
+        "skipped": 0
+      }
+    },
+    {
+      "name": "probe-restored",
+      "command": [
+        "node",
+        "providers/identity/authentik/tests/control.cjs",
+        "probe-restored"
+      ],
+      "exitCode": 1,
+      "counts": {
+        "tests": 10,
+        "pass": 8,
+        "fail": 2,
+        "skipped": 0
+      }
+    },
+    {
+      "name": "probe-verification",
+      "command": [
+        "node",
+        "providers/identity/authentik/tests/control.cjs",
+        "probe-verification"
+      ],
+      "exitCode": 1,
+      "counts": {
+        "tests": 10,
+        "pass": 9,
+        "fail": 1,
+        "skipped": 0
+      }
+    },
+    {
+      "name": "restored",
+      "command": [
+        "node",
+        "providers/identity/authentik/tests/native-probes.test.js"
+      ],
+      "exitCode": 0,
+      "counts": {
+        "tests": 10,
+        "pass": 10,
+        "fail": 0,
+        "skipped": 0
+      }
+    }
+  ],
+  "committedProbeExitCode": 0,
+  "nativeExecution": "UNMEASURED",
+  "resourcesActivated": false,
+  "sourceFilesSha256": {
+    "providers/identity/authentik/NATIVE-PLAN.md": "05149093091d0f02862d0785995930f6381d56c2babfc9719962525c70f724ec",
+    "providers/identity/authentik/README.md": "fceca5de3abc526255198e506081bef176cb90b364766290e2501068a10878d8",
+    "providers/identity/authentik/journey.cjs": "7e9d60539e2557e85021f3fbb0eb7a34acb5a04e5dbe6e63b49b42bf6c510588",
+    "providers/identity/authentik/native-probes.cjs": "9a178ee2b33dce36387b3dc7b9e9dd53e4e2f07785480bf6b095180831f37a55",
+    "providers/identity/authentik/run.js": "84e37a3d49c6785e64df65af287ee36ac7dca44f2e69e76d22df9cb7dff02fde",
+    "providers/identity/authentik/tests/control.cjs": "06cc2ca33b46c606d012b7342105cbe7b2340f61baa6c8fe51a5209fd51d4c1c",
+    "providers/identity/authentik/tests/native-probes.test.js": "c8192bbbf162a07b2a173c0eb5de721811b4b605b7480947b1e8ae1b8ed83fa4"
+  },
+  "initialControls": {
+    "probe-password": "GREEN: malformed challenge did not isolate component predicate; test corrected",
+    "probe-verification": "GREEN: test recompiled unchanged source instead of exercising mutated function; test corrected"
+  }
+}
