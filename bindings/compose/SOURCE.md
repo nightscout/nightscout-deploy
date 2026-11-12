@@ -4,7 +4,7 @@
 |---|---|
 | upstream repository | nightscout/cgm-remote-monitor |
 | upstream path | `deploy/multitenant` |
-| upstream commit | `ff5156b984424f1ef34bcef22d5bfa0071354cfa` (joined M7 observations and contract-inventory fixture repair; final acceptance pending) |
+| upstream commit | `761e8f19373c4fbbd6fc888b51b35c9b2eb677a1` (joined M7 fixtures and explicit native-feed opt-in accounting; final acceptance pending) |
 | upstream tree hash of that path | `fdc9f8dd2644b8789c86abeb030fbc0ad7304780` (core's reduced fixture: `config.js`, `demo.js`, `health.js`, `restore.js`, `ui.js`, `README.md`) |
 | import method | Recorded core fixture plus reviewed deployment-owned bootstrap, placement, edge and preparation changes; the patch is checked by `tools/compose-identity-check.sh`. |
 | local delta | [`SOURCE.delta.patch`](SOURCE.delta.patch), against the recorded core fixture. This binding generates fixed API instances and exact maintenance addresses, supports local health probes for network listeners, removes realtime maxSockets and renders explicit per-IP edge budgets. The reduced core fixture stays test-only. |
@@ -182,3 +182,9 @@ These are host qualification fixtures, with no serving-role or edge behavior cha
 The core advance changes only its generic descriptor-version test; runtime inputs
 and the five reduced fixture files remain unchanged. A new exact image and native
 qualification retain their own source attribution; earlier quiet safety is not TIME work.
+
+The native D6 lab now uses the existing explicit opt-in registration helper. Its
+default-tier pending cases are accounted for; enabled empty or skipped labs still
+fail execution accounting, and the full native corpus must execute the lab. Only
+the test header changes from ff515; every Docker source input and this binding
+tree remain unchanged. Prior native evidence keeps its exact attribution.
