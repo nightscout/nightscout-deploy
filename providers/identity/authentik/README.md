@@ -124,6 +124,11 @@ Public CLI failure output is a typed code. Browser failures produce a private
 stage/verdict receipt without token, body, credential or user-profile dumps.
 Provider output and private state are hashed before installation/use.
 
+The joined current-source preparation and diagnostic budgets are in
+[NATIVE-PLAN.md](NATIVE-PLAN.md); original source-only evidence below retains its
+executed source and scope. The resource overlay must precede all source shipping
+commands and remain selected during install/recreation.
+
 ## Native qualification plan — not executed
 
 1. Root selects a SOURCE-admitted post-baseline core/deployment/profile tuple
