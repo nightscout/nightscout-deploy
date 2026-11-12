@@ -4,7 +4,7 @@
 |---|---|
 | upstream repository | nightscout/cgm-remote-monitor |
 | upstream path | `deploy/multitenant` |
-| upstream commit | `761e8f19373c4fbbd6fc888b51b35c9b2eb677a1` (joined M7 fixtures and explicit native-feed opt-in accounting; final acceptance pending) |
+| upstream commit | `9db0ce94f072c8f34aab889f0181afa4269a6758` (joined M7 fixtures with explicit opt-in accounting and umask-independent permission fixture; final acceptance pending) |
 | upstream tree hash of that path | `fdc9f8dd2644b8789c86abeb030fbc0ad7304780` (core's reduced fixture: `config.js`, `demo.js`, `health.js`, `restore.js`, `ui.js`, `README.md`) |
 | import method | Recorded core fixture plus reviewed deployment-owned bootstrap, placement, edge and preparation changes; the patch is checked by `tools/compose-identity-check.sh`. |
 | local delta | [`SOURCE.delta.patch`](SOURCE.delta.patch), against the recorded core fixture. This binding generates fixed API instances and exact maintenance addresses, supports local health probes for network listeners, removes realtime maxSockets and renders explicit per-IP edge budgets. The reduced core fixture stays test-only. |
@@ -188,3 +188,8 @@ default-tier pending cases are accounted for; enabled empty or skipped labs stil
 fail execution accounting, and the full native corpus must execute the lab. Only
 the test header changes from ff515; every Docker source input and this binding
 tree remain unchanged. Prior native evidence keeps its exact attribution.
+
+The unsafe secrets-output fixture now explicitly sets and verifies its intended
+readable mode before testing CLI refusal. This test-only core advance preserves
+the runtime permission guard, all Docker source inputs and this binding tree.
+Original and repaired focused runs retain their actual source/patch attribution.
