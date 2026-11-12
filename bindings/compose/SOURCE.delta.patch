@@ -115,7 +115,7 @@
        alarm:{connectionEnv:'NS_ALARM_PG',namespace:ns.alarm},consumerState:{evaluatorConfigEnv:'MULTITENANT_EVALUATOR_CONFIG'}}};
    const owner={version:1,postgres:{writerConnectionEnv:'NS_OWNER_WRITER_PG',accessConnectionEnv:'NS_OWNER_READER_PG',namespaces:{authorization:ns.authorization,credentials:ns.legacy,access:ns.access}},
      ownerPolicy:{catalogue:ownerCatalogue.slice()},resolution:{mode:'direct-alias'},tenants:api.tenants.map(({id,aliases})=>({id,aliases})),
-@@ -157,35 +191,48 @@
+@@ -157,35 +191,50 @@
    const socketOf=role=>ipc+'/'+role+'.sock';
    const common={...Object.fromEntries(serviceRoles.map(role=>[require('../../lib/server/internal-api/listener-config').envName(role)+'SOCKET',socketOf(role)])),NODE_EXTRA_CA_CERTS:'/run/ns-ca/ca.crt'};
    const own=role=>({NS_SERVE_INTERNAL_SOCKET:socketOf(role)});
@@ -144,11 +144,13 @@
 -  return {namespaces:Object.fromEntries(Object.entries(l.namespaces).filter(([name])=>name!=='control'&&name!=='change_stamps').map(([name,namespace])=>[aliases[name]||name,namespace])),
 +  const aliases={rt_checkpoint:'checkpoint',eval_checkpoint:'evaluator_checkpoint',alarm:'alarm_suppression',outbox:'notification_outbox',display_settings:'tenant_settings'};
 +  const selected=catalogues(), admitted=new Map(require('../../lib/tenant-lifecycle').admittedCatalogue().map(row=>[row.kind,row]));
-+  const tables={};
++  const tables={}, extensions={alarm:['tenant_alarm_suppression'],outbox:['tenant_notification_state','tenant_notification_heads','tenant_notification_requests']};
 +  for(const key of Object.keys(selected).filter(name=>!['control','change_stamps','registry','feed'].includes(name))){
-+    const kind=aliases[key]||key, row=admitted.get(kind);
-+    if(!row)throw new TypeError('Product lifecycle catalogue missing '+kind);
-+    tables[key]=[...(ordered.includes(key)?['tenant_insertion_ordinal']:[]),...row.tables];
++    const kind=aliases[key]||key, row=admitted.get(key==='eval_checkpoint'?'checkpoint':kind);
++    if(!row&&!Object.hasOwn(extensions,key))throw new TypeError('Product lifecycle catalogue missing '+kind);
++    tables[key]=require('../../lib/tenant-lifecycle/insertion-inventory').tableOrder(kind,selected[key],row?row.tables:extensions[key]);
++    const sourceTables=require('../../lib/tenant-operations/catalogues').createdTables(selected[key]);
++    if(JSON.stringify([...tables[key]].sort())!==JSON.stringify([...sourceTables].sort()))throw new TypeError('Product lifecycle table inventory mismatch '+kind);
 +  }
 +  return {namespaces:Object.fromEntries(Object.entries(l.namespaces).filter(([name])=>!['control','change_stamps','registry','feed'].includes(name)).map(([name,namespace])=>[aliases[name]||name,namespace])),
      catalogues:Object.entries(tables).map(([name,tables])=>({kind:aliases[name]||name,candidate:selected[name],tables,secrets:name==='secrets'?['secret_records']:[]}))};
