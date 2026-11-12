@@ -8,6 +8,14 @@ test('private client sends DATA api-secret to exact service/status; no exchange,
  assert.deepEqual(response,{status:200,code:null});assert.equal(selected.hostname,'api-2');assert.equal(selected.port,1337);assert.equal(selected.path,'/api/v1/status.json');assert.equal(selected.method,'GET');assert.deepEqual(selected.headers,{host:target.host,accept:'application/json','api-secret':target.credential});assert.equal(selected.agent,false);
  for(const bad of ['\r','\n','\0'])assert.throws(()=>validate({targets:[{...target,credential:'token'+bad}]}),/INPUT_REFUSED/);
 });
+test('actual private read-to-barrier refuses error-bearing or wrong-shape HTTP200 JSON',async()=>{
+ const {precondition}=require('./fixtures/api-readiness-observation.cjs');
+ const target={service:'api',tenantOrdinal:0,host:'synthetic.example',credential:'synthetic-data-token'};
+ for(const body of [{error:'TENANT_WARMING'},{status:'ok',error:'TENANT_WARMING'},{},null,[],{status:'not-ok'}]){
+  const result=await precondition({targets:[target],read:(t,options)=>read(t,{...options,request:(opts,callback)=>{const req=new EventEmitter();req.destroy=()=>req.emit('error',new Error('synthetic'));req.end=()=>queueMicrotask(()=>{const response=new EventEmitter();response.statusCode=200;callback(response);response.emit('data',Buffer.from(JSON.stringify(body)));response.emit('end');req.emit('close');});return req;}})});
+  assert.equal(result.passed,false,'API_READINESS_INVALID_200_FALSE_PASS');assert.equal(result.failure.code,'API_READINESS_REFUSED');assert.equal(result.failure.observation.errorCode,'API_READINESS_RESPONSE_INVALID');
+ }
+});
 const core=process.env.NS_UI_TEST_CORE;
 test('actual source tenant middleware, secrets derivation, permission and status handler accept DATA carrier only after initialized',{skip:!core},async()=>{
  const source=file=>require(path.join(core,file)),express=source('node_modules/express'),request=source('node_modules/supertest'),scope=source('lib/storage/tenant-scope');const before=scope.getTenancyMode();scope.setTenancyMode('multi');

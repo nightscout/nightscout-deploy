@@ -250,7 +250,8 @@ instance × synthetic seed tenant through a private, authorized status GET. A ba
 readiness client uses only a short-lived mode-0600 DATA-credential input and three
 read-only fixture/input mounts; it receives no operator, database, Vault or IPC
 configuration. Its single 20-second budget permits only typed `TENANT_WARMING`
-responses to remain pending. Any other refusal fails setup. No JWT exchange,
+responses to remain pending. A 200 response must be an object with `status: 'ok'`
+and no error field; malformed/error-bearing successes fail setup, as do other refusals. No JWT exchange,
 socket admission or clinical write precedes this barrier.
 
 The restore interval keeps the four original public-edge B status readers.
