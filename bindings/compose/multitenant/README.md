@@ -224,3 +224,11 @@ budgets; the capacity campaign must measure the resulting envelope.
 Generated edge and replica files live in private deployment state. Their input
 policy changes take effect through explicit preparation rather than mutating running
 role authority or silently changing the fixed maintenance census.
+
+Registry role operation configurations select four bounded marker sessions per
+worker. `NS_OPERATION_LEASE_SESSIONS` at preparation can select another positive
+count within the configured operation pool; preparation records the choice.
+These sessions serialize short registration/completion sections while response
+lifetimes and restore exclusion remain protected. Unselected application profiles
+retain their prior operation path. Four is a synthetic measurement profile, not
+a portable throughput claim; record it alongside the pool sizes.

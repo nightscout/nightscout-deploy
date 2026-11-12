@@ -30,6 +30,7 @@ function prepare (args) {
   if (fs.existsSync(state) || fs.existsSync(path.join(base, '.env'))) throw new Error('State or deployment .env already exists; reuse it or choose a clean deployment checkout');
   const replicas = require('./replicas');
   const apiReplicas = replicas.count();
+  const leaseSessions = require('./registry-plan').leaseSessions();
   require('./edge').policy();
   const source = require('./build').assertCleanSource(path.join(base, '../..'));
   const deployCommit = require('./build').overlay(path.join(base, '../..'))?.deployCommit || source;
@@ -54,7 +55,7 @@ function prepare (args) {
   fs.chmodSync(path.join(state, 'vault/demo.hcl'), 0o644);
   write(path.join(state, 'edge/nginx.conf'), require('./edge').render(fs.readFileSync(path.join(base, 'nginx.compose.conf'), 'utf8'), { replicas: apiReplicas }));
   write(path.join(state, 'compose.replicas.yaml'), replicas.compose(apiReplicas, path.join(base, 'compose.yaml')));
-  write(path.join(base, '.env'), 'NS_DEPLOY_COMMIT=' + deployCommit + '\nNS_API_REPLICAS=' + apiReplicas + '\nNS_DEMO_STATE=' + state + '\nNS_DEMO_BIND=' + options.bind + '\nNS_DEMO_PORT=' + options.port + '\nNS_SOURCE_COMMIT=' + source + '\n');
+  write(path.join(base, '.env'), 'NS_DEPLOY_COMMIT=' + deployCommit + '\nNS_API_REPLICAS=' + apiReplicas + '\nNS_OPERATION_LEASE_SESSIONS=' + leaseSessions + '\nNS_DEMO_STATE=' + state + '\nNS_DEMO_BIND=' + options.bind + '\nNS_DEMO_PORT=' + options.port + '\nNS_SOURCE_COMMIT=' + source + '\n');
   process.stdout.write('Prepared private synthetic deployment state. Run the explicit bootstrap before starting roles.\n');
   return {state, source};
 }

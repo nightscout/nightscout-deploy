@@ -70,6 +70,7 @@ services:
       NS_DEMO_TENANTS: ${NS_DEMO_TENANTS:-2}
       # Fixed service instances; maintenance still addresses every exact instance.
       NS_API_REPLICAS: ${NS_API_REPLICAS:-1}
+      NS_OPERATION_LEASE_SESSIONS: ${NS_OPERATION_LEASE_SESSIONS:-4}
       # Off when empty. Large tenant counts only: see bootstrap.js input().
       NS_BOOTSTRAP_CONFIG_MAX_BYTES: ${NS_BOOTSTRAP_CONFIG_MAX_BYTES:-}
       NS_BOOTSTRAP_OUTPUT: /state

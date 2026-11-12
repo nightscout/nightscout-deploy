@@ -3,6 +3,12 @@
 // The runtime roster and keys come from the registry. The seed remains input
 // to the operator provisioning adapter; it is not copied into role authority.
 const clinical = ['entries','treatments','devicestatus','profile','food','activity'];
+function leaseSessions(source = process.env) {
+  const raw = source.NS_OPERATION_LEASE_SESSIONS === undefined ? '4' : source.NS_OPERATION_LEASE_SESSIONS;
+  const maximum = require('../../lib/server/serve/pool-config').pool('operation', source).max;
+  if (typeof raw !== 'string' || !/^[1-9][0-9]*$/.test(raw) || Number(raw) > maximum) throw new TypeError('NS_OPERATION_LEASE_SESSIONS must fit the selected operation pool');
+  return Number(raw);
+}
 function provisioningNamespaces(ns) {
   return { registry: ns.registry, legacy: ns.legacy, secrets: ns.secrets, authorization: ns.authorization,
     access: ns.access, clock: ns.clock, control: ns.control, settings: ns.display_settings, operatorPolicy: ns.operator_policy };
@@ -37,7 +43,7 @@ function expand(docs, { layout, urls, vaultAddress }) {
     for (const name of Object.keys(env)) if (/^NS_VAULT_\d+$/.test(name) || name === 'NS_ADMISSION_FILE') delete env[name];
     if (role === 'api' || role === 'evaluator' || role === 'realtime') env.NS_DISPLAY_PG = urls.display_reader;
     if (role === 'api' || role === 'evaluator' || role === 'realtime') env.NS_ACTIVITY_PG = urls.activity_reader;
-    delete docs.operations[role].locks; docs.operations[role].registry = { namespace: ns.registry };
+    delete docs.operations[role].locks; docs.operations[role].leaseSessions = leaseSessions(); docs.operations[role].registry = { namespace: ns.registry };
   }
   for (const role of ['evaluator','realtime']) docs.configs[role].changeFeed = { connectionEnv: role === 'evaluator' ? 'NS_EVALUATOR_PG' : 'NS_REALTIME_PG', channel: layout.prefix + '_changes', pageSize: 256, degradedPages: 4, intervalMs: 1000, heartbeatTimeoutMs: 5000 };
   docs.feed = { config: { connectionEnv: 'NS_FEED_PG', namespace: ns.feed, clockNamespace: ns.clock, activityNamespace: ns.control, settingsNamespace: ns.display_settings, policyNamespace: ns.operator_policy,
@@ -71,4 +77,4 @@ function expand(docs, { layout, urls, vaultAddress }) {
   delete docs.admission;
   return docs;
 }
-module.exports = { expand, provisioningNamespaces, checkpoints };
+module.exports = { expand, provisioningNamespaces, checkpoints, leaseSessions };

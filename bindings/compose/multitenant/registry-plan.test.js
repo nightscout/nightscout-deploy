@@ -32,6 +32,7 @@ test('registry role documents have no static roster or per-tenant key lists and 
     assert.equal(docs.admin.environment.ADMIN_INSECURE_BIND_ACKNOWLEDGED, 'true');
     assert.equal(docs.configs.api.postgres.namespaces.settings.endsWith('_settings'), true);
     assert.equal(docs.admin.config.provisioning.checkpoints.length, 2);
+    assert.equal(docs.operations.api.leaseSessions, 4);
     for (const participant of docs.operations.api.participants) assert(!participant.namespaces.includes(docs.operations.api.namespace));
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
@@ -77,4 +78,10 @@ test('control: a source table absent from the admitted restore inventory refuses
   try { assert.throws(() => plan.lifecycle(plan.layout()), /table inventory mismatch access/); }
   finally { product.admittedCatalogue = original; }
   assert.doesNotThrow(() => plan.lifecycle(plan.layout()));
+});
+
+test('bounded lifetime-session selection is explicit and cannot exceed the selected physical pool', () => {
+  const select = require('./registry-plan').leaseSessions;
+  assert.equal(select({}), 4); assert.equal(select({ NS_OPERATION_LEASE_SESSIONS: '8' }), 8);
+  for (const raw of ['0','9','2.5','bad']) assert.throws(() => select({ NS_OPERATION_LEASE_SESSIONS: raw }));
 });
