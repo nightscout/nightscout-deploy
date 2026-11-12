@@ -104,7 +104,7 @@ function custody (selected, command, env) {
   const helper = require('./vault-agent-bootstrap'), receipt = path.join(selected.state, 'vault-agent.launch.json');
   const exists = fs.existsSync(receipt);
   if (exists && helper.digest(JSON.parse(helper.privateBytes(receipt))) !== helper.digest(record)) throw fail('VAULT_AGENT_PROJECT_STATE_CHANGED');
-  if (['plan', 'config', 'status'].includes(command)) return;
+  if (['plan', 'config', 'status', 'build'].includes(command)) return;
   const inspected = spawnSync('docker', ['ps', '-aq', '--filter', 'label=com.docker.compose.project=' + selected.project], { encoding: 'utf8', timeout: 10000, maxBuffer: 65536, env });
   if (inspected.error || inspected.status !== 0) throw fail('VAULT_AGENT_PROJECT_INSPECTION_FAILED');
   const ids = inspected.stdout.trim().split(/\s+/).filter(Boolean);

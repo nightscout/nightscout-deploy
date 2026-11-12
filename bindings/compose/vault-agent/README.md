@@ -53,7 +53,8 @@ evaluator workers, owner role, UI and edge. It writes no SQL settings seed.
 `bootstrap` performs infrastructure and private bootstrap/Agent provisioning only.
 `demo`, `status`, `stop`, `down` and explicit `destroy` retain their usual meanings;
 `destroy` removes only the explicitly owned project's volumes. A private launch
-receipt pins source/deployment/project/state/roster/TTL identity. Unknown existing
+receipt pins source/deployment/project/state/roster/TTL identity before the first
+runtime mutation; image build does not commit a runtime TTL selection. Unknown existing
 projects cannot be adopted for mutation; changed identities refuse. Image and
 working-directory labels are checked before operating on existing containers.
 

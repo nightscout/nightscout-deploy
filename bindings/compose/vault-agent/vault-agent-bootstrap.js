@@ -183,7 +183,7 @@ async function run (command, options) {
   }
   createDirectory(root);
   replacePrivate(path.join(root, 'started.json'), JSON.stringify({ version: 3, identityDigest: digest(identity) }) + '\n', { exclusive: true });
-  const auth = await request('sys/auth');
+  const response = await request('sys/auth'), auth = response.data || response;
   if (auth['approle/'] && auth['approle/'].type !== 'approle') throw fail('VAULT_AGENT_AUTH_METHOD_REFUSED');
   if (!auth['approle/']) await request('sys/auth/approle', { type: 'approle' });
   await request('sys/policies/acl/' + identity.policy, { policy: state.rules }, 'PUT');

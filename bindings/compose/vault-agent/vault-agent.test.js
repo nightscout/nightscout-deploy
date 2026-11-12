@@ -105,3 +105,13 @@ test('shipping plan orders provisioning/commission before API, Agent before all 
   assert.ok(steps[9].includes('prime.js prime')); assert.ok(steps[10].includes('publish-primer.js'));
   assert.ok(steps[11].endsWith('realtime realtime-2 socket-edge evaluator evaluator-2 tenant-admin ui nginx'));
 });
+
+test('image build and read-only commands do not create runtime ownership state', () => {
+  const f = fixture();
+  try {
+    const selected = { sourceCommit, deployCommit, project: 'synthetic', state: f.output, base: '/synthetic/core', apis: ['api'], realtime: ['realtime'], evaluators: ['evaluator'], ttl: '10s', maxTtl: '30s', stdin: 'services: {}' };
+    const before = fs.readdirSync(f.output).sort();
+    for (const command of ['plan', 'config', 'status', 'build']) launch.custody(selected, command, {});
+    assert.deepEqual(fs.readdirSync(f.output).sort(), before);
+  } finally { f.close(); }
+});
