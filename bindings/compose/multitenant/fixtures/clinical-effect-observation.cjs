@@ -42,7 +42,15 @@ async function wait({a,b,first,deadlines,deadline,read,fanout,frameReady=()=>tru
   const classified=observe({a,b,first,after:result.rows,deadlines,now:wallNow(),fanout:copied});attempt.ready=classified.ready;
   assert(now()<deadline,'CLINICAL_COMPLETION_DEADLINE');
   if(summary.frameObservedAt===null&&frameReady())summary.frameObservedAt=now();
-  if(classified.ready&&summary.frameObservedAt!==null&&now()-summary.frameObservedAt>=minObservationMs)return{...classified,observation:summary};
+  if(classified.ready&&summary.frameObservedAt!==null&&now()-summary.frameObservedAt>=minObservationMs){
+   // Complete durable rows are now known. Include events received DURING the
+   // last SQL read before certifying exact fanout, not only its earlier copy.
+   const finalCopiedAt=wallNow(),finalFanout=fanout();for(const tenant of [a,b])assert(finalFanout.get(tenant)?.length<=128,'BOUNDED_FANOUT_REQUIRED');
+   summary.final.finalFanoutCopiedAt=finalCopiedAt;summary.final.fanout=[...finalFanout].map(([tenant,digests])=>({tenant,digests}));
+   const finalVerdict=verdict({a,b,first,after:result.rows,deadlines,now:wallNow(),fanout:finalFanout});
+   assert(now()<deadline,'CLINICAL_COMPLETION_DEADLINE');assert(wallNow()<Math.min(...deadlines.values()),'PROOF_MUST_FINISH_BEFORE_ORIGINAL_REPEAT_DEADLINE');
+   summary.final.validatedAt=wallNow();return{ready:true,verdict:finalVerdict,observation:summary};
+  }
   await delay(Math.min(50,Math.max(0,deadline-now())));
  }throw new Error('CLINICAL_COMPLETION_DEADLINE');}catch(error){error.observation=summary;throw error;}
 }

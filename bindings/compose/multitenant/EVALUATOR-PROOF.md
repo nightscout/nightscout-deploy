@@ -84,3 +84,8 @@ Completion reads also pass a numeric remaining-budget PostgreSQL session
 `statement_timeout` through psql PGOPTIONS; killing a timed-out Docker CLI alone
 is not treated as cancellation of its remote query. Generic pre-transition
 reads retain their existing session settings. No durable database setting changes.
+
+At candidate PASS, the observer recopies current fanout after the final SQL read
+and reruns the unchanged strict verdict against complete durable rows, then
+rechecks both deadlines. Duplicates received during that last read cannot be
+hidden by the earlier fanout copy. Final-copy and validation times are retained.
