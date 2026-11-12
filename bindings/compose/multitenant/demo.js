@@ -38,14 +38,24 @@ function privateFetch (url, options) {
   });
 }
 
-async function responseJson (url, options, fetchImpl, prefix, statuses) {
-  let response;
-  try { response = await fetchImpl(url, options); } catch { throw fail(prefix + '_UNAVAILABLE'); }
-  if (!statuses.includes(response.status)) {
-    try { await response.body?.cancel(); } catch { /* Preserve the redacted refusal. */ }
-    throw fail(prefix + '_REFUSED');
+async function responseJson (url, options, fetchImpl, prefix, statuses, retryWarming = false) {
+  for (;;) {
+    let response;
+    try { response = await fetchImpl(url, options); } catch { throw fail(prefix + '_UNAVAILABLE'); }
+    if (!statuses.includes(response.status)) {
+      let warming = false;
+      if (retryWarming && response.status === 503) {
+        try { warming = (await response.json())?.error === 'TENANT_WARMING'; } catch { /* Unknown refusal stays terminal. */ }
+      }
+      try { await response.body?.cancel(); } catch { /* Preserve the redacted refusal. */ }
+      if (warming && !options.signal.aborted) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        if (!options.signal.aborted) continue;
+      }
+      throw fail(prefix + '_REFUSED');
+    }
+    try { return { status: response.status, value: await response.json() }; } catch { throw fail(prefix + '_SHAPE'); }
   }
-  try { return { status: response.status, value: await response.json() }; } catch { throw fail(prefix + '_SHAPE'); }
 }
 
 async function exchange (config, tenant, { env = process.env, fetchImpl = privateFetch } = {}) {
@@ -58,7 +68,7 @@ async function exchange (config, tenant, { env = process.env, fetchImpl = privat
   const issued = (await responseJson(config.apiOrigin + '/api/v2/authorization/request/' + encodeURIComponent(credential), {
     method: 'GET', redirect: 'error', signal: AbortSignal.timeout(10000),
     headers: { host: tenant.host, accept: 'application/json' }
-  }, fetchImpl, 'COMPOSE_DEMO_EXCHANGE', [200])).value;
+  }, fetchImpl, 'COMPOSE_DEMO_EXCHANGE', [200], true)).value;
   if (!issued || typeof issued !== 'object' || Array.isArray(issued) ||
       Object.keys(issued).sort().join(',') !== 'exp,iat,permissionGroups,sub,token' ||
       typeof issued.token !== 'string' || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(issued.token) ||
@@ -78,7 +88,7 @@ async function request (config, tenant, route, { method = 'GET', body, env = pro
   const { status, value } = await responseJson(config.apiOrigin + route, { method, redirect: 'error', signal: AbortSignal.timeout(10000),
     headers: { host: tenant.host, accept: 'application/json', authorization: 'Bearer ' + token,
       ...(body === undefined ? {} : { 'content-type': 'application/json' }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) },
-  fetchImpl, 'COMPOSE_DEMO_HTTP', [200, 201]);
+  fetchImpl, 'COMPOSE_DEMO_HTTP', [200, 201], method === 'GET');
   if (value?.status !== status) throw fail('COMPOSE_DEMO_HTTP_SHAPE');
   return value;
 }
