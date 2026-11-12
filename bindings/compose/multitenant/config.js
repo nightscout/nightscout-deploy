@@ -209,11 +209,13 @@ function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress,
 function lifecycle(l) {
   const aliases={rt_checkpoint:'checkpoint',eval_checkpoint:'evaluator_checkpoint',alarm:'alarm_suppression',outbox:'notification_outbox',display_settings:'tenant_settings'};
   const selected=catalogues(), admitted=new Map(require('../../lib/tenant-lifecycle').admittedCatalogue().map(row=>[row.kind,row]));
-  const tables={};
+  const tables={}, extensions={alarm:['tenant_alarm_suppression'],outbox:['tenant_notification_state','tenant_notification_heads','tenant_notification_requests']};
   for(const key of Object.keys(selected).filter(name=>!['control','change_stamps','registry','feed'].includes(name))){
-    const kind=aliases[key]||key, row=admitted.get(kind);
-    if(!row)throw new TypeError('Product lifecycle catalogue missing '+kind);
-    tables[key]=[...(ordered.includes(key)?['tenant_insertion_ordinal']:[]),...row.tables];
+    const kind=aliases[key]||key, row=admitted.get(key==='eval_checkpoint'?'checkpoint':kind);
+    if(!row&&!Object.hasOwn(extensions,key))throw new TypeError('Product lifecycle catalogue missing '+kind);
+    tables[key]=require('../../lib/tenant-lifecycle/insertion-inventory').tableOrder(kind,selected[key],row?row.tables:extensions[key]);
+    const sourceTables=require('../../lib/tenant-operations/catalogues').createdTables(selected[key]);
+    if(JSON.stringify([...tables[key]].sort())!==JSON.stringify([...sourceTables].sort()))throw new TypeError('Product lifecycle table inventory mismatch '+kind);
   }
   return {namespaces:Object.fromEntries(Object.entries(l.namespaces).filter(([name])=>!['control','change_stamps','registry','feed'].includes(name)).map(([name,namespace])=>[aliases[name]||name,namespace])),
     catalogues:Object.entries(tables).map(([name,tables])=>({kind:aliases[name]||name,candidate:selected[name],tables,secrets:name==='secrets'?['secret_records']:[]}))};

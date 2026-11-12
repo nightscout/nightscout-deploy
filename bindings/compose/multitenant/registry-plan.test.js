@@ -57,3 +57,22 @@ test('control: adding the operation control schema to protected data refuses lau
   try { assert.throws(() => plan.validateFiles(directory, docs), /namespace mismatch/); }
   finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
+
+test('restore inventory admits the independent evaluator checkpoint and all current product metadata families', () => {
+  const inventory = plan.lifecycle(plan.layout());
+  const lifecycle = require('../../lib/tenant-lifecycle').createLifecycle({ catalogues: inventory.catalogues });
+  const kinds = inventory.catalogues.map(row => row.kind);
+  assert(kinds.includes('checkpoint') && kinds.includes('evaluator_checkpoint'));
+  assert.deepEqual(inventory.catalogues.find(row => row.kind === 'checkpoint').tables, inventory.catalogues.find(row => row.kind === 'evaluator_checkpoint').tables);
+  assert(inventory.catalogues.find(row => row.kind === 'access').tables.includes('management_session_requests'));
+  assert(inventory.catalogues.find(row => row.kind === 'tenant_settings').tables.includes('tenant_connector_sources'));
+  for (const kind of ['registry', 'feed', 'control', 'change_stamps']) assert(!kinds.includes(kind));
+  assert.equal(typeof lifecycle.exportTenant, 'function');
+});
+test('control: a source table absent from the admitted restore inventory refuses instead of being omitted', () => {
+  const product = require('../../lib/tenant-lifecycle'), original = product.admittedCatalogue;
+  product.admittedCatalogue = () => original().map(row => row.kind === 'access' ? { ...row, tables: row.tables.filter(name => name !== 'management_session_requests') } : row);
+  try { assert.throws(() => plan.lifecycle(plan.layout()), /table inventory mismatch access/); }
+  finally { product.admittedCatalogue = original; }
+  assert.doesNotThrow(() => plan.lifecycle(plan.layout()));
+});
