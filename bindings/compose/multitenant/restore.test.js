@@ -92,3 +92,14 @@ test('registry operator cohort uses one exact typed namespace label while static
     registry.control.registry=value;assert.throws(()=>validateConfig(registry,env),{code:'COMPOSE_OPERATOR_CONFIG_REFUSED'});
   }
 });
+
+test('demo retries only typed warming GET exchange/read with the original absolute signal; other refusals and writes stay terminal',async()=>{
+  const c=config(),tenant=c.tenants[0],issued={token:'a.b.c',iat:1,exp:28801,sub:'synthetic',permissionGroups:[['api:*:read']]};
+  const response=(status,value)=>({status,json:async()=>value,body:{cancel:async()=>{}}});
+  let calls=0;const signals=[];
+  const fetchImpl=async(url,options)=>{calls++;signals.push(options.signal);if(calls===1||calls===3)return response(503,{error:'TENANT_WARMING'});return response(200,calls===2?issued:{status:200,result:[]});};
+  assert.deepEqual((await request(c,tenant,'/api/v3/entries',{env,fetchImpl})).result,[]);
+  assert.equal(calls,4);assert.equal(signals[0],signals[1]);assert.equal(signals[2],signals[3]);
+  for(const code of ['AUTHORITY_UNAVAILABLE','OTHER']){let count=0;await assert.rejects(request(c,tenant,'/api/v3/entries',{env,fetchImpl:async()=>{count++;return response(503,{error:code});}}),{code:'COMPOSE_DEMO_EXCHANGE_REFUSED'});assert.equal(count,1);}
+  let mutations=0;await assert.rejects(request(c,tenant,'/api/v3/entries',{env,method:'POST',body:{},fetchImpl:async(url,options)=>{if(options.method==='GET')return response(200,issued);mutations++;return response(503,{error:'TENANT_WARMING'});}}),{code:'COMPOSE_DEMO_HTTP_REFUSED'});assert.equal(mutations,1);
+});
