@@ -55,7 +55,7 @@ function catalogues() {
 function layout(prefix = 'nsdemo') {
   quote(prefix);
   if (prefix.length > 24) throw new TypeError('Deployment prefix too long');
-  const names = ['api','readiness','realtime','evaluator','alarm','suppression','outbox','owner_writer','owner_reader','root_writer','operator','provisioner','display_reader','activity_reader','feed_reader','ownership_operator','connector_writer','management_issuer','ui_registry',
+  const names = ['api','readiness','realtime','evaluator','alarm','suppression','outbox','owner_writer','owner_reader','root_writer','operator','provisioner','display_reader','activity_reader','feed_reader','feed_listener','ownership_operator','connector_writer','management_issuer','ui_registry',
     ...serviceRoles.map(name=>'lifetime_'+name.replace('-','_'))];
   return {prefix,owner:prefix+'_owner',feedOwner:prefix+'_feed_owner',managementAuthorityOwner:prefix+'_management_authority',namespaces:Object.fromEntries(Object.keys(catalogues()).map(name=>[name,prefix+'_'+name])),
     roles:Object.fromEntries(names.map(name=>[name,prefix+'_'+name])),mount:prefix+'_transit'};
@@ -127,7 +127,7 @@ function grants(l) {
   // Decision root-writer-fenced: root_writer joins the lower-role window reads; the api opens its
   // subject-admin and read-only settings/activity connections join the tenant
   // operation window; its admission requires these three metadata reads.
-  for(const who of Object.keys(r).filter(name=>!['operator','ownership_operator','provisioner','feed_reader','connector_writer','management_issuer','ui_registry'].includes(name))){
+  for(const who of Object.keys(r).filter(name=>!['operator','ownership_operator','provisioner','feed_reader','feed_listener','connector_writer','management_issuer','ui_registry'].includes(name))){
     schema('control',who);for(const name of ['schema_migrations','tenant_lifecycle_windows','tenant_lifecycle_operations'])grant('SELECT',table('control',name),who);
     if(who.startsWith('lifetime_')){
       grant('INSERT(tenant_id,operation_id,generation),UPDATE(finished)',table('control','tenant_lifecycle_operations'),who);

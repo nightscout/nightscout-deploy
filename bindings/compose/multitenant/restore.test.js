@@ -4,7 +4,7 @@
 // restore verdict: these prove that the demonstration refuses false witnesses.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { validateConfig, argumentsFor } = require('./restore');
+const { validateConfig, argumentsFor, cohortTenants } = require('./restore');
 const { runDemo, request } = require('./demo');
 const A = '11111111-1111-4111-8111-111111111111', B = '22222222-2222-4222-8222-222222222222';
 const env = { A_TOKEN: 'private-a-token', B_TOKEN: 'private-b-token', NS_OPERATOR_PG: 'postgres://operator:private-password@postgres/demo',
@@ -82,4 +82,13 @@ test('missing cohort refuses before the first demo mutation', async () => {
   input.call = async () => { called = true; throw new Error('unexpected request'); };
   await assert.rejects(runDemo(input), {code: 'RESTORE_COHORT_INCOMPLETE'});
   assert.equal(called, false);
+});
+
+test('registry operator cohort uses one exact typed namespace label while static compatibility stays explicit',()=>{
+  assert.deepEqual(cohortTenants(validateConfig(config(),env)),[A,B]);
+  const registry=config();registry.control.registry={namespace:'synthetic_registry'};
+  assert.deepEqual(cohortTenants(validateConfig(registry,env)),['registry:synthetic_registry']);
+  for(const value of [{namespace:'public'},{namespace:'pg_catalog'},{namespace:'information_schema'},{namespace:'synthetic_registry',tenants:[A]},{namespace:'registry:synthetic_registry'}]){
+    registry.control.registry=value;assert.throws(()=>validateConfig(registry,env),{code:'COMPOSE_OPERATOR_CONFIG_REFUSED'});
+  }
 });

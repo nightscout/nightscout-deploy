@@ -87,3 +87,14 @@ test('bounded lifetime-session selection is explicit and cannot exceed the selec
   assert.equal(select({}), 4); assert.equal(select({ NS_OPERATION_LEASE_SESSIONS: '8' }), 8);
   for (const raw of ['0','9','2.5','bad']) assert.throws(() => select({ NS_OPERATION_LEASE_SESSIONS: raw }));
 });
+
+test('raw LISTEN transport has a distinct login without any table, function or replication grant',()=>{
+  const {layout,urls,docs}=generated();
+  assert.notEqual(layout.roles.feed_listener,layout.roles.feed_reader);
+  for(const role of ['realtime','evaluator']){
+    assert.equal(docs.configs[role].changeFeed.connectionEnv,'NS_FEED_LISTENER_PG');
+    assert.equal(docs.environments[role].NS_FEED_LISTENER_PG,urls.feed_listener);
+    assert.notEqual(urls.feed_listener,urls[role]);
+  }
+  assert.ok(!plan.grants(layout).some(sql=>sql.includes('"'+layout.roles.feed_listener+'"')),'LISTEN needs no schema/table/function grants');
+});
