@@ -4,11 +4,11 @@
 |---|---|
 | upstream repository | nightscout/cgm-remote-monitor |
 | upstream path | `deploy/multitenant` |
-| upstream commit | `079a3b4c9a6ece9610b32025a0826f756fbb23f0` (local M7 controlled-placement integration; final acceptance pending) |
+| upstream commit | `d5e2e874659155c952b5b5deb862f12f982ac02e` (joined M7 diagnostics and controlled-placement source; final acceptance pending) |
 | upstream tree hash of that path | `fdc9f8dd2644b8789c86abeb030fbc0ad7304780` (core's reduced fixture: `config.js`, `demo.js`, `health.js`, `restore.js`, `ui.js`, `README.md`) |
 | import method | Recorded core fixture plus reviewed deployment-owned bootstrap, placement, edge and preparation changes; the patch is checked by `tools/compose-identity-check.sh`. |
 | local delta | [`SOURCE.delta.patch`](SOURCE.delta.patch), against the recorded core fixture. This binding generates fixed API instances and exact maintenance addresses, supports local health probes for network listeners, removes realtime maxSockets and renders explicit per-IP edge budgets. The reduced core fixture stays test-only. |
-| tree hash here | `37f658275d9f7f6d4dd953f3140c34b1b07abd1b` |
+| tree hash here | `8c12259b1dcc179be0738f0ce775c0bd6cd62626` |
 | imported on | 2026-11-11 |
 
 History: first imported 2026-11-09 from `ed2ced00c80bd0a6a7d75f834d2c6e2af8c71364` (tree
@@ -110,3 +110,9 @@ views and private controlled publication. The default remains unsharded. Explici
 M7 diagnostics settings are recorded in preparation, off by default. Focused product
 parser/client/driver checks pass; actual full-stack move/recovery and the frozen
 comprehensive campaign remain separate acceptance boundaries.
+
+Realtime registry admission repair: the serving role holds the narrow resolver and
+enumerator capabilities, without raw registry/key table reads. The strict source
+readiness guard remains unchanged. Selected placement launchers include every fixed
+worker and the socket edge. Default-topology fresh-image diagnostics and controlled
+move/recovery acceptance retain their separate evidence scopes.
