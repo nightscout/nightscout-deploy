@@ -12,10 +12,10 @@ function load(file) {
   if (typeof config.ownerConsumer !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(config.ownerConsumer)) throw fail('PRIMER_CONFIG_INVALID');
   return config;
 }
-function request(origin, route, { method = 'GET', body, headers = {} } = {}) {
+function request(origin, route, { method = 'GET', body, headers = {}, timeoutMs = 60000 } = {}) {
   const url = new URL(route, origin), bytes = body === undefined ? undefined : Buffer.from(JSON.stringify(body));
   return new Promise((resolve, reject) => {
-    const req = http.request(url, { method, headers: { accept: 'application/json', ...headers, ...(bytes ? { 'content-type': 'application/json', 'content-length': bytes.length } : {}) }, timeout: 60000 }, res => {
+    const req = http.request(url, { method, headers: { accept: 'application/json', ...headers, ...(bytes ? { 'content-type': 'application/json', 'content-length': bytes.length } : {}) }, timeout: timeoutMs }, res => {
       const chunks = []; let size = 0;
       res.on('data', chunk => { size += chunk.length; if (size > 16777216) req.destroy(fail('PRIMER_RESPONSE_TOO_LARGE')); else chunks.push(chunk); });
       res.on('end', () => { try { resolve({ status: res.statusCode, body: JSON.parse(Buffer.concat(chunks).toString('utf8')) }); } catch { reject(fail('PRIMER_RESPONSE_INVALID')); } });
@@ -23,6 +23,16 @@ function request(origin, route, { method = 'GET', body, headers = {} } = {}) {
     });
     req.on('timeout', () => req.destroy(fail('PRIMER_TIMEOUT'))); req.on('error', () => reject(fail('PRIMER_CONNECTION_FAILED'))); req.end(bytes);
   });
+}
+async function waitForTenant(origin, headers, { timeoutMs = 60000, pollMs = 200, now = Date.now, delay = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
+  const deadline = now() + timeoutMs;
+  while (now() < deadline) {
+    const response = await request(origin, '/api/v2/authorization/roles', { headers, timeoutMs: Math.min(5000, deadline - now()) });
+    if (response.status === 200 && Array.isArray(response.body)) return response.body;
+    if (response.status !== 503 || response.body.error !== 'TENANT_WARMING') throw fail('PRIMER_DATA_API_REFUSED_' + response.status);
+    await delay(Math.min(pollMs, Math.max(0, deadline - now())));
+  }
+  throw fail('PRIMER_TENANT_WARM_TIMEOUT');
 }
 function privateWrite(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
@@ -66,7 +76,7 @@ async function prime(config, directory) {
       if (response.status < 200 || response.status >= 300) throw fail('PRIMER_DATA_API_REFUSED_' + response.status);
       return response.body;
     };
-    const roles = await call('/api/v2/authorization/roles');
+    const roles = await waitForTenant(config.apiOrigin, headers);
     if (!roles.some(role => role.name === 'demo')) await call('/api/v2/authorization/roles', { method: 'POST', body: { name: 'demo', permissions: ['api:*:read','api:*:create,update,delete','notifications:*:ack'] } });
     let subjects = await call('/api/v2/authorization/subjects');
     if (!subjects.some(subject => subject.name === 'Synthetic demo uploader')) await call('/api/v2/authorization/subjects', { method: 'POST', body: { name: 'Synthetic demo uploader', roles: ['demo'] } });
@@ -107,4 +117,4 @@ async function main() {
   console.log(JSON.stringify(await (operation === 'provision' ? provision(config, directory) : prime(config, directory))));
 }
 if (require.main === module) main().catch(error => { console.error(JSON.stringify({ error: /^[A-Z0-9_]{1,100}$/.test(error.code || '') ? error.code : 'PRIMER_FAILED' })); process.exitCode = 1; });
-module.exports = { load, request, provision, prime, privateWrite };
+module.exports = { load, request, waitForTenant, provision, prime, privateWrite };
