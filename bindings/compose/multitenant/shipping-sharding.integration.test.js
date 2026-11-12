@@ -8,12 +8,13 @@ const selected=process.env.NS_COMPOSE_SHARDING_STATE;
 test('actual shipping edge preserves registered Host polling/WebSocket/API3 and real restore continuity',{skip:!selected,timeout:120000},async()=>{
   const core=process.env.NS_UI_TEST_CORE;assert.ok(core,'explicit source');
   const state=path.resolve(selected),project=process.env.NS_COMPOSE_SHARDING_PROJECT,port=Number(process.env.NS_COMPOSE_SHARDING_PORT);
-  assert.match(project||'',/^ns-rt-binding(?:-clean|-final|-proof)?-[0-9]{8}$/);assert.ok(port>=1024&&port<=65535);
+  const evaluatorProfile=process.env.NS_COMPOSE_SHARDING_PROFILE==='evaluator';
+  assert.match(project||'',evaluatorProfile?/^ns-evaluator-binding(?:-proof)?-[0-9]{8}(?:-[a-z][a-z0-9]{0,15})?$/:/^ns-rt-binding(?:-clean|-final|-proof)?-[0-9]{8}$/);assert.ok(port>=1024&&port<=65535);
   const credentials=JSON.parse(fs.readFileSync(path.join(state,'primer/tenants.json'),'utf8')).tenants;
   const roots=JSON.parse(fs.readFileSync(path.join(state,'primer/provisioned.json'),'utf8'));
   assert.equal(credentials.length,2);const [a,b]=credentials;
   const {io}=require(path.join(core,'node_modules/socket.io-client'));
-  const sockets=[],agents=[];
+  const sockets=[],agents=[];let settingsTraffic=false;const settingsTasks=[],settingsErrors=[];let settingsReads=0;
   const until=async(fn,label,ms=20000)=>{const deadline=Date.now()+ms;while(Date.now()<deadline){if(await fn())return;await new Promise(r=>setTimeout(r,30));}throw new Error('COMPOSE_SHARD_WAIT '+label);};
   function agent(){const value=new http.Agent({keepAlive:true,lookup:(host,options,done)=>options.all?done(null,[{address:'127.0.0.1',family:4}]):done(null,'127.0.0.1',4)});agents.push(value);return value;}
   function client(tenant,namespace,transport){
@@ -38,17 +39,26 @@ test('actual shipping edge preserves registered Host polling/WebSocket/API3 and 
     await until(()=>mainB.frames.some(frame=>frame.sgvs.some(row=>row.mgdl===159)),'B actual data progression');
     await new Promise(r=>setTimeout(r,6500));assert.equal(mainA.socket.connected,true,'stock idle polling survives ordinary empty poll');assert.equal(mainB.socket.id,bSession);
     const folder=path.join(core,'deploy/multitenant');
-    const args=['compose','--project-name',project,'--env-file','.env','-f','compose.yaml','-f',path.join(state,'compose.replicas.yaml'),'-f',path.join(state,'compose.realtime.yaml'),'--profile','ops','run','--rm','--no-deps','demo'];
+    const args=['compose','--project-name',project,'--env-file','.env','-f','compose.yaml','-f',path.join(state,'compose.replicas.yaml'),...((evaluatorProfile?['compose.evaluator.yaml']:['compose.realtime.yaml']).flatMap(file=>['-f',path.join(state,file)])),'--profile','ops','run','--rm','--no-deps','demo'];
     const override=process.env.NS_COMPOSE_SHARDING_RESTORE_OVERRIDE;
     if(override){assert.ok(path.isAbsolute(override));args.splice(args.length-1,0,'--volume',override+':/opt/app/deploy/multitenant/restore.js:ro');}
     const demoOverride=process.env.NS_COMPOSE_SHARDING_DEMO_OVERRIDE;
     if(demoOverride){assert.ok(path.isAbsolute(demoOverride));args.splice(args.length-1,0,'--volume',demoOverride+':/opt/app/deploy/multitenant/demo.js:ro');}
+    if(evaluatorProfile&&process.env.NS_EVALUATOR_SETTINGS_TRAFFIC==='1'){
+      settingsTraffic=true;
+      for(let worker=0;worker<4;worker++)settingsTasks.push((async()=>{
+        while(settingsTraffic){try{const seen=await request(b,'/api/v1/status.json',{token:bToken});if(seen.status!==200)throw new Error('B_SETTINGS_STATUS_'+seen.status+'_'+String(seen.body?.error||'UNKNOWN').replace(/[^A-Z0-9_]/g,'').slice(0,80));settingsReads++;}catch(error){settingsErrors.push(error.message);break;}}
+      })());
+      await until(()=>settingsReads>=4,'continuous B settings readers');
+    }
     const record=path.join(state,'artifacts/shipping-restore.log');const out=fs.openSync(record,'w',0o600);
     const child=spawn('docker',args,{cwd:folder,stdio:['ignore',out,out]});const exit=await new Promise((resolve,reject)=>{child.once('exit',resolve);child.once('error',reject);});fs.closeSync(out);
+    settingsTraffic=false;await Promise.all(settingsTasks);assert.deepEqual(settingsErrors,[],'B settings traffic remains healthy');
+    if(settingsTasks.length){assert.ok(settingsReads>=4);console.log('B_SETTINGS_TRAFFIC reads'+settingsReads+' workers4 errors0');}
     assert.equal(exit,0,'actual shipping restore/census demo refused; inspect private artifact');
     const summary=JSON.parse(fs.readFileSync(record,'utf8').trim().split('\n').at(-1));assert.equal(summary.state,'passed');assert.equal(summary.observations.bCommittedDuringRestore,true);
     await until(()=>mainB.frames.some(frame=>frame.sgvs.some(row=>row.mgdl===152)),'actual B update during restore reaches unchanged socket');assert.equal(mainB.socket.id,bSession);
     assert.equal(mainB.connections,1,'unrelated B never reconnects during A restore');
     console.log('COMPOSE_SHARD_PROOF stockPolling stockWebSocket API3reload registeredHost tenantIsolation idlePolling actualRestore census BContinuity');
-  } finally {for(const socket of sockets){socket.io.reconnection(false);socket.disconnect();}await new Promise(resolve=>setTimeout(resolve,300));for(const value of agents)value.destroy();}
+  } finally {settingsTraffic=false;await Promise.all(settingsTasks);for(const socket of sockets){socket.io.reconnection(false);socket.disconnect();}await new Promise(resolve=>setTimeout(resolve,300));for(const value of agents)value.destroy();}
 });
