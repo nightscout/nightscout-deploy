@@ -4,11 +4,11 @@
 |---|---|
 | upstream repository | nightscout/cgm-remote-monitor |
 | upstream path | `deploy/multitenant` |
-| upstream commit | `e79fc1e0afd5051f57a18cc8809befcf62af343e` (local M7 integration source; final acceptance pending) |
-| upstream tree hash of that path | `37730434b08d5e9b54d56c9455aecc62ff001be7` (core's reduced fixture: `config.js`, `demo.js`, `health.js`, `restore.js`, `ui.js`, `README.md`) |
+| upstream commit | `fae4a925abf4acf025e4ee3e3c53f028d2e7b3db` (local M7 integration source; final acceptance pending) |
+| upstream tree hash of that path | `fdc9f8dd2644b8789c86abeb030fbc0ad7304780` (core's reduced fixture: `config.js`, `demo.js`, `health.js`, `restore.js`, `ui.js`, `README.md`) |
 | import method | Recorded core fixture plus reviewed deployment-owned bootstrap, placement, edge and preparation changes; the patch is checked by `tools/compose-identity-check.sh`. |
 | local delta | [`SOURCE.delta.patch`](SOURCE.delta.patch), against the recorded core fixture. This binding generates fixed API instances and exact maintenance addresses, supports local health probes for network listeners, removes realtime maxSockets and renders explicit per-IP edge budgets. The reduced core fixture stays test-only. |
-| tree hash here | `c7c4dae876d4b6282408f54ea88da597f392f0b9` |
+| tree hash here | `55e12edcfa9195e12928d4b7d8051dfb7c5cdabb` |
 | imported on | 2026-11-11 |
 
 History: first imported 2026-11-09 from `ed2ced00c80bd0a6a7d75f834d2c6e2af8c71364` (tree
