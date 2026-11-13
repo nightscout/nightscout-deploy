@@ -8,7 +8,7 @@
 | upstream tree hash of that path | `fdc9f8dd2644b8789c86abeb030fbc0ad7304780` (core's reduced fixture: `config.js`, `demo.js`, `health.js`, `restore.js`, `ui.js`, `README.md`) |
 | import method | Recorded core fixture plus reviewed deployment-owned bootstrap, placement, edge and preparation changes; the patch is checked by `tools/compose-identity-check.sh`. |
 | local delta | [`SOURCE.delta.patch`](SOURCE.delta.patch), against the recorded core fixture. This binding generates fixed API instances and exact maintenance addresses, supports local health probes for network listeners, removes realtime maxSockets and renders explicit per-IP edge budgets. The reduced core fixture stays test-only. Selected connection-budget support adds explicit source-derived PostgreSQL sizing, finite worker/observer credits, private one-use tickets and actual-close quiescence; default behavior remains unchanged. See [`multitenant/CONNECTION-BUDGET.md`](multitenant/CONNECTION-BUDGET.md). |
-| tree hash here | `21a7c2c52a2b2d5e0112b0866d2440f93f04e10e` |
+| tree hash here | `cb1e8d44b6a6b2ce46d70ba1a99cf92d4d96f607` |
 | imported on | 2026-11-12 |
 
 History: first imported 2026-11-09 from `ed2ced00c80bd0a6a7d75f834d2c6e2af8c71364` (tree
