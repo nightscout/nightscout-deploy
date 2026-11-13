@@ -12,12 +12,12 @@ const fail = code => Object.assign(new Error(code), { code });
 const validName = value => typeof value === 'string' && NAME.test(value) && value !== 'public' && value !== 'information_schema' && !value.startsWith('pg_');
 const exact = (v, keys) => v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).every(k => keys.includes(k)) && keys.every(k => Object.hasOwn(v, k));
 
-function validateConfig (value, env = process.env) {
+function validateConfig (value, env = process.env, requireTokens = true) {
   if (!exact(value, ['version', 'tenants', 'apiOrigin', 'control', 'namespaces', 'catalogues', 'drainTimeoutMs']) || value.version !== 1 ||
       !Number.isSafeInteger(value.drainTimeoutMs) || value.drainTimeoutMs < 1 || value.drainTimeoutMs > 2147483647 ||
       !Array.isArray(value.tenants) || value.tenants.length !== 2 ||
       !value.tenants.every(t => exact(t, ['id', 'host', 'tokenEnv']) && UUID.test(t.id) && /^[a-z0-9.-]+$/.test(t.host) &&
-        /^[A-Z][A-Z0-9_]*$/.test(t.tokenEnv) && typeof env[t.tokenEnv] === 'string' && env[t.tokenEnv].length > 0) ||
+        /^[A-Z][A-Z0-9_]*$/.test(t.tokenEnv) && (!requireTokens || typeof env[t.tokenEnv] === 'string' && env[t.tokenEnv].length > 0)) ||
       new Set(value.tenants.map(t => t.id)).size !== 2 || new Set(value.tenants.map(t => t.host)).size !== 2 ||
       !exact(value.control, ['namespace', 'locks', 'participants', ...(Object.hasOwn(value.control || {}, 'registry') ? ['registry'] : [])]) || !validName(value.control.namespace) ||
       value.control.registry !== undefined && (!exact(value.control.registry, ['namespace']) || !validName(value.control.registry.namespace)) ||
@@ -115,6 +115,14 @@ async function restore (config, artifact, env = process.env, hooks = {}) {
   } finally { try { await cohort.close(); } finally { await pool.end(); } }
 }
 
+// The admitted entry owns construction; this adapter accepts only its branded
+// context. Preserve registry scope and the selected private placement manifest.
+function validateRecoveryConfig(value,env){return validateConfig(value,env,false);}
+async function recoveryCohort(config,env){return require('../../lib/server/serve/operation-cohort').createRemote({namespace:config.control.namespace,tenants:cohortTenants(config),participants:config.control.participants,placement:operationPlacement(env)});}
+function recoveryController(config,cohort,context){
+ if(!require('./lifecycle-operator-entry').isContext(context))throw fail('LIFECYCLE_OPERATOR_CONTEXT');
+ context.check();return require('../../lib/tenant-lifecycle/restore-resume').create({namespace:config.control.namespace,locks:config.control.locks,pool:context.pool,cohort,statementTimeoutMs:10000,lockWaitMs:2000});
+}
 function argumentsFor (args) {
   const command = args.shift();
   if (!['export', 'restore'].includes(command)) throw fail('COMPOSE_OPERATOR_USAGE');
@@ -150,4 +158,4 @@ if (require.main === module) main().then(result => process.stdout.write(JSON.str
     recovery: 'Inspect persisted operation state. Do not automatically replay or reopen the tenant.' }) + '\n');
   process.exitCode = 1;
 });
-module.exports = { validateConfig, loadConfig, lifecycleFor, tenantFor, cohortTenants, ready, capture, restore, argumentsFor, main };
+module.exports = { validateRecoveryConfig, recoveryCohort, recoveryController, validateConfig, loadConfig, lifecycleFor, tenantFor, cohortTenants, ready, capture, restore, argumentsFor, main };

@@ -13,10 +13,11 @@ function prepare (args) {
   const options = {project:project.DEFAULT, bind: '127.0.0.1', port: '18080', state: path.join(base, '.state')};
   for (let i = 0; i < args.length; i += 2) {
     const key = args[i].slice(2);
-    if (!['--bind', '--port', '--state', '--connection-budget', '--project', '--backend-subnet', '--edge-subnet'].includes(args[i]) || !args[i + 1]) throw new Error('Invalid preparation arguments');
+    if (!['--bind', '--port', '--state', '--connection-budget', '--project', '--backend-subnet', '--edge-subnet', '--lifecycle-operator'].includes(args[i]) || !args[i + 1]) throw new Error('Invalid preparation arguments');
     options[key] = args[i + 1];
   }
   project.validate(options.project);
+  if(options['lifecycle-operator']!==undefined&&(!options['connection-budget']||options['lifecycle-operator']!=='enabled'))throw new Error('LIFECYCLE_OPERATOR_SELECTION');
   const selectedNetworks=require('./networks').select(options['backend-subnet'],options['edge-subnet']);
   if (!['127.0.0.1', '169.254.1.1'].includes(options.bind) ||
       !Object.values(os.networkInterfaces()).flat().some(row => row.address === options.bind)) {
@@ -53,6 +54,7 @@ function prepare (args) {
   if(connectionBudget){
     fs.mkdirSync(path.join(state,'connection-budget'),{mode:0o700});
     fs.copyFileSync(path.join(base,'postgres-ready.sh'),path.join(state,'connection-budget/postgres-ready.sh'),fs.constants.COPYFILE_EXCL);fs.chmodSync(path.join(state,'connection-budget/postgres-ready.sh'),0o444);
+    if(options['lifecycle-operator'])write(path.join(state,'connection-budget/operator-enabled.json'),JSON.stringify({version:1,kind:'fresh-lifecycle-operator'})+'\n');
     write(path.join(state,'connection-budget/profile.json'),JSON.stringify(connectionBudget)+'\n');
     write(path.join(state,'connection-budget/preparation.json'),JSON.stringify({kind:'source-derived-connection-sizing',source:{coreCommit:source,deployCommit},requiredMaximum:budgetResolution.requiredMaximum,configuredMaximum:connectionBudget.resource.serverMaximum,derived:budgetResolution.derived,authorization:'SOURCE_ONLY_NOT_CAPACITY'})+'\n');
     const services=budgetResolution.slots;

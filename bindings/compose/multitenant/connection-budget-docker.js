@@ -59,9 +59,47 @@ done`;
  let storedCounts;if(countSelector){storedCounts=COUNTS.result(countSelector,data.storedCounts);delete data.storedCounts;}
  const {tags:counts,observerPid,observerStartedAt,observerApplicationName,observerStartTicks,...values}=data;
  need(Number.isSafeInteger(observerPid)&&observerPid>0&&observerPid<=2147483647&&observerApplicationName===applicationName&&typeof observerStartedAt==='string'&&observerStartedAt.length<=100&&/^[0-9 TZ:+.\-]+$/.test(observerStartedAt)&&typeof observerStartTicks==='string'&&/^[0-9]{1,24}$/.test(observerStartTicks),'CONNECTION_CONTROLLER_OBSERVER_RESULT');
- F.write(observerFile,[...prior,{state:'CLOSED',pid:observerPid,osStartTicks:observerStartTicks,backendStartedAt:observerStartedAt,applicationName,noFutureAuthentication:true}]);const resource={pgResourceId:p.resource.pgResourceId,...values,bootstrapClosed:true};return countSelector?{resource,storedCounts,diagnosticFile,custody:{...expected,postgres:{...postgres}}}:tags.length?{resource,tags:counts}:resource;
+ F.write(observerFile,[...prior,{state:'CLOSED',pid:observerPid,osStartTicks:observerStartTicks,backendStartedAt:observerStartedAt,applicationName,noFutureAuthentication:true}]);const resource={pgResourceId:p.resource.pgResourceId,...values,bootstrapClosed:true};return countSelector?{resource,storedCounts,diagnosticFile,...(p.lifecycleOperator?{tagRows:counts}:{}),custody:{...expected,postgres:{...postgres}}}:tags.length?{resource,tags:counts}:resource;
  }catch(error){if(diagnosticFile)error.countsDiagnostic=diagnosticFile;if(countsObservation)error.countsObservation=countsObservation;throw error;}
  }
- return{inspect,observe,storedCounts(p,selector,knownTags){return observe(p,[],knownTags,COUNTS.selector(selector));},start(service){need(require('node:util').isDeepStrictEqual(F.read(path.join(directory,'plan-view','plan.json')),plan),'CONNECTION_CONTROLLER_PLAN_VIEW_CHANGED');const resolved=JSON.parse(docker([...compose,'config','--format','json']));need(resolved.services?.[service]?.image===expected.imageId,'CONNECTION_CONTROLLER_PRESTART_IMAGE');docker([...compose,'up','--no-deps','--force-recreate','--no-build','--pull','never','-d',service],30000);},stop(cid){docker(['stop','--time','10',cid],15000);},ticket(service,ticket){const fd=F.directory(path.join(directory,service));try{F.writeAt(fd,'ticket.json',ticket);}finally{fs.closeSync(fd);}},ack(service,incarnation){return F.read(path.join(directory,service,'claims','ack-'+incarnation+'.json'));}};
+ const operatorChildren=new Map();
+ const state=path.dirname(directory),O=require('./lifecycle-operator');
+ function operatorDirectory(incarnation){need(/^[a-f0-9]{32}$/.test(incarnation),'LIFECYCLE_OPERATOR_INCARNATION');return path.join(directory,'lifecycle-operator',incarnation);}
+ function operatorFiles(){
+  need(O.enabled(plan),'LIFECYCLE_OPERATOR_DISABLED');
+  const files={'env.json':path.join(state,'ops','env.json'),'config.json':path.join(state,'ops','config.json')};
+  if(plan.lifecycleOperator.placement)files['placement.json']=path.join(state,'placement','backend.json');
+  const digests={};for(const [name,file]of Object.entries(files)){F.read(file);digests[name]=crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');}
+  need(require('node:util').isDeepStrictEqual(digests,plan.lifecycleOperator.files),'LIFECYCLE_OPERATOR_FILES_CHANGED');return digests;
+ }
+ function operatorTicket(ticket){
+  operatorFiles();const root=operatorDirectory(ticket.incarnation);
+  fs.mkdirSync(root,{mode:0o700});fs.mkdirSync(path.join(root,'claims'),{mode:0o700});fs.mkdirSync(path.join(root,'view'),{mode:0o700});fs.chownSync(path.join(root,'view'),1000,1000);fs.chownSync(root,1000,1000);fs.chownSync(path.join(root,'claims'),1000,1000);
+  for(const [name,file]of [['operator-env','env.json'],['operator-config','config.json']]){fs.mkdirSync(path.join(root,name),{mode:0o700});fs.chownSync(path.join(root,name),1000,1000);fs.copyFileSync(path.join(state,'ops',file),path.join(root,name,file),fs.constants.COPYFILE_EXCL);fs.chmodSync(path.join(root,name,file),0o600);fs.chownSync(path.join(root,name,file),1000,1000);}
+  if(plan.lifecycleOperator.placement){fs.mkdirSync(path.join(root,'placement'),{mode:0o700});fs.chownSync(path.join(root,'placement'),1000,1000);fs.copyFileSync(path.join(state,'placement','backend.json'),path.join(root,'placement','backend.json'),fs.constants.COPYFILE_EXCL);fs.chmodSync(path.join(root,'placement','backend.json'),0o600);fs.chownSync(path.join(root,'placement','backend.json'),1000,1000);}
+  F.write(path.join(root,'view','ticket.json'),ticket,{exclusive:true});fs.chownSync(path.join(root,'view','ticket.json'),1000,1000);
+ }
+ function operatorStart(ticket){
+  operatorFiles();checkPg();
+  const pg=inspectCid(postgres.cid),networks=pg.NetworkSettings?.Networks;
+  const network=expected.project+'_backend';
+  need(networks&&Object.keys(networks).length===1&&networks[network]&&Array.isArray(networks[network].Aliases)&&networks[network].Aliases.includes('postgres'),'LIFECYCLE_OPERATOR_NETWORK');
+  const root=operatorDirectory(ticket.incarnation),mount=(source,destination,mode='ro')=>['--mount','type=bind,src='+source+',dst='+destination+(mode==='ro'?',readonly':'')];
+  const args=['create','--pull','never','--init','--read-only','--user','1000:1000','--cap-drop','ALL','--security-opt','no-new-privileges','--network',network,'--restart','no','--tmpfs','/tmp:rw,noexec,nosuid,size=16m',
+   '--label','com.docker.compose.project='+expected.project,'--label','com.docker.compose.project.working_dir='+expected.workingDirectory,'--label','com.docker.compose.service='+O.NAME,
+   '--label','org.nightscout.operator.incarnation='+ticket.incarnation,
+   ...mount(path.join(root,'operator-config'),'/run/ns-operator-config'),
+   ...mount(path.join(root,'operator-env'),'/run/ns-operator-env'),
+   ...mount(path.join(root,'view'),'/run/ns-operator-ticket'),...mount(path.join(root,'claims'),'/run/ns-operator-claims','rw'),
+   ...(plan.lifecycleOperator.placement?mount(path.join(root,'placement'),'/run/ns-placement'):[]),
+   '--entrypoint','node',expected.imageId,'deploy/multitenant/lifecycle-operator-entry.js'];
+  const cid=docker(args).trim();need(/^[a-f0-9]{64}$/.test(cid),'LIFECYCLE_OPERATOR_CID');operatorChildren.set(ticket.incarnation,cid);docker(['start',cid]);
+ }
+ function operatorInspect(ticket){const cid=operatorChildren.get(ticket.incarnation);need(cid,'LIFECYCLE_OPERATOR_NO_CHILD');const raw=inspectCid(cid),out=convert(raw),image=JSON.parse(docker(['image','inspect',raw.Image]))[0];const labels=image?.Config?.Labels||{};
+  need(raw.Config?.Labels?.['org.nightscout.operator.incarnation']===ticket.incarnation,'LIFECYCLE_OPERATOR_CHILD');out.source={coreCommit:labels['org.opencontainers.image.revision'],deployCommit:labels['org.nightscout.deploy.revision']};return out;}
+ function operatorGate(ticket,container){operatorFiles();F.write(path.join(operatorDirectory(ticket.incarnation),'view','gate.json'),{version:1,incarnation:ticket.incarnation,nonce:ticket.nonce,intentSha256:ticket.operator.intentSha256,container},{exclusive:true});fs.chownSync(path.join(operatorDirectory(ticket.incarnation),'view','gate.json'),1000,1000);}
+ function operatorWait(incarnation){const cid=operatorChildren.get(incarnation);need(cid,'LIFECYCLE_OPERATOR_NO_CHILD');need(docker(['wait',cid],35000).trim()==='0','LIFECYCLE_OPERATOR_CHILD_FAILED');}
+ function operatorReceipt(incarnation){return F.read(path.join(operatorDirectory(incarnation),'claims','complete.json'));}
+ return{operatorFiles,operatorTicket,operatorStart,operatorInspect,operatorGate,operatorWait,operatorReceipt,inspect,observe,storedCounts(p,selector,knownTags){return observe(p,p.lifecycleOperator?knownTags:[],knownTags,COUNTS.selector(selector));},start(service){need(require('node:util').isDeepStrictEqual(F.read(path.join(directory,'plan-view','plan.json')),plan),'CONNECTION_CONTROLLER_PLAN_VIEW_CHANGED');const resolved=JSON.parse(docker([...compose,'config','--format','json']));need(resolved.services?.[service]?.image===expected.imageId,'CONNECTION_CONTROLLER_PRESTART_IMAGE');docker([...compose,'up','--no-deps','--force-recreate','--no-build','--pull','never','-d',service],30000);},stop(cid){docker(['stop','--time','10',cid],15000);},ticket(service,ticket){const fd=F.directory(path.join(directory,service));try{F.writeAt(fd,'ticket.json',ticket);}finally{fs.closeSync(fd);}},ack(service,incarnation){return F.read(path.join(directory,service,'claims','ack-'+incarnation+'.json'));}};
 }
 module.exports={create};

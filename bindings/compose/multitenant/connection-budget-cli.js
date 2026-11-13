@@ -7,7 +7,7 @@ const F=require('./connection-budget-files'),B=require('./connection-budget'),PG
 const need=(v,c)=>{if(!v)throw Object.assign(new Error(c),{code:c});};
 function run(args){const r=spawnSync('docker',args,{encoding:'utf8',timeout:15000,maxBuffer:1048576,killSignal:'SIGKILL',stdio:['ignore','pipe','pipe']});need(!r.error&&r.status===0,'CONNECTION_CONTROLLER_DOCKER_REFUSED');return r.stdout;}
 function main(args){
- need(args.length>=2&&args.length<=3&&['bind','start','stop','observe','stored-counts'].includes(args[1])&&path.isAbsolute(args[0]),'CONNECTION_CONTROLLER_ARGUMENTS');
+ need(args.length>=2&&args.length<=3&&['bind','start','stop','observe','stored-counts','lifecycle-operator'].includes(args[1])&&path.isAbsolute(args[0]),'CONNECTION_CONTROLLER_ARGUMENTS');
  need(!process.env.DOCKER_HOST&&!process.env.DOCKER_CONTEXT&&!process.env.DOCKER_TLS_VERIFY&&!process.env.DOCKER_CERT_PATH,'CONNECTION_CONTROLLER_LOCAL_DOCKER_ONLY');
  const directory=path.join(args[0],'connection-budget'),config=F.read(path.join(directory,'controller-config.json')),plan=F.read(path.join(directory,'plan.json'));
  need(plan.source?.coreCommit===B.REVIEWED_CORE_COMMIT,'CONNECTION_BUDGET_UNREVIEWED_SOURCE');
@@ -33,11 +33,12 @@ function main(args){
      F.writeAt(fd,'custody.json',custody,{exclusive:true});return{state:'BOUND',authorization:plan.authorization};
    });
  }
- need(args[1]==='observe'?args.length===2:args[1]==='stored-counts'?args.length===3&&path.isAbsolute(args[2]):args.length===3&&plan.slots.some(s=>s.processInstanceId===args[2]),'CONNECTION_ADMISSION_UNPLANNED_WORKER');
+ need(args[1]==='observe'?args.length===2:['stored-counts','lifecycle-operator'].includes(args[1])?args.length===3&&path.isAbsolute(args[2]):args.length===3&&plan.slots.some(s=>s.processInstanceId===args[2]),'CONNECTION_ADMISSION_UNPLANNED_WORKER');
  const custody=F.read(path.join(directory,'custody.json'));need(JSON.stringify(custody.expected.source)===JSON.stringify(plan.source),'CONNECTION_CONTROLLER_PLAN');
  need(custody.expected.project===config.project&&custody.expected.workingDirectory===config.workingDirectory,'CONNECTION_CONTROLLER_PROJECT_CHANGED');
  const ports=require('./connection-budget-docker').create({directory,plan,...custody});
  const controller=require('./connection-budget-controller').create({directory,plan,expected:custody.expected,ports});
+ if(args[1]==='lifecycle-operator')return controller.lifecycleOperator(F.read(args[2]));
  return args[1]==='stored-counts'?controller.storedCounts(F.read(args[2])):controller[args[1]](args[2]);
 }
 function errorResult(e){

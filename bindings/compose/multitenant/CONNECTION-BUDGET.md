@@ -292,3 +292,43 @@ the copy through the private reader and requires equality with its admitted plan
 Missing, changed or unsafe copies refuse startup. Runtime plan/ticket validation
 remains mandatory before constructors. This changes selected mount preparation,
 not connection allowances or default startup.
+
+### Fixed lifecycle operator (source implementation)
+
+Fresh preparation can select `--lifecycle-operator enabled` together with the
+explicit connection-budget profile. Bootstrap binds the private operator
+principal, tenant locks and configuration hashes into the plan and creates a
+version 2 ledger. Existing version 1 runs refuse the lifecycle command; a missing
+version 2 ledger refuses rather than reconstructing unused credits.
+
+After a reviewed compatible source/image/plan selection, the fixed CLI command is
+`node deploy/multitenant/connection-budget-cli.js <state> lifecycle-operator <private-intent-file>`.
+The intent contains only `version: 1`, `command` (`inspect`, `resume` or
+`clear-operations`), and the configured `tenant` UUID. `resume` additionally
+requires the exact inspected `claimId`. Keep the intent in a private directory
+with mode 0700 and the file with mode 0600.
+
+One invocation durably consumes one reserved `controlRecovery` credit before
+publishing a ticket or starting a child. Only one unresolved control lease is
+permitted. The host binds the exact child before opening its authentication gate.
+The child receives only its private operator environment/configuration, selected
+placement, ticket and writable claim/receipt directory. It uses core admission
+and one backend; it cannot acquire a replacement connection.
+
+`inspect` performs diagnostic reads without contacting participants. Both writing
+commands require core's current complete participant pin, actor census and
+operator authority. Audit rows append beside the existing restore/operation rows.
+A 30-second lease fences every new SQL dispatch, including COMMIT. A late reply,
+uncertain commit, lost authentication or unproven close retains `UNKNOWN` and
+blocks further invocations. Late evidence never automatically clears `UNKNOWN`.
+
+`CLOSED` requires core's Terminate/peer-EOF/clean-close quiescence, the exact
+cleanly stopped child, and an independently charged same-epoch observer finding
+zero rows for the exact durable tag. Empty census or forced stop alone cannot
+retire credit. Observations distinguish worker and control physical occupancy;
+known control tags come only from durable outstanding leases.
+
+This source change does not change the reviewed-source literal, source/image
+pins or current runtime. Native three-command acceptance is UNMEASURED. The
+existing raw-Pool export/restore demo remains unplanned; it cannot establish
+coverage for these commands or set up an admitted interrupted-restore drill.

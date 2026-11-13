@@ -16,3 +16,12 @@ test('bootstrap binds observed target once, exact settings and selected source e
  for(const slot of plan.slots){assert(fs.statSync(path.join(output,'connection-budget',slot.processInstanceId,'claims')).isDirectory());assert(!fs.existsSync(path.join(output,'connection-budget',slot.processInstanceId,'ticket.json')));}
  }finally{fs.rmSync(output,{recursive:true});}
 });
+test('operator enablement publishes a fresh hashed v2 ledger and private principal/files before first execution',()=>{
+ const output=fs.mkdtempSync(path.join(os.tmpdir(),'ns-operator-bootstrap-'));fs.chmodSync(output,0o700);
+ try{const docs=P.sourceDocuments(),resolved=P.resolve(input(docs),{source}),file=path.join(output,'profile.json');F.write(file,resolved.profile);
+ fs.mkdirSync(path.join(output,'ops'),{mode:0o700});F.write(path.join(output,'ops','env.json'),{kind:'synthetic-private-environment'});F.write(path.join(output,'ops','config.json'),{kind:'synthetic-private-configuration'});
+ const options={output,uid:process.getuid(),gid:process.getgid(),sourceCommit:source.coreCommit,deployCommit:source.deployCommit,connectionBudgetProfile:file,connectionBudgetObserved:{systemIdentifier:'123',postmasterStartedAt:'epoch',serverMaximum:resolved.requiredMaximum,superuserReserved:3,otherReserved:0},lifecycleOperator:true,lifecycleOperatorPrincipal:{role:'synthetic_operator',database:'synthetic'}};
+ const writePrivate=(file,value)=>{fs.mkdirSync(path.dirname(file),{recursive:true,mode:0o700});fs.writeFileSync(file,JSON.stringify(value),{flag:'wx',mode:0o600});};
+ const plan=prepare({options,docs,writePrivate}),book=F.read(path.join(output,'connection-budget','ledger.json'));assert.equal(book.version,2);assert.deepEqual(book.controlLeases,[]);assert.equal(book.planSha256,plan.sha256);assert.deepEqual(plan.lifecycleOperator.principal,options.lifecycleOperatorPrincipal);assert.deepEqual(plan.lifecycleOperator.tenants,docs.locks.map(r=>r.tenant));assert(/^[a-f0-9]{64}$/.test(plan.lifecycleOperator.files['env.json']));assert.throws(()=>prepare({options,docs,writePrivate}),/EEXIST/);assert.deepEqual(F.read(path.join(output,'connection-budget','ledger.json')),book);
+ }finally{fs.rmSync(output,{recursive:true});}
+});

@@ -23,7 +23,7 @@ async function finish({ options, request, rootToken, layout, roleURLs, writePriv
   const provisioningToken = await token('provisioner', [rule('keys/tenant-*', ['create','read','update']), rule('encrypt/tenant-data-*', ['update'])]);
   const realtimePlacement = require('./realtime-workers').selection() ? JSON.parse(fs.readFileSync(path.join(output, 'placement/backend.json'), 'utf8')) : null;
   const docs = plan.documents({ layout: l, urls: roleURLs, tokens: [], publicKeys: [], managementKeys: [], vaultAddress: options.vault.origin, registryMode: true, realtimePlacement });
-  if(options.connectionBudgetProfile) require('./connection-budget-bootstrap').prepare({options,docs,writePrivate});
+  if(options.connectionBudgetProfile)for(const env of [...Object.values(docs.environments),docs.admin.environment,docs.feed.environment,docs.uiEnvironment])env.NS_SOURCE_COMMIT=sourceCommit;
   for (const role of Object.keys(docs.configs)) {
     const dir = path.join(output, role);
     writePrivate(path.join(dir, 'env.json'), docs.environments[role], own, compact);
@@ -55,6 +55,7 @@ async function finish({ options, request, rootToken, layout, roleURLs, writePriv
   writePrivate(path.join(output, 'ops', 'env.json'), { NS_OPERATOR_PG: roleURLs.operator, NS_SOURCE_COMMIT: sourceCommit,
     ...(realtimePlacement ? { MULTITENANT_REALTIME_PLACEMENT: '/run/ns-placement/backend.json' } : {}) }, own);
   if (realtimePlacement) writePrivate(path.join(output, 'placement-operator', 'env.json'), { NS_PLACEMENT_PG: roleURLs.placement_publisher, NS_ACTIVITY_PG: roleURLs.activity_reader, NS_SOURCE_COMMIT: sourceCommit, MULTITENANT_REALTIME_PLACEMENT: '/run/ns-placement/backend.json' }, own);
+  if(options.connectionBudgetProfile) require('./connection-budget-bootstrap').prepare({options,docs,writePrivate});
   writePrivate(path.join(output, 'bootstrap', 'layout.json'), l);
   writePrivate(path.join(output, 'bootstrap', 'complete.json'), { version: 2, sourceCommit, deployCommit: options.deployCommit, registryMode: true });
   return { state: 'synthetic-infrastructure-ready', sourceCommit };
