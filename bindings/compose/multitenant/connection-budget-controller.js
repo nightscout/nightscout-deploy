@@ -12,6 +12,7 @@ function custody(actual, expected, service, stopped=false){
  return {cid:actual.cid,startedAt:actual.startedAt,project:actual.project,workingDirectory:actual.workingDirectory,service,imageId:actual.imageId,source:actual.source};
 }
 function create({directory,plan,expected,ports}){
+ need(plan.version===1,'CONTROL_RECOVERY_FRESH_RUNTIME_NOT_INTEGRATED');
  need(B.hash((({sha256,...body})=>body)(plan))===plan.sha256 && equal(expected.source,plan.source)
    && /^[a-z][a-z0-9-]{0,62}$/.test(expected.project) && expected.workingDirectory.startsWith('/')
    && /^sha256:[a-f0-9]{64}$/.test(expected.imageId),'CONNECTION_CONTROLLER_PLAN');

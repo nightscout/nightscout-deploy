@@ -2,7 +2,7 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),Module=require('node:module');
 const B=require('../connection-budget'),C=require('../control-recovery');
 function fixture(impl=C){const source={coreCommit:'a'.repeat(40),deployCommit:'b'.repeat(40)},principal={role:'synthetic_operator',roleOid:'31',database:'synthetic',databaseOid:'16384'};
- const body={version:2,lifecycleOperator:{version:2},source,slots:[],resource:{systemIdentifier:'123',postmasterStartedAt:'epoch',allowances:{controlRecovery:2}},controlRecovery:{version:1,classes:Object.fromEntries(C.CLASSES.map(c=>[c,{principal:{...principal,...(c==='restore-commissioner'?{role:'synthetic_ddl',roleOid:'32'}:{})}}]))}};
+ const body={version:2,workerDatabase:{database:'synthetic',databaseOid:'16384'},lifecycleOperator:{version:2},source,slots:[],resource:{systemIdentifier:'123',postmasterStartedAt:'epoch',allowances:{controlRecovery:2}},controlRecovery:{version:1,classes:Object.fromEntries(C.CLASSES.map(c=>[c,{principal:{...principal,...(c==='restore-commissioner'?{role:'synthetic_ddl',roleOid:'32'}:{})}}]))}};
  const plan={...body,sha256:B.hash(body)},book=impl.ledger(plan),expected={source,project:'synthetic',workingDirectory:'/private/synthetic',imageId:'sha256:'+'d'.repeat(64)};
  const allocate=(c='lifecycle-operator')=>impl.allocate(plan,book,{class:c,intentSha256:'e'.repeat(64)});
  const bind=row=>impl.bound(plan,book,row,{...expected,cid:row.incarnation.repeat(2),startedAt:'started',service:row.class},expected);
@@ -30,4 +30,29 @@ test('fixed realtime intent and typed lifecycle/commission intent have no select
  assert.deepEqual(C.intent('restore-commissioner',{version:2,command:'commission'}),{version:2,command:'commission'});
  const tenant='11111111-1111-4111-8111-111111111111';
  for(const command of ['inspect','clear-operations','capture','restore','resume']){const v={version:2,command,tenant,...(command==='restore'?{artifactDigest:'a'.repeat(64)}:command==='resume'?{claimId:tenant}:{})};assert.deepEqual(C.intent('lifecycle-operator',v),v);assert.throws(()=>C.intent('lifecycle-operator',{...v,path:'/caller'}),/INTENT/);}
+});
+
+test('all fixed classes bind BOTH worker database name and OID, including coherent class drift and missing identity',()=>{
+ for(const c of C.CLASSES)for(const field of ['database','databaseOid']){const f=fixture();f.plan.controlRecovery.classes[c].principal[field]=field==='database'?'other_database':'999';const {sha256,...body}=f.plan;f.plan.sha256=B.hash(body);assert.throws(()=>C.ledger(f.plan),/WORKER_DATABASE/);}
+ for(const field of ['database','databaseOid']){const f=fixture();for(const c of C.CLASSES)f.plan.controlRecovery.classes[c].principal[field]=field==='database'?'other_database':'999';const {sha256,...body}=f.plan;f.plan.sha256=B.hash(body);assert.throws(()=>C.ledger(f.plan),/WORKER_DATABASE/);}
+ const f=fixture();delete f.plan.workerDatabase;const {sha256,...body}=f.plan;f.plan.sha256=B.hash(body);assert.throws(()=>C.ledger(f.plan),/WORKER_DATABASE_IDENTITY/);
+});
+function workerFixture(impl=C){const f=fixture(impl);f.plan.slots=[{processInstanceId:'api',capabilities:{'synthetic-pool':{kind:'pool',poolMax:1,maxInstances:1}},maximumOutstandingGenerations:1}];const {sha256,...body}=f.plan;f.plan.sha256=B.hash(body);f.book=impl.ledger(f.plan);const incarnation='1'.repeat(32),row={incarnation,nonce:'2'.repeat(32),tags:['nscb:'+incarnation+':'+require('node:crypto').createHash('sha256').update('synthetic-pool').digest('hex').slice(0,16)],container:null,state:'ISSUED',retired:false};f.book.slots.api.push(row);return {...f,row};}
+test('exact worker capability-derived tags only; malformed, duplicate and excess generations never acquire managed authority',()=>{
+ const valid=workerFixture();assert.deepEqual(C.known(valid.plan,valid.book),valid.row.tags);
+ for(const change of [f=>f.row.tags=['caller-managed-exemption'],f=>f.row.tags=[],f=>f.row.tags.push(f.row.tags[0]),f=>f.row.retired='yes',f=>f.row.state='UNKNOWN',f=>f.book.slots.api.push(structuredClone(f.row)),f=>f.row.container={service:'other'},f=>f.book.slots.api='not-rows']){const f=workerFixture();change(f);assert.throws(()=>C.known(f.plan,f.book),/CONTROL_RECOVERY_/);}
+ const f=workerFixture(),second={...structuredClone(f.row),incarnation:'3'.repeat(32),nonce:'4'.repeat(32)};second.tags=['nscb:'+second.incarnation+':'+require('node:crypto').createHash('sha256').update('synthetic-pool').digest('hex').slice(0,16)];f.book.slots.api.push(second);assert.throws(()=>C.known(f.plan,f.book),/WORKER_GENERATIONS/);
+});
+test('database name and OID binding red/restored controls fail the same database refusal oracle',()=>{
+ const from="need(p.database===workerDatabase.database&&p.databaseOid===workerDatabase.databaseOid,'CONTROL_RECOVERY_WORKER_DATABASE');";
+ for(const field of ['database','databaseOid']){const to=field==='database'?"need(p.databaseOid===workerDatabase.databaseOid,'CONTROL_RECOVERY_WORKER_DATABASE');":"need(p.database===workerDatabase.database,'CONTROL_RECOVERY_WORKER_DATABASE');";
+  function oracle(impl){const f=fixture(impl);f.plan.controlRecovery.classes['realtime-recovery'].principal[field]=field==='database'?'other_database':'999';const {sha256,...body}=f.plan;f.plan.sha256=B.hash(body);assert.throws(()=>impl.ledger(f.plan),/WORKER_DATABASE/);}
+  assert.throws(()=>oracle(mutant(from,to)),/Missing expected exception/);oracle(C);
+ }
+});
+test('worker tag and duplicate-generation ablations go red; restored rejects before known authority',()=>{
+ for(const [from,to,change] of [["&&equal([...r.tags].sort(),wanted)",'',f=>f.row.tags=['caller-managed-exemption']],["&&!ids.has(r.incarnation)&&!nonces.has(r.nonce)",'',f=>{f.plan.slots[0].maximumOutstandingGenerations=2;const {sha256,...body}=f.plan;f.plan.sha256=B.hash(body);f.book.planSha256=f.plan.sha256;f.book.slots.api.push(structuredClone(f.row));}]]){
+  function oracle(impl){const f=workerFixture(impl);change(f);assert.throws(()=>impl.known(f.plan,f.book),/WORKER_ROW/);}
+  assert.throws(()=>oracle(mutant(from,to)),/Missing expected exception/);oracle(C);
+ }
 });

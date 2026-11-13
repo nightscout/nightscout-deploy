@@ -10,7 +10,9 @@ function prepare({options,docs,writePrivate}){
    profile.resource[key]=observed[key];
  }
  let plan=B.compile(profile,docs,{source:{coreCommit:options.sourceCommit,deployCommit:options.deployCommit},poolConfig:require('../../lib/server/serve/pool-config')});
+ if(plan.version===2){const {sha256,...body}=plan;const workerDatabase=require('./worker-database').seal(options.workerDatabase,docs);plan={...body,workerDatabase};plan={...plan,sha256:B.hash(plan)};}
  if(options.lifecycleOperator){
+  need(plan.version===1,'CONTROL_RECOVERY_FRESH_RUNTIME_NOT_INTEGRATED');
   const fs=require('node:fs'),crypto=require('node:crypto'),digest=file=>crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
   const placement=!!require('./realtime-workers').selection();
   const lifecycleOperator={version:1,principal:options.lifecycleOperatorPrincipal,tenants:docs.locks.map(r=>r.tenant),placement,files:{'env.json':digest(path.join(options.output,'ops','env.json')),'config.json':digest(path.join(options.output,'ops','config.json')),...(placement?{'placement.json':digest(path.join(options.output,'placement','backend.json'))}:{})}};

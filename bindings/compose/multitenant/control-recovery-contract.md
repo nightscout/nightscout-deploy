@@ -7,7 +7,17 @@ It grants no executable source, image, resource or native-plan selection.
 ## Versions and fixed classes
 
 Fresh profile2 compiles plan2 with `lifecycleOperator.version=2` and creates
-ledger3 exclusively. Admission tickets retain core version1. Lifecycle and commissioning typed action intents,
+ledger3 exclusively. Legacy admission tickets remain core version1. Fresh host plan2 is distinct from
+the core physical admission ticket/plan2 contract: the proposed fresh ticket2
+adds exactly `workerDatabase:{database,databaseOid}` at its top level. Database
+uses the existing lowercase identifier grammar; databaseOid is a canonical
+decimal STRING in 1..4294967295, no number, zero or leading zeros. Core owner
+next_pair is implementing the separately reviewed fixed 1000ms same-admitted-
+backend identity gate before Promise/callback/connect-event/public-query
+exposure; no generic callback or extra backend. Actual companion worker
+integration remains HELD until its immutable core contract is approved. Current
+controller and worker runtime explicitly refuse host plan2 before effects. No pending core fields/API are
+assumed in executable companion code. Lifecycle and commissioning typed action intents,
 completion receipts and observation/stored-count envelopes use version2. The separately versioned
 realtime caller intent is exactly version1 under the fresh class capability2. No
 existing ledger is upgraded, recreated or reset. Mixed tuples refuse before
@@ -32,6 +42,19 @@ Result completion never closes the common physical credit. The realtime lane
 owns journal enforcement and action implementation after contract review.
 
 Plan2 contains `controlRecovery:{version:1,classes:{<each fixed class>:{principal}}}`.
+Fresh host plan2 additionally contains exactly `workerDatabase:{database,databaseOid}`,
+measured by the EXISTING admitted bootstrap admin backend and sealed only after
+every expanded worker environment PostgreSQL URL's effective database equals it.
+Parsing uses the installed pg driver's actual ConnectionParameters, including
+query semantics, encoded path and ambient/user defaults, with no Client/Pool/login.
+Every fixed class principal equals BOTH this worker database name and OID; matching
+classes only to each other is insufficient. URL equality is not actual backend
+OID proof. Each class's existing singlePool verifier checks its actual admitted
+backend name/OID against its sealed principal; class-to-worker equality makes the
+same worker DB constraint mandatory. Actual universal worker-backend verification
+awaits the independent immutable core physical ticket2 gate. Missing/mixed identity
+refuses; no old ledger upgrade.
+
 Each principal is exactly `{role,roleOid,database,databaseOid}`: names and decimal
 OID strings are read from sealed private custody. Commissioning has a separate
 bootstrap DDL principal, never the ordinary operator credential. The three class
@@ -68,6 +91,15 @@ imageId,source}`, with fixed service/class and sealed expected image/source.
 where container equals the durable bound container. UNKNOWN without a bound
 container cannot acquire stopped proof and cannot admit a successor.
 
+Worker slots retain their existing row format exactly:
+`{incarnation,nonce,tags,container,state,retired}`. State is ISSUED or RETIRED, and
+retired equals the state predicate. Incarnations and nonces are unique across
+worker and control rows. Every worker tag derives from that slot's fixed admitted
+capability key and incarnation, exactly once; missing/forged/duplicate tags and
+malformed/duplicate/excess generations refuse before known-managed tag authority.
+A retired worker requires its exact bound container. The existing declared worker
+generation limits remain unchanged.
+
 Only synchronous operations execute under the fsynced private F.locked lock.
 Debit ISSUED is saved before any credential read, ticket publication or child
 construction. Exact CID/start is saved as BOUND before opening authentication.
@@ -87,7 +119,7 @@ receipt2/quiescence and separately charged exact zero-tag census.
 
 ## Tickets, completion and observations
 
-Admission ticket1 keeps its core fields. Its controller-private `control` member
+Fresh admission ticket2 keeps its reviewed core fields plus workerDatabase above; legacy ticket1 remains exact. Its controller-private `control` member
 is exactly `{version:2,class,intentSha256,resourceEpoch,expected,principal,files}`;
 class-specific action document is separately sealed and its digest is checked
 before authentication. Gate2 is exactly `{version:2,class,incarnation,nonce,

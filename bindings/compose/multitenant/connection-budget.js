@@ -130,7 +130,7 @@ function validateResource(r) {
 }
 
 function compile(profile, docs, { source, poolConfig }) {
-  need(exact(profile, ['version', 'kind', 'source', 'resource', 'slots', 'bootstrapSchedule']) && profile.version === 1 && profile.kind === 'explicit-connection-budget-profile' && equal(profile.source, source), 'CONNECTION_PLAN_PROFILE_SOURCE');
+  need(exact(profile, ['version', 'kind', 'source', 'resource', 'slots', 'bootstrapSchedule']) && [1,2].includes(profile.version) && profile.kind === 'explicit-connection-budget-profile' && equal(profile.source, source), 'CONNECTION_PLAN_PROFILE_SOURCE');
   need(hex(source.coreCommit, 40) && hex(source.deployCommit, 40), 'CONNECTION_PLAN_SOURCE_REQUIRED');
   const resource = validateResource(profile.resource), descriptors = describe(docs, poolConfig);
   need(Array.isArray(profile.slots) && equal(profile.slots.map(x => x.processInstanceId).sort(), descriptors.map(x => x.processInstanceId).sort()), 'CONNECTION_PLAN_ROSTER_MISMATCH');
@@ -180,7 +180,7 @@ function compile(profile, docs, { source, poolConfig }) {
   const outside = Object.values(resource.allowances).reduce((a, b) => a + b, 0);
   const usable = resource.serverMaximum - resource.reserved.superuser - resource.reserved.other;
   need(declaredMaximum + outside <= usable, 'CONNECTION_PLAN_OVERCOMMITTED');
-  const plan = { version: 1, kind: 'controlled-connection-budget-plan', source, resource, slots,
+  const plan = { version: profile.version, kind: 'controlled-connection-budget-plan', source, resource, slots,
     bootstrapSchedule: profile.bootstrapSchedule, declaredMaximum, outside, usable, authorization: 'CONTROLLED_SOURCE_ADMISSION_ONLY_NOT_CAPACITY' };
   return { ...plan, sha256: hash(plan) };
 }

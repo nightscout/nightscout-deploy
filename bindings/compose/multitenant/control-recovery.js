@@ -1,7 +1,7 @@
 'use strict';
 // Common private accounting only. This module has no process, SQL or action dispatcher.
 const crypto=require('node:crypto'),{isDeepStrictEqual:equal}=require('node:util');
-const B=require('./connection-budget');
+const B=require('./connection-budget'),W=require('./worker-database');
 const need=(v,c)=>{if(!v)throw Object.assign(new Error(c),{code:c});};
 const exact=(v,keys)=>v&&typeof v==='object'&&!Array.isArray(v)&&equal(Object.keys(v).sort(),[...keys].sort());
 const CLASSES=Object.freeze(['lifecycle-operator','restore-commissioner','realtime-recovery']);
@@ -24,6 +24,8 @@ function planCheck(plan){
  need(plan.version===2&&plan.lifecycleOperator?.version===2&&plan.resource.allowances.controlRecovery===2&&exact(plan.controlRecovery,['version','classes'])&&plan.controlRecovery.version===1&&exact(plan.controlRecovery.classes,CLASSES),'CONTROL_RECOVERY_VERSION');
  const {sha256,...body}=plan;need(B.hash(body)===sha256,'CONTROL_RECOVERY_PLAN');
  for(const c of CLASSES){need(exact(plan.controlRecovery.classes[c],['principal']),'CONTROL_RECOVERY_CLASS');principal(plan.controlRecovery.classes[c].principal);}
+ const workerDatabase=W.identity(plan.workerDatabase);
+ for(const c of CLASSES){const p=plan.controlRecovery.classes[c].principal;need(p.database===workerDatabase.database&&p.databaseOid===workerDatabase.databaseOid,'CONTROL_RECOVERY_WORKER_DATABASE');}
  const op=plan.controlRecovery.classes['lifecycle-operator'].principal,commission=plan.controlRecovery.classes['restore-commissioner'].principal;
  need(op.role!==commission.role&&op.roleOid!==commission.roleOid&&op.database===commission.database&&op.databaseOid===commission.databaseOid,'CONTROL_RECOVERY_COMMISSION_PRINCIPAL');
 }
@@ -31,7 +33,17 @@ function container(plan,c,v){need(exact(v,['cid','startedAt','project','workingD
 function validate(plan,book){
  planCheck(plan);
  need(exact(book,['version','planSha256','resourceEpoch','slots','controlLeases'])&&book.version===3&&book.planSha256===plan.sha256&&equal(book.resourceEpoch,epoch(plan))&&exact(book.slots,plan.slots.map(s=>s.processInstanceId))&&Array.isArray(book.controlLeases)&&book.controlLeases.length<=4096,'CONTROL_RECOVERY_LEDGER');
- const ids=new Set(Object.values(book.slots).flat().map(r=>r.incarnation)),nonces=new Set();
+ const ids=new Set(),nonces=new Set();let workerRows=0;
+ for(const slot of plan.slots){const rows=book.slots[slot.processInstanceId];need(Array.isArray(rows)&&rows.length<=4096,'CONTROL_RECOVERY_WORKER_ROW');workerRows+=rows.length;need(workerRows<=4096,'CONTROL_RECOVERY_WORKER_ROW');
+  for(const r of rows){
+   const wanted=Object.keys(slot.capabilities).map(c=>'nscb:'+r?.incarnation+':'+crypto.createHash('sha256').update(c).digest('hex').slice(0,16)).sort();
+   need(exact(r,['incarnation','nonce','tags','container','state','retired'])&&HEX32.test(r.incarnation)&&HEX32.test(r.nonce)&&r.incarnation!==r.nonce&&!ids.has(r.incarnation)&&!nonces.has(r.nonce)&&['ISSUED','RETIRED'].includes(r.state)&&r.retired===(r.state==='RETIRED')&&Array.isArray(r.tags)&&equal([...r.tags].sort(),wanted)&&new Set(wanted).size===wanted.length,'CONTROL_RECOVERY_WORKER_ROW');
+   if(r.container!==null)container(plan,slot.processInstanceId,r.container);
+   need(r.state!=='RETIRED'||r.container!==null,'CONTROL_RECOVERY_WORKER_ROW');ids.add(r.incarnation);nonces.add(r.nonce);
+  }
+  need(rows.filter(r=>r.state!=='RETIRED').length<=slot.maximumOutstandingGenerations,'CONTROL_RECOVERY_WORKER_GENERATIONS');
+ }
+
  for(const r of book.controlLeases){
   need(exact(r,['state','class','credits','incarnation','nonce','tags','intentSha256','planSha256','source','principal','container','stopped'])&&CLASSES.includes(r.class)&&['ISSUED','BOUND','UNKNOWN','CLOSED'].includes(r.state)&&r.credits===1&&HEX32.test(r.incarnation)&&HEX32.test(r.nonce)&&r.incarnation!==r.nonce&&!ids.has(r.incarnation)&&!nonces.has(r.nonce)&&HEX64.test(r.intentSha256)&&equal(r.tags,[tag(r.class,r.incarnation)])&&r.planSha256===plan.sha256&&equal(r.source,plan.source)&&equal(r.principal,plan.controlRecovery.classes[r.class].principal),'CONTROL_RECOVERY_ROW');
   ids.add(r.incarnation);nonces.add(r.nonce);

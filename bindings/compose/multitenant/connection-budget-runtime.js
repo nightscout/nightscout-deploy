@@ -11,6 +11,7 @@ function install(env=process.env){
  need(!selected&&env.NS_CONNECTION_BUDGET_PLAN_FILE&&env.NS_CONNECTION_BUDGET_CLAIM_DIR,'CONNECTION_BUDGET_PARTIAL_SELECTION');
  const plan=files.read(env.NS_CONNECTION_BUDGET_PLAN_FILE),{sha256,...body}=plan;
  need(plan.source?.coreCommit===B.REVIEWED_CORE_COMMIT,'CONNECTION_BUDGET_UNREVIEWED_SOURCE');
+ need(plan.version===1,'CONNECTION_BUDGET_PHYSICAL_V2_NOT_REVIEWED');
  need(B.hash(body)===sha256&&plan.kind==='controlled-connection-budget-plan','CONNECTION_BUDGET_PLAN_DIGEST');
  const ticket=files.read(env.NS_CONNECTION_BUDGET_FILE),slot=plan.slots.find(s=>s.processInstanceId===ticket.processInstanceId);
  need(slot&&ticket.planSha256===sha256&&equal(ticket.source,plan.source)&&equal(ticket.capabilities,slot.capabilities)&&equal(ticket.directGroups,slot.directGroups)&&equal(ticket.cold,slot.cold)&&ticket.pgResourceId===plan.resource.pgResourceId&&equal(ticket.resourceAliases,plan.resource.aliases)&&/^[a-f0-9]{32}$/.test(ticket.nonce)&&/^[a-f0-9]{32}$/.test(ticket.incarnation),'CONNECTION_BUDGET_SLOT_CHANGED');
