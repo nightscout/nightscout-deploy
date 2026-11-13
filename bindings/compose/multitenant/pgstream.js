@@ -40,6 +40,7 @@ async function init({admin,adminURL,layout,config}){
  await admin.query('CREATE TABLE pgstream.webhook_subscriptions(url text,schema_name text,table_name text,event_types text[],PRIMARY KEY(url,schema_name,table_name))');
  await admin.query('REVOKE ALL ON SCHEMA pgstream FROM PUBLIC');
  await admin.query('REVOKE ALL ON ALL TABLES IN SCHEMA pgstream FROM PUBLIC');
+ await admin.query('REVOKE ALL ON ALL FUNCTIONS IN SCHEMA pgstream FROM PUBLIC');
  await admin.query('GRANT USAGE,CREATE ON SCHEMA pgstream TO '+role);
  await admin.query('GRANT SELECT ON pgstream.webhook_subscriptions TO '+role);
  await admin.query('GRANT USAGE ON SCHEMA pgstream TO '+evaluator);
