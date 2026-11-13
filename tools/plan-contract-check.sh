@@ -39,6 +39,6 @@ for topology in default api2 evaluator2; do
   limit=$remaining; [ "$limit" -le 30 ] || limit=30
   if (ulimit -f 2048; timeout --kill-after=2 "$limit" env -i PATH="$PATH" HOME="${HOME:-/tmp}" node "$scratch/core/bin/nightscout.js" plan check "$output/$topology.input.json") > "$output/$topology.report.json" 2> "$output/$topology.check.stderr"; then echo "ok   [$topology] prospective core document conformance"; else contract=1; echo "FAIL: [$topology] prospective core document conformance"; fi
 done
-printf '{"scope":"PROSPECTIVE_SOURCE_ONLY_NOT_SELECTED_RUNTIME","identityExitCode":%s,"contractFailure":%s,"runtimeAcceptance":"UNMEASURED"}\n' "$identity" "$contract" > "$output/result.json"
+printf '{"scope":"PROSPECTIVE_SOURCE_ONLY_NOT_SELECTED_RUNTIME","coreCommit":"%s","deployCommit":"%s","bindingTree":"%s","identityExitCode":%s,"contractFailure":%s,"runtimeAcceptance":"UNMEASURED"}\n' "$commit" "$(git -C "$here" rev-parse HEAD)" "$(git -C "$here" rev-parse HEAD:bindings/compose/multitenant)" "$identity" "$contract" > "$output/result.json"
 echo "Existing identity exit: $identity; prospective document failures: $contract; runtime unmeasured"
 [ "$identity" -eq 0 ] && [ "$contract" -eq 0 ]
