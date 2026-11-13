@@ -40,7 +40,20 @@ function writePrivate(filename,value,{uid,gid}={},{compact=false}={}) {
   if(uid!==undefined){fs.chownSync(path.dirname(filename),uid,gid);fs.chownSync(filename,uid,gid);}
 }
 async function bootstrap(options) {
-  if(options.connectionBudgetProfile){const selected=require('./connection-budget-files').read(options.connectionBudgetProfile);if(selected.version===2&&(options.lifecycleOperator||fs.existsSync(path.join(path.dirname(options.connectionBudgetProfile),'operator-enabled.json'))))throw fail('CONTROL_RECOVERY_FRESH_RUNTIME_NOT_INTEGRATED');}
+  // Validate the complete selection before vault, SQL, credentials or files.
+  let selected;
+  if(options.connectionBudgetProfile){
+    const F=require('./connection-budget-files');selected=F.read(options.connectionBudgetProfile);
+    if(![1,2].includes(selected.version))throw fail('LIFECYCLE_OPERATOR_SELECTION');
+    const marker=path.join(path.dirname(options.connectionBudgetProfile),'operator-enabled.json');
+    if(selected.version===2)require('./connection-budget-bootstrap').selection(options,selected,true);
+    else if(fs.existsSync(marker)){
+      const value=F.read(marker);
+      if(!require('node:util').isDeepStrictEqual(value,{version:selected.version,kind:'fresh-lifecycle-operator'}))throw fail('LIFECYCLE_OPERATOR_SELECTION');
+      options.lifecycleOperator=true;
+    }
+  }else if(options.lifecycleOperator)throw fail('LIFECYCLE_OPERATOR_SELECTION');
+  const freshControl=!!(options.lifecycleOperator&&selected.version===2);
   const {pg,vault,output,sourceCommit,deployCommit,uid,gid,configMaxBytes}=options;
   const privateDirectory=path.join(output,'bootstrap');fs.mkdirSync(privateDirectory,{recursive:true,mode:0o700});
   const initFile=path.join(privateDirectory,'vault-init.json'),completeFile=path.join(privateDirectory,'complete.json'),startedFile=path.join(privateDirectory,'started.json');
@@ -79,7 +92,7 @@ async function bootstrap(options) {
       const observed=await admin.query("SELECT (SELECT system_identifier::text FROM pg_control_system()) AS \"systemIdentifier\", pg_postmaster_start_time()::text AS \"postmasterStartedAt\", current_setting('max_connections')::int AS \"serverMaximum\", current_setting('superuser_reserved_connections')::int AS \"superuserReserved\", coalesce(current_setting('reserved_connections',true),'0')::int AS \"otherReserved\"");
       if(observed.rows.length!==1)throw fail('CONNECTION_BUDGET_TARGET_UNKNOWN');options.connectionBudgetObserved=observed.rows[0];
     }
-    if(options.connectionBudgetProfile){const marker=path.join(path.dirname(options.connectionBudgetProfile),'operator-enabled.json');if(fs.existsSync(marker)){const value=require('./connection-budget-files').read(marker);if(JSON.stringify(value)!==JSON.stringify({version:1,kind:'fresh-lifecycle-operator'}))throw fail('LIFECYCLE_OPERATOR_SELECTION');options.lifecycleOperator=true;}}
+    if(freshControl){l.roles.restore_commissioner=l.prefix+'_restore_commissioner';l.roles.realtime_recovery=l.prefix+'_realtime_recovery';}
     const preexisting=await admin.query('SELECT nspname FROM pg_namespace WHERE nspname LIKE $1',[l.prefix+'_%']);
     const roles=await admin.query('SELECT rolname FROM pg_roles WHERE rolname LIKE $1',[l.prefix+'_%']);
     if(preexisting.rows.length||roles.rows.length)throw fail('BOOTSTRAP_OBJECTS_ALREADY_EXIST');
@@ -92,6 +105,9 @@ async function bootstrap(options) {
       const password=random();await admin.query('CREATE ROLE '+q(role)+" LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD '"+password+"'");
       const url=new URL(pg);url.username=role;url.password=password;roleURLs[kind]=url.toString();
     }
+    // Setup-only exception: fixed commissioner, no membership/inheritance or
+    // application ownership. Runtime verifies its complete effective allowlist.
+    if(freshControl)await admin.query('ALTER ROLE '+q(l.roles.restore_commissioner)+' BYPASSRLS NOINHERIT');
     const {run}=require('../../lib/migrations/postgres');
     for(const [kind,catalogue]of Object.entries(allCatalogues)){
       const namespace=l.namespaces[kind];await admin.query('CREATE SCHEMA '+q(namespace));
@@ -105,7 +121,8 @@ async function bootstrap(options) {
       for(const row of functions.rows)await admin.query('ALTER FUNCTION '+row.signature+' OWNER TO '+q(l.owner));
       await admin.query('ALTER SCHEMA '+q(namespace)+' OWNER TO '+q(l.owner));
     }
-    for(const sql of plan.grants(l))await admin.query(sql);
+    for(const sql of plan.grants({...l,roles:Object.fromEntries(Object.entries(l.roles).filter(([name])=>!['restore_commissioner','realtime_recovery'].includes(name)))}))await admin.query(sql);
+    if(freshControl)for(const sql of require('./control-recovery-bootstrap').grants(l))await admin.query(sql);
     const managementGrants=require('../../lib/management-sessions/authority').grants({namespaces:{registry:l.namespaces.registry,authorization:l.namespaces.authorization,access:l.namespaces.access,control:l.namespaces.control},issuer:l.roles.management_issuer,authorityOwner:l.managementAuthorityOwner});
     for(const sql of [...managementGrants.authorityOwner,...managementGrants.issuer])await admin.query(sql);
     for(const sql of require('../../lib/change-feed/postgres').provision({namespace:l.namespaces.feed,clockNamespace:l.namespaces.clock,activityNamespace:l.namespaces.control,settingsNamespace:l.namespaces.display_settings,policyNamespace:l.namespaces.operator_policy,
@@ -114,6 +131,13 @@ async function bootstrap(options) {
       const database=(await admin.query('SELECT current_database() AS database,(SELECT oid::text FROM pg_database WHERE datname=current_database()) AS "databaseOid"')).rows;
       if(database.length!==1)throw fail('WORKER_DATABASE_IDENTITY');
       options.workerDatabase=require('./worker-database').identity(database[0]);
+    }
+    if(freshControl){
+      options.controlRecoveryPrincipals={};
+      for(const [className,role]of [['lifecycle-operator',l.roles.operator],['restore-commissioner',l.roles.restore_commissioner],['realtime-recovery',l.roles.realtime_recovery]]){
+        const rows=(await admin.query('SELECT current_database() AS database,(SELECT oid::text FROM pg_database WHERE datname=current_database()) AS "databaseOid",rolname AS role,oid::text AS "roleOid" FROM pg_roles WHERE rolname=$1',[role])).rows;
+        if(rows.length!==1)throw fail('CONTROL_RECOVERY_PRINCIPAL');options.controlRecoveryPrincipals[className]=require('./control-recovery').principal(rows[0]);
+      }
     }
     if(options.lifecycleOperator){const identity=await admin.query('SELECT current_database() AS database,(SELECT oid::text FROM pg_database WHERE datname=current_database()) AS "databaseOid",rolname AS role,oid::text AS "roleOid" FROM pg_roles WHERE rolname=$1',[l.roles.operator]);if(identity.rows.length!==1)throw fail('LIFECYCLE_OPERATOR_PRINCIPAL');options.lifecycleOperatorPrincipal=identity.rows[0];}
     return require('./registry-bootstrap').finish({options,request,rootToken:initialization.root_token,layout:l,roleURLs,writePrivate});

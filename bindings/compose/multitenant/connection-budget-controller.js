@@ -98,13 +98,31 @@ function create({directory,plan,expected,ports}){
    return {state:'QUIESCED_RETIRED',processInstanceId:slotId,incarnation:old.incarnation};
  });}
  function synchronous(value){need(!value||typeof value.then!=='function','CONTROL_RECOVERY_ASYNC_PORT');return value;}
- function freshLifecycle(value){
-  const request=C.intent('lifecycle-operator',value);
-  need(typeof plan.lifecycleOperator.placement==='boolean'&&Array.isArray(plan.lifecycleOperator.tenants)&&plan.lifecycleOperator.tenants.length===2&&new Set(plan.lifecycleOperator.tenants).size===2&&plan.lifecycleOperator.tenants.every(t=>typeof t==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(t)&&t!=='00000000-0000-0000-0000-000000000000')&&plan.lifecycleOperator.tenants.includes(request.tenant),'LIFECYCLE_OPERATOR_TENANT');
-  need(['inspect','resume','clear-operations'].includes(request.command),'CONTROL_RECOVERY_ACTION_NOT_INTEGRATED');
+ function freshControl(value,className='lifecycle-operator'){
+  const request=C.intent(className,value);
+  // Only the fixed source host exposing the setup-specific privilege verifier
+  // can dispatch commissioning; older/mixed ports refuse before any effect.
+  if(className==='restore-commissioner')need(ports.commissionVersion===1,'RESTORE_COMMISSION_RLS_BOUNDARY_UNAPPROVED');
+  if(className==='lifecycle-operator')need(typeof plan.lifecycleOperator.placement==='boolean'&&Array.isArray(plan.lifecycleOperator.tenants)&&plan.lifecycleOperator.tenants.length===2&&new Set(plan.lifecycleOperator.tenants).size===2&&plan.lifecycleOperator.tenants.every(t=>typeof t==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(t)&&t!=='00000000-0000-0000-0000-000000000000')&&plan.lifecycleOperator.tenants.includes(request.tenant),'LIFECYCLE_OPERATOR_TENANT');
+  const artifact=className==='lifecycle-operator'&&['capture','restore'].includes(request.command);
+  if(artifact)need(typeof ports.controlArtifact==='function'&&typeof ports.controlPublish==='function','CONTROL_RECOVERY_ARTIFACT_NOT_INTEGRATED');
   need(ports.controlVersion===2,'CONTROL_RECOVERY_HOST_NOT_INTEGRATED');
   for(const name of ['controlFiles','controlTicket','controlStart','controlGate','controlWait','controlReceipt','controlInspect'])need(typeof ports[name]==='function','CONTROL_RECOVERY_PORT');
   let issued;
+  function launch(book,save,row){
+   try{
+    const files=synchronous(ports.controlFiles(plan,structuredClone(row),structuredClone(request)));
+    const placement=className==='lifecycle-operator'&&plan.lifecycleOperator.placement;
+    need(files&&typeof files==='object'&&!Array.isArray(files)&&equal(Object.keys(files).sort(),['action.json','config.json','env.json',...(placement?['placement.json']:[])]),'CONTROL_RECOVERY_FILE_ROSTER');
+    const bytes=require('node:crypto').createHash('sha256').update(JSON.stringify(request)+'\n').digest('hex');
+    need(files?.['action.json']===bytes,'CONTROL_RECOVERY_ACTION_FILE');
+    const ticket=C.ticket(plan,book,row,expected,files);
+    synchronous(ports.controlTicket(ticket,structuredClone(request)));synchronous(ports.controlStart(ticket));
+    const actual=custody(synchronous(ports.controlInspect(structuredClone(row))),expected,row.class);
+    C.bound(plan,book,row,actual,expected);save();
+    synchronous(ports.controlGate(ticket,C.gate(plan,book,row)));
+   }catch(error){C.uncertain(plan,book,row);save();throw error;}
+  }
   locked((book,save,observe)=>{
    const observation=observe(plan,[],C.known(plan,book));B.observedResourceMatches(plan,observation);
    // A stopped UNKNOWN permits a separately debited operation, never closure.
@@ -118,34 +136,47 @@ function create({directory,plan,expected,ports}){
     need(equal(bound,previous.container)&&equal(Object.fromEntries(Object.keys(expected).map(k=>[k,bound[k]])),expected),'CONTROL_RECOVERY_CUSTODY');
     C.stopped(plan,book,previous,{container:bound,resourceEpoch:[observation.systemIdentifier,observation.postmasterStartedAt],noFutureDispatch:true});save();
    }
-   const row=C.allocate(plan,book,{class:'lifecycle-operator',intentSha256:B.hash(request)});save();issued=row.incarnation;
-   try{
-    const files=synchronous(ports.controlFiles(plan,structuredClone(row),structuredClone(request)));
-    need(files&&typeof files==='object'&&!Array.isArray(files)&&equal(Object.keys(files).sort(),['action.json','config.json','env.json',...(plan.lifecycleOperator.placement?['placement.json']:[])]),'CONTROL_RECOVERY_FILE_ROSTER');
-    const bytes=require('node:crypto').createHash('sha256').update(JSON.stringify(request)+'\n').digest('hex');
-    need(files?.['action.json']===bytes,'CONTROL_RECOVERY_ACTION_FILE');
-    const ticket=C.ticket(plan,book,row,expected,files);
-    synchronous(ports.controlTicket(ticket,structuredClone(request)));synchronous(ports.controlStart(ticket));
-    const actual=custody(synchronous(ports.controlInspect(structuredClone(row))),expected,row.class);
-    C.bound(plan,book,row,actual,expected);save();
-    synchronous(ports.controlGate(ticket,C.gate(plan,book,row)));
-   }catch(error){C.uncertain(plan,book,row);save();throw error;}
+   const row=C.allocate(plan,book,{class:className,intentSha256:B.hash(request)});save();issued=row.incarnation;
+   if(!artifact)launch(book,save,row);
   });
+  function finish(){
   let waitError;try{synchronous(ports.controlWait(issued));}catch(error){waitError=error;}
   return locked((book,save,observe)=>{
    const row=book.controlLeases.find(r=>r.incarnation===issued);
    need(row&&row.state==='BOUND','CONTROL_RECOVERY_CREDIT_HELD');
    try{
     if(waitError)throw waitError;
-    const stopped=custody(synchronous(ports.controlInspect(structuredClone(row))),expected,row.class,true);
+    const child=synchronous(ports.controlInspect(structuredClone(row)));
+    need(child.restarting===false&&child.restartPolicy==='no','CONTROL_RECOVERY_CHILD_RESTART');
+    const stopped=custody(child,expected,row.class,true);
     const receipt=synchronous(ports.controlReceipt(structuredClone(row))),observation=observe(plan,row.tags,C.known(plan,book));
+    if(className==='lifecycle-operator'&&artifact&&receipt.outcome==='COMPLETED')need(receipt.result&&equal(Object.keys(receipt.result).sort(),request.command==='capture'?['digest','tenant']:['digest','state','tenant'])&&receipt.result.tenant===request.tenant&&/^[a-f0-9]{64}$/.test(receipt.result.digest)&&(request.command!=='restore'||receipt.result.digest===request.artifactDigest&&receipt.result.state==='restored-and-active'),'LIFECYCLE_ARTIFACT_RECEIPT');
+    if(className==='restore-commissioner')require('./restore-commissioner-action').receipt(plan,request,receipt);
     C.close(plan,book,row,receipt,stopped,observation);save();
     return {state:'CLOSED',class:row.class,incarnation:issued,outcome:receipt.outcome,result:receipt.result};
    }catch(error){C.uncertain(plan,book,row);save();throw error;}
   });
+  }
+  if(!artifact)return finish();
+  // A durable ISSUED row holds the shared credit and global active execution
+  // while bounded asynchronous artifact validation runs outside F.locked.
+  return (async()=>{
+   try{
+    const row=locked(book=>structuredClone(book.controlLeases.find(r=>r.incarnation===issued)));
+    await ports.controlArtifact(plan,row,structuredClone(request));
+    locked((book,save)=>{const current=book.controlLeases.find(r=>r.incarnation===issued);need(current&&current.state==='ISSUED'&&current.class===className&&current.intentSha256===B.hash(request),'CONTROL_RECOVERY_BINDING');launch(book,save,current);});
+    const result=finish();
+    if(request.command==='capture'&&result.outcome==='COMPLETED'){
+     const snapshot=locked(book=>({book:structuredClone(book),row:structuredClone(book.controlLeases.find(r=>r.incarnation===issued))}));
+     await ports.controlPublish(plan,snapshot.book,snapshot.row,structuredClone(request));
+    }
+    return result;
+   }catch(error){locked((book,save)=>{const row=book.controlLeases.find(r=>r.incarnation===issued);if(row&&['ISSUED','BOUND'].includes(row.state)){C.uncertain(plan,book,row);save();}});throw error;}
+  })();
  }
+
  function lifecycleOperator(value){
-  if(fresh)return freshLifecycle(value);
+  if(fresh)return freshControl(value);
   const request=O.intent(value);
   for(const name of ['operatorFiles','operatorTicket','operatorStart','operatorGate','operatorWait','operatorReceipt','operatorInspect'])need(typeof ports[name]==='function','LIFECYCLE_OPERATOR_PORT');
   let issued;
@@ -175,6 +206,6 @@ function create({directory,plan,expected,ports}){
    }catch(error){row.state='UNKNOWN';row.outcome='OUTCOME_UNCERTAIN';save();throw error;}
   });
  }
- return Object.freeze({start,stop,observe,storedCounts,lifecycleOperator});
+ return Object.freeze({start,stop,observe,storedCounts,lifecycleOperator,restoreCommissioner(value){need(fresh,'CONTROL_RECOVERY_VERSION');return freshControl(value,'restore-commissioner');}});
 }
 module.exports={create,custody};

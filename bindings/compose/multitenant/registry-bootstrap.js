@@ -4,6 +4,7 @@
 // admin REST API; lab subjects and data are a separate API client job.
 const path = require('node:path');
 async function finish({ options, request, rootToken, layout, roleURLs, writePrivate }) {
+  if(options.connectionBudgetProfile)require('./connection-budget-bootstrap').selection(options,require('./connection-budget-files').read(options.connectionBudgetProfile));
   const plan = require('./config'), { output, uid, gid, sourceCommit, configMaxBytes } = options;
   const l = layout, own = { uid, gid }, compact = { compact: true };
   const fs = require('node:fs');
@@ -55,6 +56,7 @@ async function finish({ options, request, rootToken, layout, roleURLs, writePriv
   writePrivate(path.join(output, 'ops', 'env.json'), { NS_OPERATOR_PG: roleURLs.operator, NS_SOURCE_COMMIT: sourceCommit,
     ...(realtimePlacement ? { MULTITENANT_REALTIME_PLACEMENT: '/run/ns-placement/backend.json' } : {}) }, own);
   if (realtimePlacement) writePrivate(path.join(output, 'placement-operator', 'env.json'), { NS_PLACEMENT_PG: roleURLs.placement_publisher, NS_ACTIVITY_PG: roleURLs.activity_reader, NS_SOURCE_COMMIT: sourceCommit, MULTITENANT_REALTIME_PLACEMENT: '/run/ns-placement/backend.json' }, own);
+  if(options.controlRecoveryPrincipals)require('./control-recovery-bootstrap').files({options,docs,layout:l,roleURLs,writePrivate});
   if(options.connectionBudgetProfile) require('./connection-budget-bootstrap').prepare({options,docs,writePrivate});
   writePrivate(path.join(output, 'bootstrap', 'layout.json'), l);
   writePrivate(path.join(output, 'bootstrap', 'complete.json'), { version: 2, sourceCommit, deployCommit: options.deployCommit, registryMode: true });

@@ -46,6 +46,7 @@ function prepare (args) {
   if (!/^[a-f0-9]{40}$/.test(source)) throw new Error('Source commit unavailable');
   let connectionBudget, budgetResolution;
   if(options['connection-budget']){connectionBudget=require('./connection-budget-files').read(path.resolve(options['connection-budget']));if(connectionBudget.kind!=='explicit-connection-budget-profile'||connectionBudget.source.coreCommit!==source||connectionBudget.source.deployCommit!==deployCommit||connectionBudget.bootstrapSchedule!=='EXPLICIT_OVERLAP')throw new Error('CONNECTION_BUDGET_PROFILE_SOURCE');budgetResolution=require('./connection-budget-profile').resolve(connectionBudget,{source:{coreCommit:source,deployCommit}});connectionBudget=budgetResolution.profile;}
+  if(connectionBudget?.version===2&&options['lifecycle-operator']!=='enabled')throw new Error('LIFECYCLE_OPERATOR_SELECTION');
   fs.mkdirSync(state, {mode: 0o700});
   const write = (file, value) => fs.writeFileSync(file, value, {mode: 0o600, flag: 'wx'});
   for (const name of ['bootstrap', 'tls', 'vault', 'ipc', 'artifacts', 'api', 'realtime', 'evaluator', 'tenant-admin', 'ui', 'ops', 'edge', 'admin', 'primer', 'feed-reader', 'placement-operator']) {
@@ -54,7 +55,7 @@ function prepare (args) {
   if(connectionBudget){
     fs.mkdirSync(path.join(state,'connection-budget'),{mode:0o700});
     fs.copyFileSync(path.join(base,'postgres-ready.sh'),path.join(state,'connection-budget/postgres-ready.sh'),fs.constants.COPYFILE_EXCL);fs.chmodSync(path.join(state,'connection-budget/postgres-ready.sh'),0o444);
-    if(options['lifecycle-operator'])write(path.join(state,'connection-budget/operator-enabled.json'),JSON.stringify({version:1,kind:'fresh-lifecycle-operator'})+'\n');
+    if(options['lifecycle-operator'])write(path.join(state,'connection-budget/operator-enabled.json'),JSON.stringify({version:connectionBudget.version,kind:'fresh-lifecycle-operator'})+'\n');
     write(path.join(state,'connection-budget/profile.json'),JSON.stringify(connectionBudget)+'\n');
     write(path.join(state,'connection-budget/preparation.json'),JSON.stringify({kind:'source-derived-connection-sizing',source:{coreCommit:source,deployCommit},requiredMaximum:budgetResolution.requiredMaximum,configuredMaximum:connectionBudget.resource.serverMaximum,derived:budgetResolution.derived,authorization:'SOURCE_ONLY_NOT_CAPACITY'})+'\n');
     const services=budgetResolution.slots;

@@ -3,7 +3,7 @@
 // constructor, startup acquire, replacement backend or core injection API.
 const {AsyncLocalStorage}=require('node:async_hooks');
 const need=(v,c)=>{if(!v)throw Object.assign(new Error(c),{code:c});};
-function create(context){
+function create(context,capture){
  need(require('./lifecycle-operator-entry').isContext(context),'LIFECYCLE_OPERATOR_CONTEXT');
  const scope=require('../../lib/storage/tenant-scope'),transactions=new AsyncLocalStorage();
  let used=false;
@@ -20,6 +20,7 @@ function create(context){
    try{
     await query('BEGIN ISOLATION LEVEL REPEATABLE READ');
     await query("SELECT set_config('app.current_tenant_id', $1, true)",[id]);
+    if(capture){await require('./lifecycle-capture-preflight').run(query,capture,id);active();}
     const result=await fn();active();const committed=await query('COMMIT');need(committed.command==='COMMIT','LIFECYCLE_SNAPSHOT_ABORTED');return result;
    }catch(error){
     try{context.check();await client.query('ROLLBACK');context.check();}catch(rollbackError){releaseError=rollbackError;const failure=Object.assign(new Error('LIFECYCLE_SNAPSHOT_ROLLBACK_FAILED'),{code:'LIFECYCLE_SNAPSHOT_ROLLBACK_FAILED',cause:error,rollbackError});throw failure;}

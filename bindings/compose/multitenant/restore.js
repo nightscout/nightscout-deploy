@@ -132,7 +132,7 @@ function admittedContext(context) {
 async function admittedCapture(config, tenant, context, env = process.env) {
   admittedContext(context); tenantFor(config, tenant);
   const lifecycle = lifecycleFor(config);
-  const snapshot = require('./lifecycle-snapshot').create(context);
+  const snapshot = require('./lifecycle-snapshot').create(context,{catalogues:lifecycle.admittedCatalogue(),namespaces:config.namespaces,sourceCommit:env.NS_SOURCE_COMMIT});
   const artifact = await lifecycle.exportTenant(snapshot, { tenant, namespaces: config.namespaces, sourceCommit: env.NS_SOURCE_COMMIT });
   context.check(); return artifact;
 }
