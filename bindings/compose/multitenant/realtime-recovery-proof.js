@@ -1,0 +1,22 @@
+'use strict';
+// Pure closed ticket/gate/claim binding. Call BEFORE secret reads/constructors.
+const {isDeepStrictEqual:equal}=require('node:util'),A=require('./realtime-recovery-action'),C=require('./control-recovery'),P=require('./physical-ticket-receiver');
+const need=(v,c='REALTIME_RECOVERY_EXECUTION_BINDING')=>{if(!v)throw Object.assign(Error(c),{code:c});};
+const exact=(v,k)=>v&&typeof v==='object'&&!Array.isArray(v)&&equal(Object.keys(v).sort(),[...k].sort());
+function json(bytes,max=1048576){need(Buffer.isBuffer(bytes)&&bytes.length>0&&bytes.length<=max);return JSON.parse(bytes.toString('utf8'));}
+const metadataProofs=new WeakSet(),completeProofs=new WeakSet();
+const freeze=v=>{if(v&&typeof v==='object'){Object.values(v).forEach(freeze);Object.freeze(v);}return v;};
+function metadata({ticketBytes,gateBytes,files},action,binding){
+ A.envelope(action);need(exact(binding,['version','class','leaseIncarnation','nonce','source','planSha256','resourceEpoch','intentSha256','actionId','actionSha256','actionFileSha256'])&&binding.version===1&&binding.class==='realtime-recovery'&&equal(binding.source,action.source)&&binding.planSha256===action.planSha256&&equal(binding.resourceEpoch,action.resourceEpoch)&&binding.intentSha256===action.intentSha256&&binding.actionId===action.actionId);
+ const ticket=P.ticket(json(ticketBytes,65536),'realtime-recovery'),gate=P.gate(json(gateBytes,65536),ticket),op=ticket.control;
+ const names=['intent.json','action-binding.json','host-action.json','config.json','env.json','before-map.json','before-routes.json',...(action.candidate?['candidate-map.json']:[])];
+ need(exact(files,names.filter(n=>n!=='env.json'))&&equal(Object.keys(op.files).sort(),names.sort()));for(const name of names.filter(n=>n!=='env.json')){need(Buffer.isBuffer(files[name])&&files[name].length>0&&files[name].length<=1048576&&A.rawSha(files[name])===op.files[name]);}
+ need(equal(json(files['action-binding.json'],65536),binding)&&A.semantic(json(files['host-action.json'],65536).action)===binding.actionSha256&&json(files['host-action.json'],65536).actionSha256===binding.actionSha256&&equal(json(files['host-action.json'],65536).action,action)&&A.rawSha(files['host-action.json'])===binding.actionFileSha256);
+ need(equal(C.intent('realtime-recovery',json(files['intent.json'],1024)),{version:1,command:action.kind==='inspect'?'inspect':'reconcile-step'})&&ticket.incarnation===action.leaseIncarnation&&ticket.nonce===action.nonce&&ticket.planSha256===action.planSha256&&op.intentSha256===action.intentSha256&&equal(ticket.source,action.source)&&equal(op.expected,action.expected)&&equal(op.resourceEpoch,action.resourceEpoch)&&binding.leaseIncarnation===ticket.incarnation&&binding.nonce===ticket.nonce&&binding.actionSha256===A.semantic(action));
+ need(A.rawSha(files['config.json'])===action.configSha256&&op.files['env.json']===action.environmentSha256&&A.rawSha(files['before-map.json'])===action.before.mapFileSha256&&A.rawSha(files['before-routes.json'])===action.before.routesFileSha256&&(!action.candidate||A.rawSha(files['candidate-map.json'])===action.candidate.mapFileSha256));
+ const proof=freeze({ticket,gate,claim:Object.freeze({version:1,class:'realtime-recovery',leaseIncarnation:ticket.incarnation,nonce:ticket.nonce,planSha256:ticket.planSha256,intentSha256:op.intentSha256,actionSha256:binding.actionSha256,actionFileSha256:binding.actionFileSha256,bindingSha256:A.semantic(binding),ticketFileSha256:A.rawSha(ticketBytes),gateFileSha256:A.rawSha(gateBytes)})});metadataProofs.add(proof);return proof;
+}
+function environment(proof,bytes){need(metadataProofs.has(proof),'REALTIME_RECOVERY_METADATA_PROOF');need(Buffer.isBuffer(bytes)&&bytes.length>0&&bytes.length<=1048576&&A.rawSha(bytes)===proof.ticket.control.files['env.json'],'REALTIME_RECOVERY_ENV_FILE');completeProofs.add(proof);return proof;}
+function verify(input,action,binding){const{['env.json']:env,...files}=input.files;return environment(metadata({...input,files},action,binding),env);}
+function claim(bytes,execution){need(completeProofs.has(execution),'REALTIME_RECOVERY_EXECUTION_PROOF');const v=json(bytes,4096);need(exact(v,Object.keys(execution.claim))&&equal(v,execution.claim),'REALTIME_RECOVERY_CLAIM');return Object.freeze({ticketFileSha256:execution.claim.ticketFileSha256,gateFileSha256:execution.claim.gateFileSha256,claimFileSha256:A.rawSha(bytes)});}
+module.exports=Object.freeze({metadata,environment,verify,claim});
