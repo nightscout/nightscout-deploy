@@ -23,7 +23,10 @@ identities are refused rather than coerced. Legacy1 retains its valid schema.
 Fixed class ticket construction uses the same physical2 fields. The lifecycle
 entry supports that tuple for inspect/resume/clear-operations; capture/restore
 explicitly refuse before admission until their artifact runtime joins. Fresh
-controller/bootstrap dispatch remains HELD. Source fixtures exercise approved
+controller supports fresh ledger3 observations/stored-counts and the fixed
+lifecycle three-command protocol when its trusted host adapter advertises
+controlVersion2. The shipping Docker adapter does not yet supply that interface;
+bootstrap/class launch remains HELD. Source fixtures exercise approved
 ab95 APIs with synthetic source metadata. The selected d003 source/image pair is
 unchanged and is not a runnable fresh2 selection. Lifecycle and commissioning typed action intents,
 completion receipts and observation/stored-count envelopes use version2. The separately versioned
@@ -156,9 +159,12 @@ all durable non-CLOSED class rows. Tag rows must equal this set exactly, includi
 UNKNOWN; missing/extra/duplicate/forged tags refuse. Physical counts measure
 PG_STAT authenticated occupancy only. Separate independently charged observer
 claim/journal records stay separate from class and worker occupancy; observer
-backend counts never retire execution credit. Stored-count2 carries the same
-ledger and occupancy plus complete tag rows and its existing fixed selector,
-counts/foreign/custody/digest/diagnostic/time fields. Every stop path passes the
+backend counts never retire execution credit. Stored-count2 carries top-level `ledger`, `tags`, `occupancy`, `visibility` and
+`limitations` with the same meanings as observation2, plus its existing fixed
+selector, counts/foreign/custody/digest/diagnostic/time fields. The backend-only
+`tagRows` field is validated and copied into envelope `tags`; it is not the
+public envelope field. This matches the separately reviewed collector84e
+`envelope()` boundary for both version2 kinds. Every stop path passes the
 full exact outstanding set to observation. No class label exempts a backend from
 clinical actor/census requirements.
 
@@ -167,3 +173,30 @@ it. The existing envelope1/ledger2 collector remains unchanged and rejects it.
 Actual native audit/clinical/B/clock/pin oracle and source drill interfaces need
 separate authored review/freeze before any native effects. This contract alone
 proves none of native RLS, clinical safety or interrupted-state origin.
+
+## Fresh host protocol source boundary
+
+The trusted host port set is fixed: controlVersion2, controlFiles, controlTicket,
+controlStart, controlInspect, controlGate, controlWait and controlReceipt. It is
+an internal source seam, never a caller field, module selector or extension
+registry. Only lifecycle inspect/resume/clear-operations is currently bound by
+the fresh controller. Capture/restore and other fixed classes still refuse or
+remain unbound until their reviewed runtime joins. The Docker adapter does not
+advertise version2 until its private file publication/launch implementation joins.
+
+The controller validates the fresh ledger before every managed-tag authority,
+saves ISSUED before any class file/ticket/start effect, saves exact BOUND before
+gate publication, and rejects Promise-valued ports. Wait occurs outside F.locked.
+The class file set is exactly action/env/config plus plan-declared placement.
+The action file SHA256 covers JSON.stringify(validated intent) plus newline;
+intentSha256 remains B.hash(validated intent). This lifecycle equality does not
+define realtime semantic action binding.
+
+A successor after UNKNOWN needs an exact bound child reported stopped, not
+restarting, restartPolicy=no, matching expected identity and observed same epoch.
+The fixed adapter derives those facts; callers cannot supply them. The stored
+proof permits a separately debited command and never closes the old row. A
+BOUND successor closes only after exact clean stopped child, receipt2/core proof
+and separately charged zero-tag observation. Its outcome stays in the receipt,
+not the exact common ledger row. No automatic replay or old ledger creation is
+introduced. Native process/PG/EOF/clinical/B acceptance remains UNMEASURED.
