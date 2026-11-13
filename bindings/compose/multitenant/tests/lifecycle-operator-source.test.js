@@ -11,7 +11,8 @@ async function run(command='resume',flags={}){
  const entry=flags.entryTransform?fresh('../lifecycle-operator-entry',flags.entryTransform):E;
  const trace=[],instances=[],metadata=protocol(),peers=['api','evaluator','realtime','tenant-admin'].map((role,i)=>({id:'peer_'+i,roles:[role],namespaces:['clinical_'+i],endpoint:{socketPath:'/synthetic/peer_'+i+'.sock',maxBytes:100000,timeoutMs:1000}}));
  let statusCalls=0,now=0,working,changed=false;
- const durable={phase:'suspended',claim_id:CLAIM,artifact_digest:'a'.repeat(64),generation:'2',lock_key:'41',auditState:flags.dataReplaced?'restored':'suspended',resumes:[],clearance:[]},other={unchanged:true};
+ const tenantBindings=[];
+ const durable={phase:'suspended',claim_id:CLAIM,artifact_digest:'a'.repeat(64),generation:'2',lock_key:'41',auditState:flags.dataReplaced?'restored':'suspended',resumes:[],clearance:[]};
  const clients={lifecycleParticipant(endpoint){const i=peers.findIndex(p=>p.endpoint.socketPath===endpoint.socketPath),peer=peers[i];return {
   async getStatus({request}){statusCalls++;if(flags.missing)throw Object.assign(Error('missing'),{code:'SOCKET_IPC_UNAVAILABLE'});let identity={...protocol.identity};if(flags.partial)delete identity.clearanceOid;
    return {version:1,participant:peer.id,incarnation:(flags.stale&&statusCalls>8?'bbbbbbbb':'aaaaaaaa')+'-1111-4111-8111-111111111111',namespace:'synthetic_window',roles:peer.roles,tenants:['registry:synthetic_registry'],namespaces:peer.namespaces,identity,datastore:DATA,backends:[{pid:100+i,role:'synthetic_'+i,birth:'birth_'+i}],request};},
@@ -34,16 +35,16 @@ async function run(command='resume',flags={}){
    if(text==='BEGIN'){working=structuredClone(durable);return {rows:[],command:'BEGIN'};}
    if(text==='ROLLBACK'){working=undefined;return {rows:[],command:'ROLLBACK'};}
    if(text==='COMMIT'){Object.assign(durable,working);working=undefined;if(flags.commitLate)now=31000000000;if(flags.lostCommit)throw Object.assign(Error('lost'),{code:'ECONNRESET'});return {rows:[],command:'COMMIT'};}
-   if(text.includes('set_config'))return {rows:[]};
+   if(text.includes('set_config')){assert.equal(values[0],A,'REQUESTED_TENANT_TRANSACTION');tenantBindings.push(values[0]);return {rows:[]};}
    if(text.includes('resume-refresh'))return {rows:[]};
    if(text.includes('resume-current-authority'))return {rows:[{active:!flags.revoked}]};
    if(text.includes('resume-window'))return {rows:[{...working||durable}]};
    if(text.includes('resume-audit'))return {rows:[{generation:'2',artifact_digest:'a'.repeat(64),state:durable.auditState,owner_present:flags.ownerUnknown?null:false,resumed:false}]};
    if(text.includes('resume-pending'))return {rows:command==='clear-operations'?[{operation_id:OP,generation:'1',owner_pid:7,owner_birth:'old',gone:flags.backendLive?false:true}]:[]};
    if(text.includes('resume-exclusive'))return {rows:[{held:true}]};
-   if(text.startsWith('UPDATE ')){changed=true;working.phase='active';return {rows:[],rowCount:1};}
-   if(text.startsWith('INSERT ')&&text.includes('restore_resume')){working.resumes.push(values);if(flags.beforeCommit)now=31000000000;return {rows:[],rowCount:1};}
-   if(text.startsWith('INSERT ')&&text.includes('operation_clearance')){working.clearance.push(values);return {rows:[],rowCount:1};}
+   if(text.startsWith('UPDATE ')){assert(text.includes("WHERE tenant_id=$1 AND phase='suspended'"),'TENANT_ROW_PREDICATE');assert.equal(values[0],A,'REQUESTED_TENANT_UPDATE');tenantBindings.push(values[0]);changed=true;working.phase='active';return {rows:[],rowCount:1};}
+   if(text.startsWith('INSERT ')&&text.includes('restore_resume')){assert.equal(values[0],A,'REQUESTED_TENANT_AUDIT');tenantBindings.push(values[0]);working.resumes.push(values);if(flags.beforeCommit)now=31000000000;return {rows:[],rowCount:1};}
+   if(text.startsWith('INSERT ')&&text.includes('operation_clearance')){assert.equal(values[0],A,'REQUESTED_TENANT_CLEARANCE');tenantBindings.push(values[0]);working.clearance.push(values);return {rows:[],rowCount:1};}
    throw Error('Unexpected fixture SQL '+text);
   }
  }
@@ -60,9 +61,9 @@ async function run(command='resume',flags={}){
   if(flags.noEOF){await new Promise(resolve=>setImmediate(resolve));assert.equal(admission.health().liveConnections,1);assert.equal(admission.health().unconfirmedCleanup,false);instances[0].connection.stream.emit('close',true);}
   receipt=await work;
  }catch(cause){error=cause;}finally{Module._load=original;}
- return {receipt,error,durable,other,trace,instances,admission,statusCalls,changed};
+ return {receipt,error,durable,tenantBindings,trace,instances,admission,statusCalls,changed};
 }
-test('actual core admitted Pool/driver/restore/cohort chain commits append-only resume and clean Terminate+EOF',async()=>{const f=await run();assert.ifError(f.error);assert.equal(f.receipt.outcome,'COMPLETED');assert.equal(f.durable.phase,'active');assert.equal(f.durable.resumes.length,1);assert.equal(f.instances.length,1);assert(f.trace.includes('Terminate'));assert.deepEqual(f.other,{unchanged:true});assert(f.statusCalls>=16);});
+test('actual core admitted Pool/driver/restore/cohort chain commits append-only resume and clean Terminate+EOF',async()=>{const f=await run();assert.ifError(f.error);assert.equal(f.receipt.outcome,'COMPLETED');assert.equal(f.durable.phase,'active');assert.equal(f.durable.resumes.length,1);assert.equal(f.instances.length,1);assert(f.trace.includes('Terminate'));assert(f.tenantBindings.length>=3&&f.tenantBindings.every(tenant=>tenant===A),'SOURCE_SQL_SCOPED_TO_A');assert(f.statusCalls>=16);});
 test('diagnostic inspect omits unavailable peers and writes no audit',async()=>{const f=await run('inspect',{missing:true});assert.ifError(f.error);assert.equal(f.receipt.outcome,'COMPLETED');assert.equal(f.statusCalls,0);assert.equal(f.durable.resumes.length,0);assert(!f.trace.includes('COMMIT'));});
 test('both mutations refuse unavailable/partial/stale/unknown actor/current authority before durable audit',async()=>{for(const command of ['resume','clear-operations'])for(const flags of [{missing:true},{partial:true},{stale:true},{unknownActor:true},{revoked:true}]){const f=await run(command,flags);assert.ifError(f.error);assert.equal(f.receipt.outcome,'REFUSED',JSON.stringify(flags));assert.equal(f.durable.resumes.length+f.durable.clearance.length,0);assert(!f.trace.includes('COMMIT'));}});
 test('live/unknown owners retained; orphan-only clearance appends and leaves restore audit intact',async()=>{for(const flags of [{},{backendLive:true},{liveOperation:true}]){const f=await run('clear-operations',flags);assert.ifError(f.error);assert.equal(f.durable.clearance.length,flags.backendLive||flags.liveOperation?0:1);assert.equal(f.durable.auditState,'suspended');}const unknown=await run('resume',{ownerUnknown:true});assert.equal(unknown.receipt.outcome,'REFUSED');});
