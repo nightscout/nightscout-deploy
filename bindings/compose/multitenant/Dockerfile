@@ -10,12 +10,13 @@ COPY views/ ./views/
 COPY translations/ ./translations/
 COPY migrations/ ./migrations/
 COPY scripts/diagnose-data.js ./scripts/diagnose-data.js
-COPY deploy/multitenant/ ./deploy/multitenant/
 COPY server.js ./
 COPY .browserslistrc ./
 RUN npm ci --include=dev --omit=optional --force \
     && node -e "console.log('COMPOSE_BROWSER_TARGETS=' + JSON.stringify(require('browserslist')(undefined, {path: process.cwd()}).sort()))" \
     && npm prune --omit=dev --omit=optional --ignore-scripts
+# Deployment-only changes do not alter dependency or browser compilation.
+COPY deploy/multitenant/ ./deploy/multitenant/
 
 FROM node:24.22.1-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53
 RUN wget -q -O /usr/local/bin/pgstream https://github.com/xataio/pgstream/releases/download/v1.6.0/pgstream.linux.amd64 \

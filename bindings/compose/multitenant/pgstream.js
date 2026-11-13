@@ -21,6 +21,7 @@ function configuration(layout){
 }
 function descriptor(layout){return {consumer:'evaluator-compose-demo',namespaces:{clock:layout.namespaces.clock,checkpoint:layout.namespaces.eval_checkpoint},trustedWorker:{settings:layout.namespaces.display_settings,operatorPolicy:layout.namespaces.operator_policy,activity:layout.namespaces.control},pgstream:configuration(layout)};}
 function wire(config,runtimeURL){
+ const streamURL=new URL(runtimeURL);streamURL.searchParams.set('sslmode','disable');runtimeURL=streamURL.href;
  const storeURL=new URL(runtimeURL);storeURL.searchParams.set('pool_max_conns','2');
  return {source:{postgres:{url:runtimeURL,mode:'replication',replication:{replication_slot:config.pgstream.slot,plugin:{add_tables:require('../../lib/pgstream/evaluator').routes(config).map(row=>row.schema+'.'+row.table).join(',')}}}},
    target:{webhooks:{subscriptions:{store:{url:storeURL.href,cache:{enabled:false}},server:{address:'127.0.0.1:19914'}},notifier:{worker_count:1,strict_mode:true,client_timeout:2000,constant:{max_retries:1,interval:50}}}}};
@@ -28,7 +29,8 @@ function wire(config,runtimeURL){
 async function init({admin,adminURL,layout,config}){
  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'ns-pgstream-dba-'));
  try{
-  const file=path.join(directory,'init.yaml');fs.writeFileSync(file,JSON.stringify({source:{postgres:{url:adminURL,replication:{replication_slot:config.pgstream.slot}}}}),{mode:0o600});
+  const connection=new URL(adminURL);connection.searchParams.set('sslmode','disable');
+  const file=path.join(directory,'init.yaml');fs.writeFileSync(file,JSON.stringify({source:{postgres:{url:connection.href,replication:{replication_slot:config.pgstream.slot}}}}),{mode:0o600});
   execFileSync('/usr/local/bin/pgstream',['init','-c',file],{stdio:['ignore','pipe','pipe'],timeout:30000});
  }finally{fs.rmSync(directory,{recursive:true,force:true});}
  const q=require('./config').quote,role=q(layout.roles.pgstream),evaluator=q(layout.roles.evaluator),realtime=q(layout.roles.realtime),table=q(layout.namespaces.eval_checkpoint)+'.tenant_consumer_checkpoint';
