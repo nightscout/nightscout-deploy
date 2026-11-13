@@ -40,6 +40,7 @@ function writePrivate(filename,value,{uid,gid}={},{compact=false}={}) {
   if(uid!==undefined){fs.chownSync(path.dirname(filename),uid,gid);fs.chownSync(filename,uid,gid);}
 }
 async function bootstrap(options) {
+  if(options.connectionBudgetProfile){const selected=require('./connection-budget-files').read(options.connectionBudgetProfile);if(selected.version===2&&(options.lifecycleOperator||fs.existsSync(path.join(path.dirname(options.connectionBudgetProfile),'operator-enabled.json'))))throw fail('CONTROL_RECOVERY_FRESH_RUNTIME_NOT_INTEGRATED');}
   const {pg,vault,output,sourceCommit,deployCommit,uid,gid,configMaxBytes}=options;
   const privateDirectory=path.join(output,'bootstrap');fs.mkdirSync(privateDirectory,{recursive:true,mode:0o700});
   const initFile=path.join(privateDirectory,'vault-init.json'),completeFile=path.join(privateDirectory,'complete.json'),startedFile=path.join(privateDirectory,'started.json');
@@ -109,6 +110,11 @@ async function bootstrap(options) {
     for(const sql of [...managementGrants.authorityOwner,...managementGrants.issuer])await admin.query(sql);
     for(const sql of require('../../lib/change-feed/postgres').provision({namespace:l.namespaces.feed,clockNamespace:l.namespaces.clock,activityNamespace:l.namespaces.control,settingsNamespace:l.namespaces.display_settings,policyNamespace:l.namespaces.operator_policy,
       slot:l.prefix+'_feed_slot',publication:l.prefix+'_feed_publication',owner:l.feedOwner,reader:l.roles.feed_reader}))await admin.query(sql);
+    if(options.connectionBudgetProfile&&require('./connection-budget-files').read(options.connectionBudgetProfile).version===2){
+      const database=(await admin.query('SELECT current_database() AS database,(SELECT oid::text FROM pg_database WHERE datname=current_database()) AS "databaseOid"')).rows;
+      if(database.length!==1)throw fail('WORKER_DATABASE_IDENTITY');
+      options.workerDatabase=require('./worker-database').identity(database[0]);
+    }
     if(options.lifecycleOperator){const identity=await admin.query('SELECT current_database() AS database,(SELECT oid::text FROM pg_database WHERE datname=current_database()) AS "databaseOid",rolname AS role,oid::text AS "roleOid" FROM pg_roles WHERE rolname=$1',[l.roles.operator]);if(identity.rows.length!==1)throw fail('LIFECYCLE_OPERATOR_PRINCIPAL');options.lifecycleOperatorPrincipal=identity.rows[0];}
     return require('./registry-bootstrap').finish({options,request,rootToken:initialization.root_token,layout:l,roleURLs,writePrivate});
   }finally{await admin.end();}

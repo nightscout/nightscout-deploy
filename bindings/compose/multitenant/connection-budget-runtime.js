@@ -10,10 +10,19 @@ function install(env=process.env){
  if(!env.NS_CONNECTION_BUDGET_FILE){need(!env.NS_CONNECTION_BUDGET_PLAN_FILE&&!env.NS_CONNECTION_BUDGET_CLAIM_DIR,'CONNECTION_BUDGET_PARTIAL_SELECTION');return null;}
  need(!selected&&env.NS_CONNECTION_BUDGET_PLAN_FILE&&env.NS_CONNECTION_BUDGET_CLAIM_DIR,'CONNECTION_BUDGET_PARTIAL_SELECTION');
  const plan=files.read(env.NS_CONNECTION_BUDGET_PLAN_FILE),{sha256,...body}=plan;
+ if(plan.version===2)require('./physical-ticket-receiver').workerPlan(plan);
  need(plan.source?.coreCommit===B.REVIEWED_CORE_COMMIT,'CONNECTION_BUDGET_UNREVIEWED_SOURCE');
+ need([1,2].includes(plan.version),'CONNECTION_BUDGET_PLAN_VERSION');
  need(B.hash(body)===sha256&&plan.kind==='controlled-connection-budget-plan','CONNECTION_BUDGET_PLAN_DIGEST');
- const ticket=files.read(env.NS_CONNECTION_BUDGET_FILE),slot=plan.slots.find(s=>s.processInstanceId===ticket.processInstanceId);
+ const ticket=files.read(env.NS_CONNECTION_BUDGET_FILE);
+ need(ticket.version===plan.version,'CONNECTION_BUDGET_TICKET_VERSION');
+ if(plan.version===2)require('./physical-ticket-receiver').ticket(ticket);
+ const slot=plan.slots.find(s=>s.processInstanceId===ticket.processInstanceId);
  need(slot&&ticket.planSha256===sha256&&equal(ticket.source,plan.source)&&equal(ticket.capabilities,slot.capabilities)&&equal(ticket.directGroups,slot.directGroups)&&equal(ticket.cold,slot.cold)&&ticket.pgResourceId===plan.resource.pgResourceId&&equal(ticket.resourceAliases,plan.resource.aliases)&&/^[a-f0-9]{32}$/.test(ticket.nonce)&&/^[a-f0-9]{32}$/.test(ticket.incarnation),'CONNECTION_BUDGET_SLOT_CHANGED');
+ if(plan.version===2){
+  const W=require('./worker-database');W.identity(plan.workerDatabase);W.identity(ticket.workerDatabase);
+  need(equal(ticket.workerDatabase,plan.workerDatabase),'CONNECTION_BUDGET_WORKER_DATABASE');
+ }else need(!Object.hasOwn(ticket,'workerDatabase'),'CONNECTION_BUDGET_TICKET_VERSION');
  need(require('../../lib/server/serve/pool-config').startupConcurrency(env)===slot.startupConcurrency,'CONNECTION_BUDGET_STARTUP_CHANGED');
  need(env.NS_SOURCE_COMMIT===plan.source.coreCommit,'CONNECTION_BUDGET_IMAGE_SOURCE');
  const imageFile=fs.openSync(path.join(__dirname,'.image-source.json'),fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);let imageSource;try{const stat=fs.fstatSync(imageFile);need(stat.isFile()&&stat.size<=512,'CONNECTION_BUDGET_IMAGE_BINDING');const bytes=Buffer.alloc(513),length=fs.readSync(imageFile,bytes,0,bytes.length,0);need(length<=512,'CONNECTION_BUDGET_IMAGE_BINDING');imageSource=JSON.parse(bytes.subarray(0,length));}finally{fs.closeSync(imageFile);}

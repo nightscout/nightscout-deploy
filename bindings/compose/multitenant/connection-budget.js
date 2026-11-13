@@ -130,7 +130,7 @@ function validateResource(r) {
 }
 
 function compile(profile, docs, { source, poolConfig }) {
-  need(exact(profile, ['version', 'kind', 'source', 'resource', 'slots', 'bootstrapSchedule']) && profile.version === 1 && profile.kind === 'explicit-connection-budget-profile' && equal(profile.source, source), 'CONNECTION_PLAN_PROFILE_SOURCE');
+  need(exact(profile, ['version', 'kind', 'source', 'resource', 'slots', 'bootstrapSchedule']) && [1,2].includes(profile.version) && profile.kind === 'explicit-connection-budget-profile' && equal(profile.source, source), 'CONNECTION_PLAN_PROFILE_SOURCE');
   need(hex(source.coreCommit, 40) && hex(source.deployCommit, 40), 'CONNECTION_PLAN_SOURCE_REQUIRED');
   const resource = validateResource(profile.resource), descriptors = describe(docs, poolConfig);
   need(Array.isArray(profile.slots) && equal(profile.slots.map(x => x.processInstanceId).sort(), descriptors.map(x => x.processInstanceId).sort()), 'CONNECTION_PLAN_ROSTER_MISMATCH');
@@ -180,7 +180,7 @@ function compile(profile, docs, { source, poolConfig }) {
   const outside = Object.values(resource.allowances).reduce((a, b) => a + b, 0);
   const usable = resource.serverMaximum - resource.reserved.superuser - resource.reserved.other;
   need(declaredMaximum + outside <= usable, 'CONNECTION_PLAN_OVERCOMMITTED');
-  const plan = { version: 1, kind: 'controlled-connection-budget-plan', source, resource, slots,
+  const plan = { version: profile.version, kind: 'controlled-connection-budget-plan', source, resource, slots,
     bootstrapSchedule: profile.bootstrapSchedule, declaredMaximum, outside, usable, authorization: 'CONTROLLED_SOURCE_ADMISSION_ONLY_NOT_CAPACITY' };
   return { ...plan, sha256: hash(plan) };
 }
@@ -207,13 +207,15 @@ function generation(plan, book, slotId, observation, previousProof = null, rando
   need(outstanding.length < slot.maximumOutstandingGenerations, 'CONNECTION_ADMISSION_GENERATIONS_EXHAUSTED');
   const oldCredits = plan.slots.reduce((total, s) => total + Math.max(0, book.slots[s.processInstanceId].filter(x => x.state !== 'RETIRED').length - (s.processInstanceId === slotId ? 0 : 1)) * s.declaredMaximum, 0);
   need(oldCredits <= plan.resource.allowances.oldNewRolloutOverlap, 'CONNECTION_ADMISSION_OLD_CREDITS_HELD');
+  if (plan.version === 2) require('./worker-database').identity(plan.workerDatabase);
+  else need(plan.version === 1, 'CONNECTION_ADMISSION_PLAN_VERSION');
   const incarnation = random(16).toString('hex'), nonce = random(16).toString('hex');
   need(hex(incarnation, 32) && hex(nonce, 32) && !Object.values(book.slots).flat().some(x => x.incarnation === incarnation), 'CONNECTION_ADMISSION_NONCE');
   const tags = Object.keys(slot.capabilities).map(name => 'nscb:' + incarnation + ':' + crypto.createHash('sha256').update(name).digest('hex').slice(0, 16));
   need(new Set(tags).size === tags.length, 'CONNECTION_ADMISSION_TAG_COLLISION');
   const row = { incarnation, nonce, tags, container: null, state: 'ISSUED', retired: false };
   old.push(row);
-  return { version: 1, planSha256: plan.sha256, processInstanceId: slotId, incarnation, nonce, source: plan.source,
+  return { version: plan.version, ...(plan.version === 2 ? {workerDatabase: structuredClone(plan.workerDatabase)} : {}), planSha256: plan.sha256, processInstanceId: slotId, incarnation, nonce, source: plan.source,
     pgResourceId: plan.resource.pgResourceId, resourceAliases: plan.resource.aliases, capabilities: slot.capabilities, directGroups: slot.directGroups, cold: slot.cold };
 }
 

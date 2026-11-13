@@ -2,7 +2,7 @@
 // Run only in a joined source fixture. Actual admission, pg driver/pool,
 // restore-resume, readiness, adapter and remote cohort; recording IO, no PG/RLS.
 const test=require('node:test'),assert=require('node:assert/strict'),{EventEmitter}=require('node:events'),fs=require('node:fs'),path=require('node:path'),Module=require('node:module');
-const E=require('../lifecycle-operator-entry'),O=require('../lifecycle-operator'),B=require('../connection-budget');
+const E=require('../lifecycle-operator-entry'),O=require('../lifecycle-operator'),B=require('../connection-budget'),C=require('../control-recovery');
 const pg=require('pg'),protocol=require('../../../tests/fixtures/operation-window-admission-protocol'),lower=require('../../../lib/storage/postgres-connection');
 const A='11111111-1111-4111-8111-111111111111',BID='22222222-2222-4222-8222-222222222222',CLAIM='33333333-3333-4333-8333-333333333333',OP='44444444-4444-4444-8444-444444444444';
 const DATA={database:'synthetic',database_oid:'16384',server_address:'127.0.0.1',server_port:5432,postmaster_birth:'1700000000.000000'};
@@ -22,11 +22,12 @@ async function run(command='resume',flags={}){
  const original=Module._load;
  Module._load=function(name,...args){if(name==='../internal-api/clients')return clients;return original.call(this,name,...args);};
  const cohort=fresh('../../../lib/server/serve/operation-cohort',flags.cohortTransform);Module._load=original;
- const admission=fresh('../../../lib/storage/connection-admission');
+ const admission=fresh('../../../lib/storage/connection-admission',flags.admissionTransform);
  class Stream extends EventEmitter{constructor(){super();this.writable=true;this.destroyed=false;}write(bytes,callback){if(bytes[0]===88)trace.push('Terminate');callback?.();return true;}end(){this.writable=false;if(!flags.noEOF)queueMicrotask(()=>{this.emit('end');this.emit('close',false);});}destroy(error){this.destroyed=true;this.writable=false;queueMicrotask(()=>this.emit('close',!!error));return this;}}
  class Client extends pg.Client{
   constructor(options){super(options);instances.push(this);this.connection.stream=new Stream();const c=this.connection,s=c.stream;c.connect=function(){this._connecting=true;s.on('error',e=>this.emit('error',e));s.once('close',()=>this.emit('end'));queueMicrotask(()=>{if(flags.authLate)now=31000000000;this.emit('readyForQuery',{status:'I'});});};}
-  async query(query,values=[]){const text=typeof query==='string'?query:query.text;if(typeof query!=='string')values=query.values||[];trace.push(text);
+  async query(query,values=[]){const callback=typeof values==='function'?values:null;const text=typeof query==='string'?query:query.text;if(typeof query!=='string')values=query.values||[];trace.push(text);
+   if(text.startsWith('SELECT pg_catalog.current_database()')){const result={rows:[{database:flags.wrongPhysicalDatabase?'other':'synthetic',databaseOid:flags.wrongPhysicalOid?'16385':'16384'}]};assert.equal(typeof callback,'function');queueMicrotask(()=>callback(null,result));return;}
    if(text.startsWith('SELECT current_user'))return {rows:[{role:flags.wrongPrincipal?'wrong':'synthetic_operator',roleOid:flags.wrongRoleOid?'32':'31',database:'synthetic',databaseOid:flags.wrongDatabaseOid?'16385':'16384',epoch:flags.wrongEpoch?'new':'epoch',pid:50,birth:'operator-birth'}]};
    const ready=metadata(text,values);if(ready)return ready;
    if(text==='SELECT '+lower.datastoreSQL)return {rows:[DATA]};
@@ -51,13 +52,20 @@ async function run(command='resume',flags={}){
  const source={coreCommit:'a'.repeat(40),deployCommit:'b'.repeat(40)},expected={source,project:'synthetic',workingDirectory:'/synthetic',imageId:'sha256:'+'c'.repeat(64)};
  const intent={version:1,command,tenant:flags.wrongTenant?CLAIM:A,...(command==='resume'?{claimId:flags.wrongClaim?OP:CLAIM}:{})};
  const row={incarnation:'d'.repeat(32),nonce:'e'.repeat(32),intent,intentSha256:B.hash(intent)},plan={source,sha256:'f'.repeat(64),resource:{pgResourceId:'synthetic-pg',aliases:['synthetic-pg:5432'],systemIdentifier:'123',postmasterStartedAt:'epoch'},lifecycleOperator:{principal:{role:'synthetic_operator',roleOid:'31',database:'synthetic',databaseOid:'16384'}}};
- const ticket=O.ticket(plan,row,expected,{}),container={...expected,service:O.NAME,cid:'a'.repeat(64),startedAt:'start'},gate={version:1,incarnation:row.incarnation,nonce:row.nonce,intentSha256:row.intentSha256,container};
+ let ticket=O.ticket(plan,row,expected,{});const container={...expected,service:O.NAME,cid:'a'.repeat(64),startedAt:'start'};let gate={version:1,incarnation:row.incarnation,nonce:row.nonce,intentSha256:row.intentSha256,container};
+ if(flags.fresh){
+  intent.version=2;const freshBody={...plan,version:2,workerDatabase:{database:'synthetic',databaseOid:'16384'},slots:[],lifecycleOperator:{version:2},resource:{...plan.resource,allowances:{controlRecovery:2}},controlRecovery:{version:1,classes:Object.fromEntries(C.CLASSES.map(c=>[c,{principal:{...plan.lifecycleOperator.principal,...(c==='restore-commissioner'?{role:'synthetic_ddl',roleOid:'32'}:{})}}]))}};delete freshBody.sha256;
+  const freshPlan={...freshBody,sha256:B.hash(freshBody)},book=C.ledger(freshPlan),freshRow=C.allocate(freshPlan,book,{class:O.NAME,intentSha256:B.hash(intent)});
+  ticket=C.ticket(freshPlan,book,freshRow,expected,{'action.json':'1'.repeat(64)});C.bound(freshPlan,book,freshRow,container,expected);gate=C.gate(freshPlan,book,freshRow);
+ }
  const credential=new URL('postgresql://'+plan.resource.aliases[0]);credential.username=plan.lifecycleOperator.principal.role;credential.password=require('node:crypto').randomBytes(16).toString('hex');credential.pathname='/'+plan.lifecycleOperator.principal.database;credential.searchParams.set('sslmode','disable');
  if(flags.wrongSource)ticket.source={...source,coreCommit:'b'.repeat(40)};if(flags.wrongImage)gate.container.imageId='sha256:'+'e'.repeat(64);if(flags.workerTicket)ticket.processInstanceId='api';
+ if(flags.malformed){const keys=flags.malformed.split('.'),field=keys.pop();let target=keys.shift()==='gate'?gate:ticket;for(const key of keys)target=target[key];target[field]=[target[field]];}
+ ticket=JSON.parse(JSON.stringify(ticket));gate=JSON.parse(JSON.stringify(gate));
  const config={control:{namespace:'synthetic_window',registry:{namespace:'synthetic_registry'},locks:[{tenant:A,key:'41'},{tenant:BID,key:'42'}],participants:peers}};
  Module._load=function(name,...args){if(name==='./lifecycle-operator-entry')return entry;if(['../../lib/server/serve/operation-cohort','../server/serve/operation-cohort'].includes(name))return cohort;return original.call(this,name,...args);};
  let receipt,error;
- try{const work=entry.execute({ticket,gate,config,env:{NS_SOURCE_COMMIT:source.coreCommit,NS_OPERATOR_PG:credential.toString()},admission,pg:{Pool:pg.Pool,Client},clock:()=>BigInt(now)});
+ try{const work=entry.execute({ticket,gate,action:flags.fresh?intent:undefined,config,env:{NS_SOURCE_COMMIT:source.coreCommit,NS_OPERATOR_PG:credential.toString()},admission,pg:{Pool:pg.Pool,Client},clock:()=>BigInt(now)});
   if(flags.noEOF){await new Promise(resolve=>setImmediate(resolve));assert.equal(admission.health().liveConnections,1);assert.equal(admission.health().unconfirmedCleanup,false);instances[0].connection.stream.emit('close',true);}
   receipt=await work;
  }catch(cause){error=cause;}finally{Module._load=original;}
@@ -77,3 +85,11 @@ test('actual cohort unknown-actor exemption mutant reaches mutation and fails re
 
 test('source/image/unconfigured tenant/worker ticket substitutions refuse before backend construction',async()=>{for(const flags of [{wrongSource:true},{wrongImage:true},{wrongTenant:true},{workerTicket:true}]){const f=await run('inspect',flags);assert(f.error,JSON.stringify(flags));assert.equal(f.instances.length,0);assert.equal(f.durable.resumes.length,0);}});
 test('backend-principal fence mutant fails wrong-principal oracle and restored source refuses',async()=>{const transform=s=>s.replace('r.rows[0].role===op.principal.role','true');const source=fs.readFileSync(require.resolve('../lifecycle-operator-entry'),'utf8');assert.notEqual(transform(source),source);const mutant=await run('resume',{wrongPrincipal:true,entryTransform:transform});assert.ifError(mutant.error);assert.throws(()=>assert.equal(mutant.receipt.outcome,'REFUSED'),/COMPLETED/);const restored=await run('resume',{wrongPrincipal:true});assert.equal(restored.receipt.outcome,'REFUSED');assert.equal(restored.durable.resumes.length,0);});
+
+test('physical2 lifecycle ticket reaches actual driver admission, then principal verification, then restore-resume',async()=>{const f=await run('resume',{fresh:true});assert.ifError(f.error);assert.equal(f.receipt.version,2);assert.equal(f.receipt.kind,'controlled-operation-complete');assert.equal(f.receipt.class,O.NAME);assert.equal(f.durable.resumes.length,1);assert.equal(f.instances.length,1);const database=f.trace.findIndex(t=>t.startsWith('SELECT pg_catalog.current_database()')),principal=f.trace.findIndex(t=>t.startsWith('SELECT current_user'));assert(database>=0&&principal>database);assert(f.trace.includes('Terminate'));});
+test('physical2 wrong database name/OID has no receipt or mutation; actual admission preserves uncertainty',async()=>{for(const flags of [{wrongPhysicalDatabase:true},{wrongPhysicalOid:true}]){const f=await run('resume',{fresh:true,...flags});assert.equal(f.error?.code,'LIFECYCLE_OPERATOR_OUTCOME_UNCERTAIN');assert.equal(f.receipt,undefined);assert.equal(f.durable.resumes.length,0);assert.equal(f.instances.length,1);assert.equal(f.admission.health().unconfirmedCleanup,true);assert(!f.trace.some(t=>t.startsWith('SELECT current_user')));}});
+test('physical2 late auth/SQL/COMMIT and missing EOF never publish completion',async()=>{for(const flags of [{authLate:true},{beforeCommit:true},{commitLate:true},{lostCommit:true},{noEOF:true}]){const f=await run('resume',{fresh:true,...flags});assert.equal(f.error?.code,'LIFECYCLE_OPERATOR_OUTCOME_UNCERTAIN',JSON.stringify(flags));assert.equal(f.receipt,undefined);}});
+
+test('physical2 core database-OID gate ablation fails the actual entry no-completion oracle; restored stays uncertain',async()=>{const transform=s=>s.replace('identity.databaseOid !== expected.databaseOid','false');assert.notEqual(transform(fs.readFileSync(require.resolve('../../../lib/storage/connection-admission'),'utf8')),fs.readFileSync(require.resolve('../../../lib/storage/connection-admission'),'utf8'));const altered=await run('resume',{fresh:true,wrongPhysicalOid:true,admissionTransform:transform});assert.ifError(altered.error);assert.equal(altered.receipt.outcome,'COMPLETED');assert.throws(()=>assert.equal(altered.receipt,undefined));const restored=await run('resume',{fresh:true,wrongPhysicalOid:true});assert.equal(restored.error?.code,'LIFECYCLE_OPERATOR_OUTCOME_UNCERTAIN');assert.equal(restored.receipt,undefined);});
+
+test('serialized physical2 ticket/control/gate malformed authority refuses before any actual driver constructor',async()=>{for(const malformed of ['ticket.incarnation','ticket.nonce','ticket.source.deployCommit','ticket.control.intentSha256','ticket.control.principal.role','ticket.control.principal.roleOid','ticket.control.expected.project','ticket.control.expected.imageId','ticket.control.resourceEpoch.0','gate.incarnation','gate.nonce','gate.container.cid','gate.container.imageId']){const f=await run('inspect',{fresh:true,malformed});assert.equal(f.error?.code,'CONNECTION_BUDGET_PHYSICAL_TICKET',malformed);assert.equal(f.instances.length,0,malformed);assert.equal(f.receipt,undefined);assert.equal(f.trace.length,0);}});

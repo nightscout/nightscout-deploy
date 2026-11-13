@@ -123,6 +123,42 @@ function recoveryController(config,cohort,context){
  if(!require('./lifecycle-operator-entry').isContext(context))throw fail('LIFECYCLE_OPERATOR_CONTEXT');
  context.check();return require('../../lib/tenant-lifecycle/restore-resume').create({namespace:config.control.namespace,locks:config.control.locks,pool:context.pool,cohort,statementTimeoutMs:10000,lockWaitMs:2000});
 }
+// SOURCE-only admitted capture/restore boundary. The fixed entry owns the
+// branded pool; no constructor or startup acquisition is invented here.
+function admittedContext(context) {
+  if (!require('./lifecycle-operator-entry').isContext(context)) throw fail('LIFECYCLE_OPERATOR_CONTEXT');
+  context.check();
+}
+async function admittedCapture(config, tenant, context, env = process.env) {
+  admittedContext(context); tenantFor(config, tenant);
+  const lifecycle = lifecycleFor(config);
+  const snapshot = require('./lifecycle-snapshot').create(context);
+  const artifact = await lifecycle.exportTenant(snapshot, { tenant, namespaces: config.namespaces, sourceCommit: env.NS_SOURCE_COMMIT });
+  context.check(); return artifact;
+}
+async function admittedRestore(config, artifact, context, env = process.env, hooks = {}) {
+  admittedContext(context);
+  const tenant = tenantFor(config, artifact?.manifest?.tenant), lifecycle = lifecycleFor(config);
+  let cohort, controller;
+  try {
+    cohort = await recoveryCohort(config, env); context.check();
+    controller = require('../../lib/tenant-lifecycle/maintenance-window').create({ namespace: config.control.namespace,
+      locks: config.control.locks, pool: context.pool, cohort, drainTimeoutMs: config.drainTimeoutMs });
+    let committed = false;
+    const result = await controller.withRestore(tenant, { artifactDigest: artifact.digest }, async ({ connection, maintenanceClaim }) => {
+      context.check();
+      if (hooks.beforeData) await hooks.beforeData();
+      context.check();
+      return lifecycle.restoreLogical(connection, artifact, { tenant, namespaces: config.namespaces, ledgerNamespace: config.control.namespace, maintenanceClaim,
+        ...(hooks.onRow ? { onRow: hooks.onRow } : {}), onCommitted: async summary => {
+          context.check(); committed = true; if (hooks.onCommitted) await hooks.onCommitted(summary); context.check();
+        } });
+    });
+    context.check(); if (!committed) throw fail('COMPOSE_RESTORE_COMMIT_NOT_OBSERVED');
+    return result;
+  } finally { try { await controller?.close(); } finally { await cohort?.close(); } }
+}
+
 function argumentsFor (args) {
   const command = args.shift();
   if (!['export', 'restore'].includes(command)) throw fail('COMPOSE_OPERATOR_USAGE');
@@ -158,4 +194,4 @@ if (require.main === module) main().then(result => process.stdout.write(JSON.str
     recovery: 'Inspect persisted operation state. Do not automatically replay or reopen the tenant.' }) + '\n');
   process.exitCode = 1;
 });
-module.exports = { validateRecoveryConfig, recoveryCohort, recoveryController, validateConfig, loadConfig, lifecycleFor, tenantFor, cohortTenants, ready, capture, restore, argumentsFor, main };
+module.exports = { admittedCapture, admittedRestore, validateRecoveryConfig, recoveryCohort, recoveryController, validateConfig, loadConfig, lifecycleFor, tenantFor, cohortTenants, ready, capture, restore, argumentsFor, main };
