@@ -1,7 +1,7 @@
 'use strict';
 // Run against a prepared joined source tree, never a substituted core module.
 const test=require('node:test'),assert=require('node:assert/strict'),Module=require('node:module');
-const source={coreCommit:'1c6a1c2cf0fa898ece933c49f4e6cc5096f762da',deployCommit:'b'.repeat(40)};
+const source={coreCommit:'074eab44ee75b9175c951b6a8add3df3e9554af7',deployCommit:'b'.repeat(40)};
 const B=require('../connection-budget'),P=require('../connection-budget-profile'),poolConfig=require('../../../lib/server/serve/pool-config');
 const {input}=require('./connection-budget-source-fixture');
 test('actual expanded source configuration derives all role limits and fixed/direct/headroom; no PG constructed',()=>{

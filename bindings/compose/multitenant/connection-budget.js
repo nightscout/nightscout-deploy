@@ -13,7 +13,7 @@ const id = value => typeof value === 'string' && /^[a-z][a-z0-9-]{0,62}$/.test(v
 const hash = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 // Review-bounded inventory. A new core revision requires explicit re-review;
 // matching config keys alone is not proof of complete constructor coverage.
-const REVIEWED_CORE_COMMIT = '1c6a1c2cf0fa898ece933c49f4e6cc5096f762da';
+const REVIEWED_CORE_COMMIT = '074eab44ee75b9175c951b6a8add3df3e9554af7';
 const SOURCE = {
   'nightscout-api-registry': 'lib/server/serve/registry-tenants.js',
   'nightscout-tenant-admin-registry': 'lib/server/serve/registry-tenants.js',
@@ -189,7 +189,7 @@ function observedResourceMatches(plan, observation) {
   const r = plan.resource;
   need(exact(observation, ['pgResourceId', 'systemIdentifier', 'postmasterStartedAt', 'serverMaximum', 'superuserReserved', 'otherReserved', 'unmanagedClients', 'bootstrapClosed']), 'CONNECTION_ADMISSION_OBSERVATION_UNKNOWN');
   need(observation.pgResourceId === r.pgResourceId && observation.systemIdentifier === r.systemIdentifier && observation.postmasterStartedAt === r.postmasterStartedAt && observation.serverMaximum === r.serverMaximum && observation.superuserReserved === r.reserved.superuser && observation.otherReserved === r.reserved.other, 'CONNECTION_ADMISSION_RESOURCE_CHANGED');
-  need(integer(observation.unmanagedClients) && observation.unmanagedClients <= r.allowances.unmanaged + r.allowances.observers + r.allowances.controlRecovery + r.allowances.bootstrapOverlap, 'CONNECTION_ADMISSION_OUTSIDE_BUDGET');
+  need(integer(observation.unmanagedClients) && observation.unmanagedClients <= r.allowances.unmanaged, 'CONNECTION_ADMISSION_OUTSIDE_BUDGET');
   if (plan.bootstrapSchedule === 'CONTROLLER_CONFIRMED_CLOSED_BEFORE_WORKERS') need(observation.bootstrapClosed === true, 'CONNECTION_ADMISSION_BOOTSTRAP_OPEN');
 }
 

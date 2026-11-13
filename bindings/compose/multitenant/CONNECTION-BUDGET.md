@@ -74,6 +74,28 @@ of every Compose input and `.env`. Derived sizing adds the corresponding explici
 PostgreSQL command only to that selected overlay. Bootstrap creates the final
 private plan and per-process claim directories, without any worker ticket.
 
+## Selected PostgreSQL health boundary
+
+The selected overlay replaces periodic `pg_isready` connections with a fixed,
+read-only-mounted POSIX helper, labeled LOCAL_POSTMASTER_DECLARED_READY. It reads
+PostgreSQL's own ready marker and the current PID1 executable/process birth;
+it rejects starting/stopping, stale/wrong PID, temporary initialization server,
+paused/zombie state, recovery/standby, partial/changing records and wrong target.
+It opens no PostgreSQL connection. This is a local postmaster declaration, not
+live TCP, SQL, privilege or capacity health. Bootstrap and every worker admission
+still require finite actual SQL settings/identity/epoch validation.
+
+This Linux helper is source-bounded to the exact PostgreSQL16.15 image currently
+pinned in Compose. A single no-network, read-only, no-PostgreSQL-startup tool probe
+confirmed its shell/stat/awk/getconf/readlink/wc/cat/date and CLK_TCK support;
+no persistent Docker volume was created. PG source-tar SHA256 is
+`c1575341fa7bd40f5274ea465b34390f4dc64cdd0770af327005caaeb9f6b7ed`.
+The algorithm follows [pg_ctl's ready-file contract](https://www.postgresql.org/docs/16/app-pg-ctl.html)
+and the [16.15 PID-file format](https://github.com/postgres/postgres/blob/REL_16_15/src/include/utils/pidfile.h),
+with stricter primary/standby rejection. Seconds-resolution timestamp sanity is
+not a substitute for exact Docker incarnation and actual SQL postmaster-epoch
+custody. No matching running-server or capacity result follows from the tool probe.
+
 ## Controlled lifecycle
 
 After the normal explicit bootstrap completes, use:
@@ -103,11 +125,21 @@ gets only its own ticket and writable claim directory. No per-query SQL or disk
 admission hop is introduced.
 
 Normal stop freezes constructors/handshakes and cold producers, drains services,
-then awaits actual underlying PG Connection end and all pending connect outcomes.
-Pool.end alone is insufficient. Only successful shutdown publishes an atomic
+then requires positively completed authentication, idle protocol Terminate,
+observed peer EOF, clean transport close and every connect/end outcome settled.
+Pool.end or locally destroyed Connection.end alone is insufficient. An aborted
+preauthentication backend can be invisible to pg_stat_activity; an empty tag
+census never refunds that uncertainty. Active/unqueryable end, raw local destroy,
+transport errors and unknown stream replacement retain direct and pool credit.
+The selected proof currently supports the reviewed plain isolated PG transport;
+selected TLS refuses explicitly, with no plaintext fallback. The unselected TLS
+and DATA implementations are unchanged. PostgreSQL's [16.15 peer-close ordering](https://github.com/postgres/postgres/blob/REL_16_15/src/backend/libpq/pqcomm.c)
+places normal socket/process closure after shared cleanup; local abort is a
+different event. Only successful shutdown publishes an atomic
 private nonce/source/incarnation ACK, including lossless original application-name
 mapping and the complete expected bounded incarnation tag set. The controller
-also requires the original exact container stopped and fresh absence of every
+also requires the original exact container stopped with body exit zero, no OOM
+or runtime error, and fresh absence of every
 old tag on the same server epoch before retiring credit. A forced stop, stale ACK,
 late backend, missing tag or uncertain cleanup never refunds credit. Explicit
 finite overlap can cover uncertain generations; exhaustion refuses. Stale locks
@@ -116,7 +148,11 @@ and uncertain observer markers require operator investigation, not timed deletio
 The fixed metadata observer has finite durable reservations too. Known stock
 psql exit prevents future authentication; a later fresh census must show its old
 backend PID absent before credit reuse. A timeout/unknown command outcome retains
-its observer reservation and blocks repeated attempts. SQL has connect/statement
+its observer reservation and blocks repeated attempts. Unknown clients must fit only the explicit unmanaged allowance, never borrow
+unused bootstrap/control reserve. The separately owned controlled PostgreSQL probe reproduced preauthentication
+invisibility; those credits are retained by the source protocol, not inferred
+from the census.
+SQL has connect/statement
 bounds and fixed output bounds, with no tenant data or URI persistence.
 
 ## Qualification boundary

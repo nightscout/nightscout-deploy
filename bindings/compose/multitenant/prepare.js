@@ -28,6 +28,8 @@ function prepare (args) {
   const sourceRoot = path.resolve(base, '../..');
   if (state.startsWith(sourceRoot + '/') && state !== path.join(base, '.state')) throw new Error('Custom state must be outside the source/build context');
   if (fs.existsSync(state) || fs.existsSync(path.join(base, '.env'))) throw new Error('State or deployment .env already exists; reuse it or choose a clean deployment checkout');
+  let selectedSource;
+  if(options['connection-budget']){const build=require('./build'),root=path.join(base,'../..');const coreCommit=build.assertCleanSource(root),deployCommit=build.overlay(root)?.deployCommit;if(coreCommit!==require('./connection-budget').REVIEWED_CORE_COMMIT||!/^[a-f0-9]{40}$/.test(deployCommit||''))throw new Error('CONNECTION_BUDGET_UNREVIEWED_SOURCE');selectedSource={coreCommit,deployCommit};}
   const replicas = require('./replicas');
   const apiReplicas = replicas.count();
   const realtime = require('./realtime-workers'), selectedRealtime = realtime.selection();
@@ -35,8 +37,8 @@ function prepare (args) {
   const evaluator = require('./evaluator-workers'), selectedEvaluator = evaluator.selection();
   const leaseSessions = require('./registry-plan').leaseSessions();
   require('./edge').policy();
-  const source = require('./build').assertCleanSource(path.join(base, '../..'));
-  const deployCommit = require('./build').overlay(path.join(base, '../..'))?.deployCommit || source;
+  const source = selectedSource?.coreCommit || require('./build').assertCleanSource(path.join(base, '../..'));
+  const deployCommit = selectedSource?.deployCommit || require('./build').overlay(path.join(base, '../..'))?.deployCommit || source;
   if (!/^[a-f0-9]{40}$/.test(source)) throw new Error('Source commit unavailable');
   let connectionBudget, budgetResolution;
   if(options['connection-budget']){connectionBudget=require('./connection-budget-files').read(path.resolve(options['connection-budget']));if(connectionBudget.kind!=='explicit-connection-budget-profile'||connectionBudget.source.coreCommit!==source||connectionBudget.source.deployCommit!==deployCommit||connectionBudget.bootstrapSchedule!=='EXPLICIT_OVERLAP')throw new Error('CONNECTION_BUDGET_PROFILE_SOURCE');budgetResolution=require('./connection-budget-profile').resolve(connectionBudget,{source:{coreCommit:source,deployCommit}});connectionBudget=budgetResolution.profile;}
@@ -47,6 +49,7 @@ function prepare (args) {
   }
   if(connectionBudget){
     fs.mkdirSync(path.join(state,'connection-budget'),{mode:0o700});
+    fs.copyFileSync(path.join(base,'postgres-ready.sh'),path.join(state,'connection-budget/postgres-ready.sh'),fs.constants.COPYFILE_EXCL);fs.chmodSync(path.join(state,'connection-budget/postgres-ready.sh'),0o444);
     write(path.join(state,'connection-budget/profile.json'),JSON.stringify(connectionBudget)+'\n');
     write(path.join(state,'connection-budget/preparation.json'),JSON.stringify({kind:'source-derived-connection-sizing',source:{coreCommit:source,deployCommit},requiredMaximum:budgetResolution.requiredMaximum,configuredMaximum:connectionBudget.resource.serverMaximum,derived:budgetResolution.derived,authorization:'SOURCE_ONLY_NOT_CAPACITY'})+'\n');
     const services=budgetResolution.slots;
@@ -84,7 +87,7 @@ function prepare (args) {
     (selectedEvaluator ? 'NS_EVALUATOR_WORKERS=' + selectedEvaluator.workers + '\n' : '') +
     (connectionBudget?'NS_CONNECTION_BUDGET=1\n':'') + 'NS_M7_DIAGNOSTICS=' + diagnostics.enabled + '\nNS_M7_DIAGNOSTICS_INTERVAL_MS=' + diagnostics.interval + '\n' +
     'NS_OPERATION_LEASE_SESSIONS=' + leaseSessions + '\nNS_DEMO_STATE=' + state + '\nNS_DEMO_BIND=' + options.bind + '\nNS_DEMO_PORT=' + options.port + '\nNS_SOURCE_COMMIT=' + source + '\n');
-  if(connectionBudget){const configFile=path.join(state,'connection-budget/controller-config.json'),c=require('./connection-budget-files').read(configFile);c.fileDigests=Object.fromEntries([...c.composeFiles,path.join(base,'.env')].map(file=>[file,crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')]));require('./connection-budget-files').write(configFile,c);}
+  if(connectionBudget){const configFile=path.join(state,'connection-budget/controller-config.json'),c=require('./connection-budget-files').read(configFile);c.fileDigests=Object.fromEntries([...c.composeFiles,path.join(base,'.env'),path.join(state,'connection-budget/postgres-ready.sh')].map(file=>[file,crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')]));require('./connection-budget-files').write(configFile,c);}
   process.stdout.write('Prepared private synthetic deployment state. Run the explicit bootstrap before starting roles.\n');
   return {state, source};
 }

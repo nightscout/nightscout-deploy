@@ -3,7 +3,7 @@
 // Explicit selected-profile lifecycle only. No command or SQL is taken from a
 // profile; no default path, automatic retry, resize, cleanup or resource epoch reset.
 const fs=require('node:fs'),crypto=require('node:crypto'),path=require('node:path'),{spawnSync}=require('node:child_process');
-const F=require('./connection-budget-files'),B=require('./connection-budget');
+const F=require('./connection-budget-files'),B=require('./connection-budget'),PG=require('./postgres-profile.json');
 const need=(v,c)=>{if(!v)throw Object.assign(new Error(c),{code:c});};
 function run(args){const r=spawnSync('docker',args,{encoding:'utf8',timeout:15000,maxBuffer:1048576,killSignal:'SIGKILL',stdio:['ignore','pipe','pipe']});need(!r.error&&r.status===0,'CONNECTION_CONTROLLER_DOCKER_REFUSED');return r.stdout;}
 function main(args){
@@ -12,7 +12,8 @@ function main(args){
  const directory=path.join(args[0],'connection-budget'),config=F.read(path.join(directory,'controller-config.json')),plan=F.read(path.join(directory,'plan.json'));
  need(plan.source?.coreCommit===B.REVIEWED_CORE_COMMIT,'CONNECTION_BUDGET_UNREVIEWED_SOURCE');
  need(B.hash((({sha256,...b})=>b)(plan))===plan.sha256&&JSON.stringify(config.source)===JSON.stringify(plan.source),'CONNECTION_CONTROLLER_PLAN');
- need(config.fileDigests&&[...config.composeFiles,path.join(config.workingDirectory,'.env')].every(file=>{const stat=fs.lstatSync(file);return stat.isFile()&&!stat.isSymbolicLink()&&fs.realpathSync(file)===file&&config.fileDigests[file]===crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');}),'CONNECTION_CONTROLLER_PREPARED_FILES_CHANGED');
+ need(config.fileDigests&&[...config.composeFiles,path.join(config.workingDirectory,'.env'),path.join(directory,'postgres-ready.sh')].every(file=>{const stat=fs.lstatSync(file);return stat.isFile()&&!stat.isSymbolicLink()&&fs.realpathSync(file)===file&&config.fileDigests[file]===crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');}),'CONNECTION_CONTROLLER_PREPARED_FILES_CHANGED');
+ const build=require('./build'),sourceRoot=path.resolve(__dirname,'../..');need(build.assertCleanSource(sourceRoot)===plan.source.coreCommit&&build.overlay(sourceRoot)?.deployCommit===plan.source.deployCommit,'CONNECTION_CONTROLLER_HOST_SOURCE_CHANGED');
  const complete=F.read(path.join(args[0],'bootstrap','complete.json'));need(complete.sourceCommit===plan.source.coreCommit&&complete.deployCommit===plan.source.deployCommit,'CONNECTION_CONTROLLER_BOOTSTRAP_SOURCE');
  if(args[1]==='bind'){
    need(args.length===2,'CONNECTION_CONTROLLER_ARGUMENTS');
@@ -23,6 +24,7 @@ function main(args){
      const compose=['compose','--project-directory',config.workingDirectory,'--project-name',config.project,'--env-file',path.join(config.workingDirectory,'.env'),...config.composeFiles.flatMap(f=>['-f',f])];
      const cid=run([...compose,'ps','-a','-q','postgres']).trim();need(/^[a-f0-9]{64}$/.test(cid),'CONNECTION_CONTROLLER_POSTGRES');
      const pg=JSON.parse(run(['inspect',cid]));need(pg.length===1,'CONNECTION_CONTROLLER_POSTGRES');const p=pg[0],l=p.Config?.Labels||{};
+     need(p.Image===PG.imageId,'CONNECTION_CONTROLLER_UNREVIEWED_PG_IMAGE');
      need(p.State?.Running===true&&l['com.docker.compose.project']===config.project&&l['com.docker.compose.project.working_dir']===config.workingDirectory&&l['com.docker.compose.service']==='postgres','CONNECTION_CONTROLLER_POSTGRES_CUSTODY');
      const custody={expected:{project:config.project,workingDirectory:config.workingDirectory,imageId:image[0].Id,source:plan.source},postgres:{cid,startedAt:p.State.StartedAt,imageId:p.Image},composeFiles:config.composeFiles,fileDigests:config.fileDigests};
      // Verify actual target identity/settings BEFORE publishing controller custody.
