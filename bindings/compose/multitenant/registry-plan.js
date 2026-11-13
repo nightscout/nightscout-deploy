@@ -49,7 +49,7 @@ function expand(docs, { layout, urls, vaultAddress }) {
   // tenant-bound truth remains on each role's registered storage connection.
   for (const role of ['evaluator','realtime']) {
     docs.environments[role].NS_FEED_LISTENER_PG = urls.feed_listener;
-    docs.configs[role].changeFeed = { connectionEnv: 'NS_FEED_LISTENER_PG', channel: layout.prefix + '_changes', pageSize: 256, degradedPages: 4, intervalMs: 1000, heartbeatTimeoutMs: 5000, ...feedSweep() };
+    docs.configs[role].changeFeed = { connectionEnv: 'NS_FEED_LISTENER_PG', channel: layout.prefix + '_changes', pageSize: 256, degradedPages: 4, intervalMs: 1000, heartbeatTimeoutMs: feedHeartbeat(), ...feedSweep() };
   }
   docs.feed = { config: { connectionEnv: 'NS_FEED_PG', namespace: ns.feed, clockNamespace: ns.clock, activityNamespace: ns.control, settingsNamespace: ns.display_settings, policyNamespace: ns.operator_policy,
     slot: layout.prefix + '_feed_slot', publication: layout.prefix + '_feed_publication', owner: layout.feedOwner, channel: layout.prefix + '_changes',
@@ -92,4 +92,12 @@ function feedSweep (source = process.env) {
   if (!/^[1-9][0-9]{3,4}$/.test(raw) || Number(raw) < 1000 || Number(raw) > 30000) throw Object.assign(new Error('NS_FEED_SWEEP_MS must be 1000..30000'), { code: 'FEED_SWEEP_INVALID' });
   return { sweepMs: Number(raw) };
 }
-module.exports = { expand, provisioningNamespaces, checkpoints, leaseSessions, feedSweep };
+// Explicit per-deployment consumer heartbeat horizon for bounded experiments.
+// Default remains 5000; this does not change reader cadence or any role clock.
+function feedHeartbeat (source = process.env) {
+  const raw = source.NS_FEED_HEARTBEAT_TIMEOUT_MS;
+  if (raw === undefined || raw === '') return 5000;
+  if (typeof raw !== 'string' || !/^[1-9][0-9]{2,5}$/.test(raw) || Number(raw) < 100 || Number(raw) > 300000) throw Object.assign(new Error('NS_FEED_HEARTBEAT_TIMEOUT_MS must be 100..300000'), { code: 'FEED_HEARTBEAT_INVALID' });
+  return Number(raw);
+}
+module.exports = { expand, provisioningNamespaces, checkpoints, leaseSessions, feedSweep, feedHeartbeat };

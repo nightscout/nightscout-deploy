@@ -328,3 +328,13 @@ wrong-tenant denial, private-route refusal and existing clinical-row continuity.
 Its private once-only journal refuses a repeated qualification run. It performs
 no container lifecycle, SQL seeding, membership or settings mutation. A skipped
 native test is UNMEASURED, not deployment acceptance.
+
+
+`NS_FEED_HEARTBEAT_TIMEOUT_MS` at bootstrap optionally selects the existing
+consumer heartbeat timeout for both evaluator and realtime, from 100 to 300000
+milliseconds. Absent or empty preserves 5000. It is forwarded explicitly to
+bootstrap and captured in generated role configurations; changing it after
+bootstrap does not change a running consumer. This bounded selector supports
+controlled fault experiments with the same configuration in both comparison
+arms; it is not a production timeout recommendation. It does not change the
+reader heartbeat cadence, sweep selection (OFF remains absent), or any data TTL.

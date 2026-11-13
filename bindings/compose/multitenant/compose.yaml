@@ -75,6 +75,7 @@ services:
       NS_OPERATION_LEASE_SESSIONS: ${NS_OPERATION_LEASE_SESSIONS:-4}
       # Off when empty. Healthy feed rotation period for evaluator and realtime (registry-plan.js).
       NS_FEED_SWEEP_MS: ${NS_FEED_SWEEP_MS:-}
+      NS_FEED_HEARTBEAT_TIMEOUT_MS: ${NS_FEED_HEARTBEAT_TIMEOUT_MS:-}
       # Off when empty. Large tenant counts only: see bootstrap.js input().
       NS_BOOTSTRAP_CONFIG_MAX_BYTES: ${NS_BOOTSTRAP_CONFIG_MAX_BYTES:-}
       NS_BOOTSTRAP_OUTPUT: /state

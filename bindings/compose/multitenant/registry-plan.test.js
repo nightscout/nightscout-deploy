@@ -123,3 +123,16 @@ test('NS_FEED_SWEEP_MS is off when empty and selects a bounded healthy rotation 
     assert.equal(on.evaluator.changeFeed.pageSize, 256); assert.equal(on.evaluator.changeFeed.degradedPages, 4);
   } finally { if (saved === undefined) delete process.env.NS_FEED_SWEEP_MS; else process.env.NS_FEED_SWEEP_MS = saved; }
 });
+
+test('explicit consumer heartbeat horizon preserves default and is parsed by actual product config',()=>{
+ const compose=require('js-yaml').load(fs.readFileSync(path.join(__dirname,'compose.yaml'),'utf8'));assert.equal(compose.services.bootstrap.environment.NS_FEED_HEARTBEAT_TIMEOUT_MS,'${NS_FEED_HEARTBEAT_TIMEOUT_MS:-}');
+ const {feedHeartbeat}=require('./registry-plan');assert.equal(feedHeartbeat({}),5000);assert.equal(feedHeartbeat({NS_FEED_HEARTBEAT_TIMEOUT_MS:''}),5000);
+ for(const raw of ['100','5000','300000'])assert.equal(feedHeartbeat({NS_FEED_HEARTBEAT_TIMEOUT_MS:raw}),Number(raw));
+ for(const raw of ['99','300001','0','0100','1e3','100.5','true',false,100,null])assert.throws(()=>feedHeartbeat({NS_FEED_HEARTBEAT_TIMEOUT_MS:raw}),{code:'FEED_HEARTBEAT_INVALID'});
+ const saved=process.env.NS_FEED_HEARTBEAT_TIMEOUT_MS;
+ try{
+  delete process.env.NS_FEED_HEARTBEAT_TIMEOUT_MS;const off=generated().docs;for(const role of ['evaluator','realtime'])assert.equal(off.configs[role].changeFeed.heartbeatTimeoutMs,5000);
+  process.env.NS_FEED_HEARTBEAT_TIMEOUT_MS='300000';const on=generated().docs,directory=files(on);
+  try{for(const role of ['evaluator','realtime']){assert.equal(on.configs[role].changeFeed.heartbeatTimeoutMs,300000);assert.equal(on.configs[role].changeFeed.intervalMs,1000);assert.equal(on.configs[role].changeFeed.pageSize,256);assert.equal(Object.hasOwn(on.configs[role].changeFeed,'sweepMs'),Object.hasOwn(off.configs[role].changeFeed,'sweepMs'));}plan.validateFiles(directory,on);}finally{fs.rmSync(directory,{recursive:true,force:true});}
+ }finally{if(saved===undefined)delete process.env.NS_FEED_HEARTBEAT_TIMEOUT_MS;else process.env.NS_FEED_HEARTBEAT_TIMEOUT_MS=saved;}
+});
