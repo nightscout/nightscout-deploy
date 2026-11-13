@@ -248,6 +248,13 @@ lifetimes and restore exclusion remain protected. Unselected application profile
 retain their prior operation path. Four is a synthetic measurement profile, not
 a portable throughput claim; record it alongside the pool sizes.
 
+`NS_FEED_SWEEP_MS` at bootstrap (off when empty; 1000 to 30000) sets the period in which the
+evaluator's and realtime's healthy feed rotation covers every tenant. Unset, each healthy tick
+rechecks one page of 256 tenants, so a deployment of 256 tenants or fewer rechecks every tenant every
+second. A tenant with a change hint (a write, a pause or suspend, a settings change) is still checked
+on the next tick, and a degraded feed still rotates full pages; the value bounds only how long a lost
+hint can go unnoticed. It needs a core that accepts `changeFeed.sweepMs`.
+
 The opted-in `shipping-sharding.integration.test.js` first proves every fixed API
 instance × synthetic seed tenant through a private, authorized status GET. A bare
 readiness client uses only a short-lived mode-0600 DATA-credential input and three

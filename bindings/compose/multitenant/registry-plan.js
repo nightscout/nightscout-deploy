@@ -49,7 +49,7 @@ function expand(docs, { layout, urls, vaultAddress }) {
   // tenant-bound truth remains on each role's registered storage connection.
   for (const role of ['evaluator','realtime']) {
     docs.environments[role].NS_FEED_LISTENER_PG = urls.feed_listener;
-    docs.configs[role].changeFeed = { connectionEnv: 'NS_FEED_LISTENER_PG', channel: layout.prefix + '_changes', pageSize: 256, degradedPages: 4, intervalMs: 1000, heartbeatTimeoutMs: 5000 };
+    docs.configs[role].changeFeed = { connectionEnv: 'NS_FEED_LISTENER_PG', channel: layout.prefix + '_changes', pageSize: 256, degradedPages: 4, intervalMs: 1000, heartbeatTimeoutMs: 5000, ...feedSweep() };
   }
   docs.feed = { config: { connectionEnv: 'NS_FEED_PG', namespace: ns.feed, clockNamespace: ns.clock, activityNamespace: ns.control, settingsNamespace: ns.display_settings, policyNamespace: ns.operator_policy,
     slot: layout.prefix + '_feed_slot', publication: layout.prefix + '_feed_publication', owner: layout.feedOwner, channel: layout.prefix + '_changes',
@@ -82,4 +82,14 @@ function expand(docs, { layout, urls, vaultAddress }) {
   delete docs.admission;
   return docs;
 }
-module.exports = { expand, provisioningNamespaces, checkpoints, leaseSessions };
+// NS_FEED_SWEEP_MS (off when empty): the period in which the healthy lost-hint rotation of the
+// evaluator and realtime feed consumers covers the whole roster (core changeFeed.sweepMs). Needs a
+// core that accepts the field; 1000..30000 here, because the evaluator's evaluation-gap alert bound
+// (60 s by default) must hold two sweeps and a tick is 1000 ms.
+function feedSweep (source = process.env) {
+  const raw = source.NS_FEED_SWEEP_MS;
+  if (raw === undefined || raw === '') return {};
+  if (!/^[1-9][0-9]{3,4}$/.test(raw) || Number(raw) < 1000 || Number(raw) > 30000) throw Object.assign(new Error('NS_FEED_SWEEP_MS must be 1000..30000'), { code: 'FEED_SWEEP_INVALID' });
+  return { sweepMs: Number(raw) };
+}
+module.exports = { expand, provisioningNamespaces, checkpoints, leaseSessions, feedSweep };

@@ -106,3 +106,20 @@ test('placement publication has readonly control metadata and registry enumerati
   assert.ok(grants.some(sql=>sql.includes('tenant_lifecycle_windows')));
   for(const sql of grants){assert.ok(!/INSERT|UPDATE|DELETE|REPLICATION|tenant_lifecycle_backend_birth|ALL TABLES/.test(sql),sql);}
 });
+
+test('NS_FEED_SWEEP_MS is off when empty and selects a bounded healthy rotation period for both feed consumers', () => {
+  const { feedSweep } = require('./registry-plan');
+  assert.deepEqual(feedSweep({}), {}); assert.deepEqual(feedSweep({ NS_FEED_SWEEP_MS: '' }), {});
+  assert.deepEqual(feedSweep({ NS_FEED_SWEEP_MS: '30000' }), { sweepMs: 30000 });
+  for (const raw of ['999', '30001', '0', '1e4', '10000.5', 'on']) assert.throws(() => feedSweep({ NS_FEED_SWEEP_MS: raw }), { code: 'FEED_SWEEP_INVALID' });
+  const saved = process.env.NS_FEED_SWEEP_MS;
+  try {
+    delete process.env.NS_FEED_SWEEP_MS;
+    const off = generated().docs.configs;
+    for (const role of ['evaluator', 'realtime']) assert.equal(Object.hasOwn(off[role].changeFeed, 'sweepMs'), false, 'unset leaves the generated configuration as it was');
+    process.env.NS_FEED_SWEEP_MS = '30000';
+    const on = generated().docs.configs;
+    for (const role of ['evaluator', 'realtime']) assert.equal(on[role].changeFeed.sweepMs, 30000);
+    assert.equal(on.evaluator.changeFeed.pageSize, 256); assert.equal(on.evaluator.changeFeed.degradedPages, 4);
+  } finally { if (saved === undefined) delete process.env.NS_FEED_SWEEP_MS; else process.env.NS_FEED_SWEEP_MS = saved; }
+});
