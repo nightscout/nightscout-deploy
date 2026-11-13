@@ -13,6 +13,10 @@ function prepare({options,docs,writePrivate}){
  for(const env of [...Object.values(docs.environments),docs.admin.environment,docs.feed.environment,docs.uiEnvironment])env.NS_SOURCE_COMMIT=options.sourceCommit;
  const own={uid:options.uid,gid:options.gid},base=path.join(options.output,'connection-budget');
  writePrivate(path.join(base,'plan.json'),plan,own,{compact:true});
+ // A private directory mount preserves the reader's parent-custody contract.
+ // Workers see only this independent plan copy, never sibling tickets/claims.
+ // A hard link would violate the private reader's single-link file invariant.
+ writePrivate(path.join(base,'plan-view','plan.json'),plan,own,{compact:true});
  // Each process gets a separate one-use ticket and writable private claim
  // directory. Socket edge shares UI authority documents, never its slot claim.
  const fs=require('node:fs');

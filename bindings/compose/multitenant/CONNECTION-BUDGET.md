@@ -275,3 +275,20 @@ it does not refund either credit or retry. Raw output belongs in the private run
 workspace. Recording controls exercise these paths without executing SQL. Actual
 PostgreSQL syntax/count semantics and native episode outcomes remain UNMEASURED
 until the coordinator authorizes the separate runtime proof.
+
+## Private mounted inputs
+
+The selected bootstrap reads its profile from a read-only mount of the existing
+private connection-budget directory. Bootstrap already has the state directory;
+this mount preserves the required private parent ownership and mode. A file-only
+mount creates an untrusted parent inside Docker and is refused by the unchanged
+private reader.
+
+Workers receive a separate read-only `plan-view` directory with only `plan.json`,
+not the controller directory or sibling process tickets and claims. Bootstrap
+publishes an independent private copy of the canonical plan, with a single-link
+file and private parent. Before a worker Docker effect, the fixed adapter reads
+the copy through the private reader and requires equality with its admitted plan.
+Missing, changed or unsafe copies refuse startup. Runtime plan/ticket validation
+remains mandatory before constructors. This changes selected mount preparation,
+not connection allowances or default startup.
