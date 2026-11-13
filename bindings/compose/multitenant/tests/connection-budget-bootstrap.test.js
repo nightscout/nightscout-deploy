@@ -1,7 +1,7 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const F=require('../connection-budget-files'),P=require('../connection-budget-profile'),prepare=require('../connection-budget-bootstrap').prepare;
-const source={coreCommit:'074eab44ee75b9175c951b6a8add3df3e9554af7',deployCommit:'b'.repeat(40)};
+const source={coreCommit:'d0036890d0623ae79f14bfa71e7226c0fa122a29',deployCommit:'b'.repeat(40)};
 const {input}=require('./connection-budget-source-fixture');
 test('bootstrap binds observed target once, exact settings and selected source environment before worker tickets',()=>{
  const output=fs.mkdtempSync(path.join(os.tmpdir(),'ns-budget-bootstrap-'));fs.chmodSync(output,0o700);

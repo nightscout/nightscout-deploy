@@ -3,7 +3,7 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 const F=require('../connection-budget-files'),B=require('../connection-budget');
 test('actual core ticket install, never-connected real PG end ACK and duplicate pre-constructor refusal',()=>{
  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'ns-budget-runtime-'));fs.chmodSync(directory,0o700);const claims=path.join(directory,'claims');fs.mkdirSync(claims,{mode:0o700});
- const source={coreCommit:'074eab44ee75b9175c951b6a8add3df3e9554af7',deployCommit:'b'.repeat(40)},capabilities={'migration-direct':{kind:'client',directGroup:'checks'}},directGroups={checks:1},cold={activeLimit:1,pendingLimit:16,minDelayMs:1,maxDelayMs:2};
+ const source={coreCommit:'d0036890d0623ae79f14bfa71e7226c0fa122a29',deployCommit:'b'.repeat(40)},capabilities={'migration-direct':{kind:'client',directGroup:'checks'}},directGroups={checks:1},cold={activeLimit:1,pendingLimit:16,minDelayMs:1,maxDelayMs:2};
  const body={kind:'controlled-connection-budget-plan',source,resource:{pgResourceId:'synthetic-pg',aliases:['postgres:5432']},slots:[{processInstanceId:'ui',startupConcurrency:4,capabilities,directGroups,cold}]},plan={...body,sha256:B.hash(body)};
  const ticket={version:1,planSha256:plan.sha256,processInstanceId:'ui',incarnation:'c'.repeat(32),nonce:'d'.repeat(32),source,pgResourceId:'synthetic-pg',resourceAliases:['postgres:5432'],capabilities,directGroups,cold};
  F.write(path.join(directory,'plan.json'),plan);F.write(path.join(directory,'ticket.json'),ticket);

@@ -13,7 +13,7 @@ const id = value => typeof value === 'string' && /^[a-z][a-z0-9-]{0,62}$/.test(v
 const hash = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 // Review-bounded inventory. A new core revision requires explicit re-review;
 // matching config keys alone is not proof of complete constructor coverage.
-const REVIEWED_CORE_COMMIT = '074eab44ee75b9175c951b6a8add3df3e9554af7';
+const REVIEWED_CORE_COMMIT = 'd0036890d0623ae79f14bfa71e7226c0fa122a29';
 const SOURCE = {
   'nightscout-api-registry': 'lib/server/serve/registry-tenants.js',
   'nightscout-tenant-admin-registry': 'lib/server/serve/registry-tenants.js',
