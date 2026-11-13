@@ -227,3 +227,51 @@ Retain isolation, RLS/authority, stored-count, reconnect, alarm and TIME checks.
 Warm-up/recovery durations are measured outputs, not invented capacity SLOs.
 Full/browser/clinical acceptance and final prcheck belong to the coherent joined
 candidate, not this leaf. No runtime or remote result is claimed here.
+
+## Native synthetic stored-count observation
+
+The opt-in controller command reads one private selector file:
+
+```sh
+node deploy/multitenant/connection-budget-cli.js "$STATE" stored-counts "$SELECTOR"
+```
+
+The selector has exactly `version: 1`, `kind: native-synthetic-stored-counts`,
+`runId` matching `^m7-native-[a-f0-9]{16,32}$`, and `tenants`: one to 128
+unique canonical lower-case UUIDs. It accepts no SQL, schema, table, role or
+module options. The selector file uses the controller's existing private-file
+ownership, mode, size and symlink checks.
+
+The fixed `nsdemo` layout supplies `nsdemo_entries.entries`,
+`nsdemo_devicestatus.devicestatus` and `nsdemo_treatments.treatments`.
+One bounded SQL statement combines resource metadata and counts. Requested rows
+retain selector order, including zero rows. Each contains `tenant`, `entriesTotal`,
+`entries`, `devicestatus`, `treatments` and `probe`. Marked entries and devicestatus
+match `doc.device = runId`; treatments match `doc.enteredBy = runId`; probe entries
+match `doc.device = runId + '-probe'`. `entriesTotal` counts all entries for that
+tenant. Counts are nonnegative safe integers; marked and probe entries together
+cannot exceed the total. No documents or document identifiers are returned.
+
+`foreign` contains the same four marker counts across tenants outside the requested
+roster, without returning their identifiers. Positive foreign counts remain visible
+observations. The native episode must compare expected counts and require all
+foreign totals zero; this command makes no acceptance decision.
+
+The envelope includes the canonical selector and SHA256, exact source and plan hash,
+expected source/image/project/workdir, PostgreSQL CID/birth/image custody, resource
+metadata and host monotonic request brackets. Its scope is
+`FIXED_SYNTHETIC_COUNTS_ONLY_NOT_NATIVE_ACCEPTANCE`. The same controller lock,
+outer durable claim and adapter `observers.json` apply to bind, observe and counts.
+Counts requires the selected total observer allowance to be exactly two; it uses
+no control, recovery or spare connection. Existing query, connection, statement,
+output and time bounds apply. Unknown outcomes retain credits until the existing
+OS PID/birth retirement proof permits reuse.
+
+After SQL returns, a private immutable `counts-observation-<nonce>.json` retains
+safe unvalidated foreign totals before result/resource validation. Refusals name
+that diagnostic when written. If that write fails, structured stderr retains the
+safe foreign totals and selector hash with `UNVALIDATED_DIAGNOSTIC_NOT_ACCEPTANCE`;
+it does not refund either credit or retry. Raw output belongs in the private run
+workspace. Recording controls exercise these paths without executing SQL. Actual
+PostgreSQL syntax/count semantics and native episode outcomes remain UNMEASURED
+until the coordinator authorizes the separate runtime proof.

@@ -3,7 +3,7 @@
 // construction. A failed effect never refunds uncertain physical connections.
 const fs=require('node:fs');
 const {isDeepStrictEqual:equal}=require('node:util');
-const B=require('./connection-budget'),F=require('./connection-budget-files');
+const B=require('./connection-budget'),F=require('./connection-budget-files'),COUNTS=require('./connection-budget-counts');
 const need=(v,c)=>{if(!v)throw Object.assign(new Error(c),{code:c});};
 function custody(actual, expected, service, stopped=false){
  need(actual && actual.project===expected.project && actual.workingDirectory===expected.workingDirectory && actual.service===service
@@ -18,9 +18,20 @@ function create({directory,plan,expected,ports}){
  // Observer and effect implementation are fixed by the host adapter, never read
  // from the profile, ticket, private environment or a module-path field.
  for(const name of ['observe','inspect','start','stop','ticket','ack'])need(typeof ports[name]==='function','CONNECTION_CONTROLLER_PORT');
+ function checkedCounts(selector,raw){
+   const exact=(v,keys)=>v&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).sort().join(',')===[...keys].sort().join(',');
+   need(exact(raw,['resource','storedCounts','custody','diagnosticFile'])&&/^counts-observation-[a-f0-9]{32}\.json$/.test(raw.diagnosticFile)&&typeof raw.then!=='function','CONNECTION_COUNTS_RESULT');
+   B.observedResourceMatches(plan,raw.resource);COUNTS.result(selector,raw.storedCounts);
+   const c=raw.custody,p=c?.postgres;
+   need(exact(c,['source','project','workingDirectory','imageId','postgres'])&&equal(c.source,plan.source)&&c.project===expected.project
+     &&c.workingDirectory===expected.workingDirectory&&c.imageId===expected.imageId
+     &&exact(p,['cid','startedAt','imageId'])&&/^[a-f0-9]{64}$/.test(p.cid)&&typeof p.startedAt==='string'&&p.startedAt.length>0&&p.startedAt.length<=100
+     &&p.imageId===require('./postgres-profile.json').imageId,'CONNECTION_COUNTS_CUSTODY');
+   return raw;
+ }
  function locked(fn){return F.locked(directory,fd=>{let book;try{book=F.readAt(fd,'ledger.json');}catch(e){if(e.code!=='ENOENT'&&e.code!=='CONNECTION_BUDGET_PRIVATE_FILE')throw e;need(F.inspect(fd,'ledger.json')===null,'CONNECTION_CONTROLLER_LEDGER');book=B.ledger(plan);}
-   const observe=(...args)=>{F.writeAt(fd,'observer-claim.json',{kind:'bounded-observer-in-flight',planSha256:plan.sha256},{exclusive:true});const result=ports.observe(...args);need(result&&typeof result.then!=='function','CONNECTION_CONTROLLER_OBSERVATION_UNKNOWN');fs.unlinkSync(F.location(fd,'observer-claim.json'));fs.fsyncSync(fd);return result;};
-   return fn(book,()=>F.writeAt(fd,'ledger.json',book),observe);});}
+   const charged=invoke=>{F.writeAt(fd,'observer-claim.json',{kind:'bounded-observer-in-flight',planSha256:plan.sha256},{exclusive:true});const result=invoke();need(result&&typeof result.then!=='function','CONNECTION_CONTROLLER_OBSERVATION_UNKNOWN');fs.unlinkSync(F.location(fd,'observer-claim.json'));fs.fsyncSync(fd);return result;};
+   return fn(book,()=>F.writeAt(fd,'ledger.json',book),(...args)=>charged(()=>ports.observe(...args)),(...args)=>charged(()=>{const raw=ports.storedCounts(...args);try{return checkedCounts(args[1],raw);}catch(error){if(/^counts-observation-[a-f0-9]{32}\.json$/.test(raw?.diagnosticFile||''))error.countsDiagnostic=raw.diagnosticFile;error.countsObservation=COUNTS.diagnostic(args[1],raw?.storedCounts);throw error;}}));});}
  function observe(){return locked((book,save,chargedObserve)=>{
    need(book.version===1&&book.planSha256===plan.sha256&&equal(book.resourceEpoch,[plan.resource.systemIdentifier,plan.resource.postmasterStartedAt])
      &&book.slots&&equal(Object.keys(book.slots).sort(),plan.slots.map(s=>s.processInstanceId).sort()),'CONNECTION_ADMISSION_LEDGER_CHANGED');
@@ -38,6 +49,26 @@ function create({directory,plan,expected,ports}){
    need(Buffer.byteLength(JSON.stringify(result))<=1048576,'CONNECTION_CONTROLLER_OBSERVATION_BOUND');
    return result;
  });}
+ function storedCounts(value){
+   const selector=COUNTS.selector(value);
+   need(plan.source.coreCommit===B.REVIEWED_CORE_COMMIT,'CONNECTION_BUDGET_UNREVIEWED_SOURCE');
+   need(plan.resource.allowances.observers===2,'CONNECTION_COUNTS_OBSERVER_CEILING');
+   need(typeof ports.storedCounts==='function','CONNECTION_COUNTS_PORT');
+   return locked((book,save,observe,chargedCounts)=>{
+     need(book.version===1&&book.planSha256===plan.sha256&&equal(book.resourceEpoch,[plan.resource.systemIdentifier,plan.resource.postmasterStartedAt])
+       &&book.slots&&equal(Object.keys(book.slots).sort(),plan.slots.map(s=>s.processInstanceId).sort()),'CONNECTION_ADMISSION_LEDGER_CHANGED');
+     const generations=Object.values(book.slots).flat();
+     need(generations.length<=4096&&generations.every(r=>r&&['ISSUED','RETIRED'].includes(r.state)&&Array.isArray(r.tags)),'CONNECTION_CONTROLLER_LEDGER');
+     const tags=[...new Set(generations.filter(r=>r.state!=='RETIRED').flatMap(r=>r.tags))].sort();
+     const startedNs=process.hrtime.bigint().toString();
+     const raw=chargedCounts(plan,selector,tags);
+     return {version:1,kind:'controlled-native-stored-counts',source:structuredClone(plan.source),planSha256:plan.sha256,
+       expected:structuredClone(expected),custody:structuredClone(raw.custody),diagnosticFile:raw.diagnosticFile,selector,selectorSha256:COUNTS.hash(selector),
+       resource:structuredClone(raw.resource),counts:COUNTS.result(selector,raw.storedCounts).rows,foreign:COUNTS.result(selector,raw.storedCounts).foreign,
+       hostMonotonic:{startedNs,finishedNs:process.hrtime.bigint().toString()},
+       scope:'FIXED_SYNTHETIC_COUNTS_ONLY_NOT_NATIVE_ACCEPTANCE'};
+   });
+ }
  function start(slotId){return locked((book,save,observe)=>{
    need(plan.slots.some(s=>s.processInstanceId===slotId),'CONNECTION_ADMISSION_UNPLANNED_WORKER');
    const observation=observe(plan,[],Object.values(book.slots).flat().filter(x=>x.state!=='RETIRED').flatMap(x=>x.tags));const ticket=B.generation(plan,book,slotId,observation);save();
@@ -60,6 +91,6 @@ function create({directory,plan,expected,ports}){
      pgTagRows:observation.tags,resourceEpoch:[observation.resource.systemIdentifier,observation.resource.postmasterStartedAt]});save();
    return {state:'QUIESCED_RETIRED',processInstanceId:slotId,incarnation:old.incarnation};
  });}
- return Object.freeze({start,stop,observe});
+ return Object.freeze({start,stop,observe,storedCounts});
 }
 module.exports={create,custody};
