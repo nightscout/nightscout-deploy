@@ -96,6 +96,14 @@ with stricter primary/standby rejection. Seconds-resolution timestamp sanity is
 not a substitute for exact Docker incarnation and actual SQL postmaster-epoch
 custody. No matching running-server or capacity result follows from the tool probe.
 
+The selected health command invokes the pinned image's fixed `/usr/local/bin/gosu
+postgres /bin/sh` before the helper. The image defaults to root, which cannot read
+another UID's `/proc/1/exe` under its default capabilities; the actual isolated
+platform control reproduced root refusal and postgres-user success. No capability
+is added and the executable/process-epoch checks remain intact. The same platform
+control measured numeric self birth, a matching live OS process and normal backend
+exit; full application runtime acceptance remains unmeasured.
+
 ## Controlled lifecycle
 
 After the normal explicit bootstrap completes, use:
@@ -104,6 +112,7 @@ After the normal explicit bootstrap completes, use:
 ./demo.sh admission bind
 ./demo.sh admission start api
 ./demo.sh admission stop api
+./demo.sh admission observe
 ```
 
 Repeat `start` for each declared process, preserving application provisioning and
@@ -145,15 +154,28 @@ late backend, missing tag or uncertain cleanup never refunds credit. Explicit
 finite overlap can cover uncertain generations; exhaustion refuses. Stale locks
 and uncertain observer markers require operator investigation, not timed deletion.
 
-The fixed metadata observer has finite durable reservations too. Known stock
-psql exit prevents future authentication; a later fresh census must show its old
-backend PID absent before credit reuse. A timeout/unknown command outcome retains
-its observer reservation and blocks repeated attempts. Unknown clients must fit only the explicit unmanaged allowance, never borrow
-unused bootstrap/control reserve. The separately owned controlled PostgreSQL probe reproduced preauthentication
-invisibility; those credits are retained by the source protocol, not inferred
-from the census.
-SQL has connect/statement
-bounds and fixed output bounds, with no tenant data or URI persistence.
+The fixed metadata observer has finite durable reservations too. Each authenticated
+observer records a private nonce application name, backend birth, PID and numeric
+Linux process birth. A later bounded no-SQL probe in the exact pinned PG container
+must positively find its process absent before credit reuse. A present process
+retains credit even if its SQL activity row disappeared; PID reuse, legacy missing
+birth metadata and probe errors refuse. PG16 [pgstat shutdown](https://github.com/postgres/postgres/blob/REL_16_15/src/backend/utils/activity/backend_status.c)
+precedes [ProcKill cleanup](https://github.com/postgres/postgres/blob/REL_16_15/src/backend/storage/lmgr/proc.c)
+under the [reverse shutdown callbacks](https://github.com/postgres/postgres/blob/REL_16_15/src/backend/storage/ipc/ipc.c);
+[libpq close](https://github.com/postgres/postgres/blob/REL_16_15/src/interfaces/libpq/fe-connect.c)
+is local. Neither SQL absence nor psql exit proves physical retirement. The same
+fixed metadata query reads at most 4096 bytes of its own process stat and returns
+only numeric birth metadata, never the raw file. Known observer census exemptions
+match PID, backend birth and nonce name together.
+
+A timeout/unknown command outcome retains its observer reservation and blocks
+repeated attempts. Unknown clients must fit only the explicit unmanaged allowance,
+never borrow unused bootstrap/control reserve. Preauthentication is invisible to
+this census. SQL has connect/statement/output bounds, with no tenant data or URI
+persistence. The explicit `observe` command holds the same controller lock and
+reservation before SQL, returns the atomic private ledger plus authenticated-only
+census and host monotonic request brackets. It never starts or stops a worker,
+retries, frees uncertain worker credits, or certifies process liveness.
 
 ## Qualification boundary
 

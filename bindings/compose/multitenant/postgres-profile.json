@@ -12,5 +12,10 @@
     "postmaster": "https://github.com/postgres/postgres/blob/REL_16_15/src/backend/postmaster/postmaster.c",
     "peerClose": "https://github.com/postgres/postgres/blob/REL_16_15/src/backend/libpq/pqcomm.c",
     "exitOrdering": "https://github.com/postgres/postgres/blob/REL_16_15/src/backend/storage/ipc/ipc.c"
+  },
+  "healthOperatingSystemUser": "postgres",
+  "healthUserSwitch": {
+    "path": "/usr/local/bin/gosu",
+    "sha256": "52c8749d0142edd234e9d6bd5237dff2d81e71f43537e2f4f66f75dd4b243dd0"
   }
 }

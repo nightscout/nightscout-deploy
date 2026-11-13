@@ -19,8 +19,25 @@ function create({directory,plan,expected,ports}){
  // from the profile, ticket, private environment or a module-path field.
  for(const name of ['observe','inspect','start','stop','ticket','ack'])need(typeof ports[name]==='function','CONNECTION_CONTROLLER_PORT');
  function locked(fn){return F.locked(directory,fd=>{let book;try{book=F.readAt(fd,'ledger.json');}catch(e){if(e.code!=='ENOENT'&&e.code!=='CONNECTION_BUDGET_PRIVATE_FILE')throw e;need(F.inspect(fd,'ledger.json')===null,'CONNECTION_CONTROLLER_LEDGER');book=B.ledger(plan);}
-   const observe=(...args)=>{F.writeAt(fd,'observer-claim.json',{kind:'bounded-observer-in-flight',planSha256:plan.sha256},{exclusive:true});const result=ports.observe(...args);fs.unlinkSync(F.location(fd,'observer-claim.json'));fs.fsyncSync(fd);return result;};
+   const observe=(...args)=>{F.writeAt(fd,'observer-claim.json',{kind:'bounded-observer-in-flight',planSha256:plan.sha256},{exclusive:true});const result=ports.observe(...args);need(result&&typeof result.then!=='function','CONNECTION_CONTROLLER_OBSERVATION_UNKNOWN');fs.unlinkSync(F.location(fd,'observer-claim.json'));fs.fsyncSync(fd);return result;};
    return fn(book,()=>F.writeAt(fd,'ledger.json',book),observe);});}
+ function observe(){return locked((book,save,chargedObserve)=>{
+   need(book.version===1&&book.planSha256===plan.sha256&&equal(book.resourceEpoch,[plan.resource.systemIdentifier,plan.resource.postmasterStartedAt])
+     &&book.slots&&equal(Object.keys(book.slots).sort(),plan.slots.map(s=>s.processInstanceId).sort()),'CONNECTION_ADMISSION_LEDGER_CHANGED');
+   const rows=Object.values(book.slots).flat();
+   need(rows.length<=4096&&rows.every(r=>r&&['ISSUED','RETIRED'].includes(r.state)&&/^[a-f0-9]{32}$/.test(r.incarnation)&&Array.isArray(r.tags)),'CONNECTION_CONTROLLER_LEDGER');
+   const wanted=[...new Set(rows.filter(r=>r.state!=='RETIRED').flatMap(r=>r.tags))].sort();
+   const startedNs=process.hrtime.bigint().toString();
+   const raw=chargedObserve(plan,wanted,wanted),resource=wanted.length?raw.resource:raw,tags=wanted.length?raw.tags:[];
+   B.observedResourceMatches(plan,resource);
+   need(Array.isArray(tags)&&tags.length===wanted.length&&tags.every(t=>t&&typeof t.applicationName==='string'&&wanted.includes(t.applicationName)&&Number.isSafeInteger(t.count)&&t.count>=0&&t.count<=1000000)
+     &&equal(tags.map(t=>t.applicationName).sort(),wanted),'CONNECTION_CONTROLLER_OBSERVATION_UNKNOWN');
+   const result={version:1,kind:'controlled-connection-observation',planSha256:plan.sha256,source:structuredClone(plan.source),expected:structuredClone(expected),
+     ledger:structuredClone(book),resource,tags,visibility:'PG_STAT_AUTHENTICATED_ONLY',limitations:['PREAUTHENTICATION_NOT_VISIBLE','LEDGER_STATE_IS_NOT_PROCESS_LIVENESS'],
+     hostMonotonic:{startedNs,finishedNs:process.hrtime.bigint().toString()}};
+   need(Buffer.byteLength(JSON.stringify(result))<=1048576,'CONNECTION_CONTROLLER_OBSERVATION_BOUND');
+   return result;
+ });}
  function start(slotId){return locked((book,save,observe)=>{
    need(plan.slots.some(s=>s.processInstanceId===slotId),'CONNECTION_ADMISSION_UNPLANNED_WORKER');
    const observation=observe(plan,[],Object.values(book.slots).flat().filter(x=>x.state!=='RETIRED').flatMap(x=>x.tags));const ticket=B.generation(plan,book,slotId,observation);save();
@@ -43,6 +60,6 @@ function create({directory,plan,expected,ports}){
      pgTagRows:observation.tags,resourceEpoch:[observation.resource.systemIdentifier,observation.resource.postmasterStartedAt]});save();
    return {state:'QUIESCED_RETIRED',processInstanceId:slotId,incarnation:old.incarnation};
  });}
- return Object.freeze({start,stop});
+ return Object.freeze({start,stop,observe});
 }
 module.exports={create,custody};
