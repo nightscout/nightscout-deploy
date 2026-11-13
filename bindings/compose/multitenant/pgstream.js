@@ -33,10 +33,10 @@ async function init({admin,adminURL,layout,config}){
   const file=path.join(directory,'init.yaml');fs.writeFileSync(file,JSON.stringify({source:{postgres:{url:connection.href,replication:{replication_slot:config.pgstream.slot}}}}),{mode:0o600});
   execFileSync('/usr/local/bin/pgstream',['init','-c',file],{stdio:['ignore','pipe','pipe'],timeout:30000});
  }finally{fs.rmSync(directory,{recursive:true,force:true});}
- const q=require('./config').quote,role=q(layout.roles.pgstream),evaluator=q(layout.roles.evaluator),realtime=q(layout.roles.realtime),table=q(layout.namespaces.eval_checkpoint)+'.tenant_consumer_checkpoint';
+ const q=require('./config').quote,role=q(layout.roles.pgstream),evaluator=q(layout.roles.evaluator),realtime=q(layout.roles.realtime),table=q(layout.namespaces.eval_checkpoint)+'.tenant_consumer_checkpoint',heartbeat=q(layout.namespaces.clock)+'.nightscout_heartbeat';
  await admin.query('ALTER ROLE '+role+' REPLICATION NOINHERIT CONNECTION LIMIT 4');
- await admin.query('CREATE TABLE pgstream.nightscout_heartbeat(id integer PRIMARY KEY CHECK(id=1),revision bigint NOT NULL CHECK(revision>=0))');
- await admin.query('INSERT INTO pgstream.nightscout_heartbeat VALUES(1,0)');
+ await admin.query('CREATE TABLE '+heartbeat+'(id integer PRIMARY KEY CHECK(id=1),revision bigint NOT NULL CHECK(revision>=0))');
+ await admin.query('INSERT INTO '+heartbeat+' VALUES(1,0)');
  await admin.query('CREATE TABLE pgstream.webhook_subscriptions(url text,schema_name text,table_name text,event_types text[],PRIMARY KEY(url,schema_name,table_name))');
  await admin.query('REVOKE ALL ON SCHEMA pgstream FROM PUBLIC');
  await admin.query('REVOKE ALL ON ALL TABLES IN SCHEMA pgstream FROM PUBLIC');
@@ -45,7 +45,7 @@ async function init({admin,adminURL,layout,config}){
  await admin.query('GRANT SELECT ON pgstream.webhook_subscriptions TO '+role);
  await admin.query('GRANT USAGE ON SCHEMA pgstream TO '+evaluator);
  await admin.query('GRANT SELECT ON pgstream.webhook_subscriptions TO '+evaluator);
- await admin.query('GRANT SELECT,UPDATE(revision) ON pgstream.nightscout_heartbeat TO '+evaluator);
+ await admin.query('GRANT SELECT,UPDATE(revision) ON '+heartbeat+' TO '+evaluator);
  const consumer=config.consumer+'-completed';
  // Trusted metadata access applies only to the completed consumer. Clinical
  // row policies retain their tenant binding and FORCE RLS.
