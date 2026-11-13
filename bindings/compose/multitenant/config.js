@@ -230,6 +230,10 @@ function lifecycle(l) {
     catalogues:Object.entries(tables).map(([name,tables])=>({kind:aliases[name]||name,candidate:selected[name],tables,secrets:name==='secrets'?['secret_records']:[]}))};
 }
 function validateFiles(directory, docs) {
+  const evaluated=docs.configs.evaluator;
+  if(evaluated.pgstream)for(const [role,config]of Object.entries(docs.configs))if(role==='realtime'||role.startsWith('realtime-')){
+    if(config.changeFeed||config.completedOutput?.namespace!==evaluated.postgres.namespaces.checkpoint||config.completedOutput?.consumer!==evaluated.consumer)throw new TypeError('PGSTREAM_COMPLETED_SOURCE_MISMATCH');
+  }
   const parsers={api:require('../../lib/server/serve/preview-config').load,realtime:require('../../lib/server/realtime/config').load,
     evaluator:require('../../lib/server/serve/evaluator-config').load,'tenant-admin':require('../../lib/server/serve/owner-preview-config').load};
   const namespaces=require('../../lib/server/serve/operation-cohort').protectedNamespaces;

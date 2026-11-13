@@ -23,7 +23,7 @@ function descriptor(layout){return {consumer:'evaluator-compose-demo',namespaces
 function wire(config,runtimeURL){
  const streamURL=new URL(runtimeURL);streamURL.searchParams.set('sslmode','disable');runtimeURL=streamURL.href;
  const storeURL=new URL(runtimeURL);storeURL.searchParams.set('pool_max_conns','2');
- return {source:{postgres:{url:runtimeURL,mode:'replication',replication:{replication_slot:config.pgstream.slot,plugin:{add_tables:require('../../lib/pgstream/evaluator').routes(config).map(row=>row.schema+'.'+row.table).join(',')}}}},
+ return {source:{postgres:{url:runtimeURL,mode:'replication',replication:{replication_slot:config.pgstream.slot,plugin:{add_tables:require('../../lib/pgstream/evaluator').routes({...config,namespaces:config.postgres?.namespaces||config.namespaces}).map(row=>row.schema+'.'+row.table).join(',')}}}},
    target:{webhooks:{subscriptions:{store:{url:storeURL.href,cache:{enabled:false}},server:{address:'127.0.0.1:19914'}},notifier:{worker_count:1,strict_mode:true,client_timeout:2000,constant:{max_retries:1,interval:50}}}}};
 }
 async function init({admin,adminURL,layout,config}){
