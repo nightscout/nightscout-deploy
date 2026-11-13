@@ -59,6 +59,8 @@ fi
 # The other tenant lost nothing: the write it made while A was closed is there, and it writes again.
 step other-tenant-write-during-closure-present "$(driver rr-l lookup $name --tenant b --id "$during" | field present)" true
 step other-tenant-writes-after-resume "$(driver rr-b1 progress $name | field pass)" true
+# The control ends here with the tenant still closed; resume it yourself afterwards.
+[ "${NS_DRILL_SKIP_RESUME:-}" = 1 ] && finish
 step second-resume-refused "\"$(operator_cli rr-again resume --tenant "$tenant" --claim "$claim" | field error)\"" '"LIFECYCLE_RESUME_NOT_SUSPENDED"'
 # The tenant is an ordinary open tenant again: a new restore of the same artifact completes.
 step restore-after-resume "\"$(driver rr-restore restore $name | field state)\"" '"activated"'

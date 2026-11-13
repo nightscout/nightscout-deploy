@@ -31,6 +31,7 @@ step no-restore-claim-recorded "$(sql "SELECT count(*) FROM nsdemo_control.tenan
 step tenant-serves-after-refusal "$(driver oo-p2 probe $name --tenant a | field admitted)" true
 seen=$(operator_cli oo-inspect inspect --tenant "$tenant" || true)
 step inspect-counts-owner-gone "$(echo "$seen" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{let v={};try{v=JSON.parse(s.trim().split("\n").pop())}catch{};process.stdout.write(String(v.operations?v.operations.ownerGone:""))})')" "$orphans"
+records_before=$(unfinished_records "$tenant")
 if [ "${NS_DRILL_SKIP_CLEARANCE:-}" != 1 ]; then
   cleared=$(operator_cli oo-clear clear-operations --tenant "$tenant" || true)
   count() { node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{let v={};try{v=JSON.parse(s.trim().split("\n").pop())}catch{};process.stdout.write(String(Array.isArray(v[process.argv[1]])?v[process.argv[1]].length:""))})' "$1"; }
@@ -38,7 +39,7 @@ if [ "${NS_DRILL_SKIP_CLEARANCE:-}" != 1 ]; then
   step records-retained "$(echo "$cleared" | count retained)" 0
 fi
 # A clearance is a new row; the operation records themselves are untouched.
-step operation-records-untouched "$(unfinished_records "$tenant")" "$orphans"
+step operation-records-untouched "$(unfinished_records "$tenant")" "$records_before"
 step unfinished-and-not-cleared "$(unfinished "$tenant")" 0
 step restore-after-clearance "\"$(driver oo-r2 restore $name | field state)\"" '"activated"'
 step tenant-open-after-restore "\"$(window "$tenant")\"" '"active|false|false"'
