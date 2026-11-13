@@ -297,7 +297,7 @@ not connection allowances or default startup.
 
 Fresh preparation can select `--lifecycle-operator enabled` together with the
 explicit connection-budget profile. Bootstrap binds the private operator
-principal, tenant locks and configuration hashes into the plan and creates a
+role/database object identities, tenant locks and configuration hashes into the plan and creates a
 version 2 ledger. Existing version 1 runs refuse the lifecycle command; a missing
 version 2 ledger refuses rather than reconstructing unused credits.
 

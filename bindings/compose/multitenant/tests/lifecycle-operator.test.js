@@ -6,7 +6,7 @@ const A='11111111-1111-4111-8111-111111111111',CLAIM='33333333-3333-4333-8333-33
 function fixture({version=2,mutate,Controller=C}={}){
  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'operator-protocol-'));fs.chmodSync(directory,0o700);
  const source={coreCommit:'a'.repeat(40),deployCommit:'b'.repeat(40)},resource={pgResourceId:'synthetic-pg',systemIdentifier:'123',postmasterStartedAt:'epoch',serverMaximum:100,reserved:{superuser:3,other:0},aliases:['postgres:5432'],allowances:{unmanaged:0,observers:2,controlRecovery:1,bootstrapOverlap:0,oldNewRolloutOverlap:0}};
- const body={version:1,kind:'controlled-connection-budget-plan',source,resource,slots:[],bootstrapSchedule:'EXPLICIT_OVERLAP',...(version===2?{lifecycleOperator:{version:1,tenants:[A],principal:{role:'synthetic_operator',database:'synthetic'},files:{},placement:false}}:{})};
+ const body={version:1,kind:'controlled-connection-budget-plan',source,resource,slots:[],bootstrapSchedule:'EXPLICIT_OVERLAP',...(version===2?{lifecycleOperator:{version:1,tenants:[A],principal:{role:'synthetic_operator',roleOid:'31',database:'synthetic',databaseOid:'16384'},files:{},placement:false}}:{})};
  const plan={...body,sha256:B.hash(body)},expected={source,project:'synthetic',workingDirectory:'/private/synthetic',imageId:'sha256:'+'d'.repeat(64)};
  F.write(path.join(directory,'ledger.json'),O.ledger(plan),{exclusive:true});
  const resourceResult={pgResourceId:'synthetic-pg',systemIdentifier:'123',postmasterStartedAt:'epoch',serverMaximum:100,superuserReserved:3,otherReserved:0,unmanagedClients:0,bootstrapClosed:true};

@@ -31,6 +31,7 @@ async function execute({ticket,gate,config,env,admission,pg,clock=()=>process.hr
  need(equal(gate,{version:1,incarnation:ticket.incarnation,nonce:ticket.nonce,intentSha256:op.intentSha256,container:gate.container})&&gate.container.service===O.NAME&&equal(gate.container.source,ticket.source)&&equal(Object.fromEntries(Object.keys(op.expected).map(k=>[k,gate.container[k]])),op.expected),'LIFECYCLE_OPERATOR_GATE');
  need(equal(ticket.capabilities,{[O.NAME]:{kind:'pool',poolMax:1,maxInstances:1,metadata:{requestedMaximum:1,source:'deploy/multitenant/lifecycle-operator-entry.js',configurationSource:'fixed-controller-operator'}}})&&equal(ticket.directGroups,{})&&equal(ticket.cold,{activeLimit:1,pendingLimit:1,minDelayMs:0,maxDelayMs:0}),'LIFECYCLE_OPERATOR_CAPABILITY');
  need(config.control.locks.some(r=>r.tenant===request.tenant)&&env.NS_SOURCE_COMMIT===ticket.source.coreCommit,'LIFECYCLE_OPERATOR_TENANT');
+ need(op.principal&&equal(Object.keys(op.principal).sort(),['database','databaseOid','role','roleOid'])&&['database','role'].every(k=>typeof op.principal[k]==='string'&&/^[a-z][a-z0-9_]{0,62}$/.test(op.principal[k]))&&['databaseOid','roleOid'].every(k=>typeof op.principal[k]==='string'&&/^[1-9][0-9]{0,9}$/.test(op.principal[k])&&Number(op.principal[k])<=4294967295),'LIFECYCLE_OPERATOR_PRINCIPAL');
  const uri=new URL(env.NS_OPERATOR_PG);
  need(decodeURIComponent(uri.username)===op.principal.role&&decodeURIComponent(uri.pathname.slice(1))===op.principal.database,'LIFECYCLE_OPERATOR_PRINCIPAL');
  let expired=false,uncertain=false,proof;
@@ -44,8 +45,8 @@ async function execute({ticket,gate,config,env,admission,pg,clock=()=>process.hr
   const Pool=admission.wrapPool(pg.Pool,pg.Client,O.NAME);
   pool=new Pool(admission.poolOptions(O.NAME,{connectionString:env.NS_OPERATOR_PG,max:1,connectionTimeoutMillis:5000,statement_timeout:10000,lock_timeout:2000,options:'-c search_path=pg_catalog',idleTimeoutMillis:0}));
   const facade=singlePool(pool,{check,late(){uncertain=true;},async verify(client){
-   check();const r=await client.query("SELECT current_user AS role,current_database() AS database,pg_postmaster_start_time()::text AS epoch,pg_backend_pid() AS pid,(SELECT backend_start::text FROM pg_stat_activity WHERE pid=pg_backend_pid()) AS birth");check();
-   need(r.rows.length===1&&r.rows[0].role===op.principal.role&&r.rows[0].database===op.principal.database&&r.rows[0].epoch===op.resourceEpoch[1]&&Number.isSafeInteger(r.rows[0].pid)&&r.rows[0].pid>0&&typeof r.rows[0].birth==='string'&&r.rows[0].birth.length>0,'LIFECYCLE_OPERATOR_BACKEND_IDENTITY');
+   check();const r=await client.query("SELECT current_user AS role,current_user::regrole::oid::text AS \"roleOid\",current_database() AS database,(SELECT oid::text FROM pg_database WHERE datname=current_database()) AS \"databaseOid\",pg_postmaster_start_time()::text AS epoch,pg_backend_pid() AS pid,(SELECT backend_start::text FROM pg_stat_activity WHERE pid=pg_backend_pid()) AS birth");check();
+   need(r.rows.length===1&&r.rows[0].role===op.principal.role&&r.rows[0].roleOid===op.principal.roleOid&&r.rows[0].database===op.principal.database&&r.rows[0].databaseOid===op.principal.databaseOid&&r.rows[0].epoch===op.resourceEpoch[1]&&Number.isSafeInteger(r.rows[0].pid)&&r.rows[0].pid>0&&typeof r.rows[0].birth==='string'&&r.rows[0].birth.length>0,'LIFECYCLE_OPERATOR_BACKEND_IDENTITY');
   }});
   const context=Object.freeze({pool:facade,check});contexts.add(context);
   const adapter=require('./restore');
