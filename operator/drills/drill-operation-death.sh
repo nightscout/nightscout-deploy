@@ -61,6 +61,12 @@ provision-lost-acknowledgement|provision-admin-death)
   step custody-only-for-tenants-created-by-retry "$(custody "$prefix")" $((count - committed))
   step seed-tenant-unaffected "$(sql "SELECT count(*) FROM nsdemo_registry.tenant_registry WHERE state='active' AND tenant_id::text NOT LIKE '$prefix%'")" "${NS_DRILL_OTHER_TENANTS:-2}"
   rm -f "$state/primer/add.json"
+  # Observation, not pass/fail (it depends on timing): a tenant-local restore attempted straight
+  # after provisioning activity. What matters is that a refusal here leaves the tenant open.
+  fresh pv; seed_tenant=$(driver pv-seed seed pv | field tenant)
+  attempt=$(driver pv-r restore pv || true)
+  printf '{"drill":"%s","observe":"restore-straight-after-provisioning","value":"%s"}\n' "$drill" "$(echo "$attempt" | field error)$(echo "$attempt" | field state)"
+  step seed-tenant-open-after-that-attempt "\"$(window "$seed_tenant")\"" '"active|false|false"'
   printf '{"drill":"%s","stop":"%s tenant(s) are admitted with a root secret nobody holds; operator decision required"}\n' "$drill" "$committed"
   ;;
 ownership-admin-death)

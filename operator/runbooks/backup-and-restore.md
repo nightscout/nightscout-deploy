@@ -38,6 +38,12 @@ Tell the tenant's users first: the site is closed for the length of the restore.
    Success prints `"state":"restored-and-active"`. A refusal prints one line with an `error` code
    and the words "Do not automatically replay or reopen the tenant"; an unknown digest is `ENOENT`
    and closes nothing.
+   A refusal that leaves the window `active` closed nothing. One such refusal is
+   `RESTORE_COHORT_UNKNOWN_BACKEND`: a database session that is not one of the cohort's was present.
+   Rehearsed twice: it happens for about a minute after provisioning activity and then clears (the
+   attribution to the admin service's provisioning sessions is read-derived). Do not restore while
+   tenants are being provisioned. If the refusal does not clear, find the session before doing
+   anything else; an unknown session with data authority is a finding of its own.
 3. **Verify state.** Read back, through the API, records you know were in the export: they have the
    exported values; records created after the export read as deleted.
 4. **Verify history, separately.** Ask the history endpoint for everything after the last timestamp a

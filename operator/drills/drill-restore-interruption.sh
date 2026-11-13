@@ -23,7 +23,9 @@ step window-before "\"$(window "$tenant" | cut -d'|' -f1)\"" '"active"'
 rows_before=$(rows_digest "$tenant")
 operator_name="$NS_DRILL_PROJECT-ri-op"
 ( driver ri-op restore $name --hold $phase --hold-ms 120000 > "$drill_state/$name.restore-out" 2>&1 || true ) &
-wait_file "$drill_state/$name.hold-$phase" 60 || { step hold-reached '"no"' '"yes"'; finish; }
+wait_file "$drill_state/$name.hold-$phase" 60 || { wait || true
+  printf '{"drill":"%s","step":"restore-ended-before-hold","observed":"%s","window":"%s"}\n' "$drill" "$(field error < "$drill_state/$name.restore-out")" "$(window "$tenant")"
+  step hold-reached '"no"' '"yes"'; finish; }
 # While A is held: the other tenant keeps working.
 step other-tenant-writes-while-held "$(driver ri-b1 progress $name | field pass)" true
 if [ "${NS_DRILL_SKIP_FAULT:-}" != 1 ]; then
