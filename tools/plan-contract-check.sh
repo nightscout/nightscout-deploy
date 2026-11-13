@@ -9,6 +9,7 @@ core=$2; commit=$3; output=$4
 [[ "$output" = /* ]] && [ ! -e "$output" ] && [ ! -L "$output" ] || { echo 'FAIL: new absolute private output required'; exit 64; }
 here=$(cd "$(dirname "$0")/.." && pwd)
 [ -z "$(git -C "$here" status --porcelain -- tools/plan-contract-check.sh tools/prospective-plan-documents.js tools/prospective-plan-documents.test.js)" ] || { echo 'FAIL: prospective tooling must be committed'; exit 1; }
+[ "$(git -C "$core" cat-file -t "$commit" 2>/dev/null)" = commit ] || { echo 'FAIL: core identity must be a commit object'; exit 1; }
 git -C "$core" cat-file -e "$commit:lib/server/serve/plan-contract/index.js" || { echo 'FAIL: core does not publish the contract'; exit 1; }
 [ -d "$core/node_modules" ] || { echo 'FAIL: existing pinned dependencies required'; exit 1; }
 [ "$(git -C "$core" rev-parse "$commit:package-lock.json")" = "$(git -C "$core" hash-object "$core/package-lock.json")" ] || { echo 'FAIL: dependency lock mismatch'; exit 1; }
