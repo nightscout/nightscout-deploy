@@ -91,11 +91,12 @@ async function main(){
   action=F.read(path.join(view,'action.json'));need(B.hash(C.intent(O.NAME,action))===ticket.control.intentSha256,'CONTROL_RECOVERY_INTENT');
   need(ticket.control.files['action.json']===digest(path.join(view,'action.json')),'LIFECYCLE_OPERATOR_FILES');
  }else {need(!ticket.control&&!ticket.workerDatabase,'LIFECYCLE_OPERATOR_TICKET');O.intent(ticket.operator?.intent);}
+ need(ticket.source.coreCommit===B.REVIEWED_CORE_COMMIT,'CONNECTION_BUDGET_UNREVIEWED_SOURCE');
+ const image=JSON.parse(fs.readFileSync(path.join(__dirname,'.image-source.json'),'utf8'));
+ need(equal(image,{version:1,...ticket.source}),'LIFECYCLE_OPERATOR_IMAGE');
  const env=F.read('/run/ns-operator-env/env.json'),raw=F.read('/run/ns-operator-config/config.json');
  need(equal(Object.keys(env).sort(),['NS_OPERATOR_PG','NS_SOURCE_COMMIT',...(env.MULTITENANT_REALTIME_PLACEMENT?['MULTITENANT_REALTIME_PLACEMENT']:[])].sort()),'LIFECYCLE_OPERATOR_ENV');
  need(env.NS_SOURCE_COMMIT===ticket.source.coreCommit&&B.REVIEWED_CORE_COMMIT===ticket.source.coreCommit,'CONNECTION_BUDGET_UNREVIEWED_SOURCE');
- const image=JSON.parse(fs.readFileSync(path.join(__dirname,'.image-source.json'),'utf8'));
- need(equal(image,{version:1,...ticket.source}),'LIFECYCLE_OPERATOR_IMAGE');
  const selectedFiles={...(ticket.version===2?{'action.json':digest(path.join(view,'action.json'))}:{}),'env.json':digest('/run/ns-operator-env/env.json'),'config.json':digest('/run/ns-operator-config/config.json'),...(env.MULTITENANT_REALTIME_PLACEMENT?{'placement.json':digest('/run/ns-placement/backend.json')}:{})};
  need(equal(selectedFiles,(ticket.version===2?ticket.control:ticket.operator).files),'LIFECYCLE_OPERATOR_FILES');
  if(env.MULTITENANT_REALTIME_PLACEMENT)need(env.MULTITENANT_REALTIME_PLACEMENT==='/run/ns-placement/backend.json','LIFECYCLE_OPERATOR_PLACEMENT');
