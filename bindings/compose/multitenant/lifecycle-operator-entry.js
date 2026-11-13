@@ -87,6 +87,7 @@ async function main(){
  for(;;){try{gate=F.read(path.join(view,'gate.json'));break;}catch(error){if(error.code!=='CONNECTION_BUDGET_PRIVATE_FILE'&&error.code!=='ENOENT')throw error;if(Date.now()>=deadline)throw Object.assign(Error('LIFECYCLE_OPERATOR_GATE_TIMEOUT'),{code:'LIFECYCLE_OPERATOR_GATE_TIMEOUT'});await new Promise(resolve=>setTimeout(resolve,20));}}
  let action;
  if(ticket.version!==1){const receiver=require('./physical-ticket-receiver');receiver.ticket(ticket,O.NAME);receiver.gate(gate,ticket);
+  need(equal(Object.keys(ticket.control.files).sort(),['action.json','config.json','env.json',...(Object.hasOwn(ticket.control.files,'placement.json')?['placement.json']:[])]),'LIFECYCLE_OPERATOR_FILE_ROSTER');
   action=F.read(path.join(view,'action.json'));need(B.hash(C.intent(O.NAME,action))===ticket.control.intentSha256,'CONTROL_RECOVERY_INTENT');
   need(ticket.control.files['action.json']===digest(path.join(view,'action.json')),'LIFECYCLE_OPERATOR_FILES');
  }else {need(!ticket.control&&!ticket.workerDatabase,'LIFECYCLE_OPERATOR_TICKET');O.intent(ticket.operator?.intent);}

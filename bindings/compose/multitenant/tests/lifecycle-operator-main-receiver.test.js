@@ -32,3 +32,19 @@ test('moving fresh receiver validation after credential read makes same main ord
 });
 
 test('valid fresh receiver reaches next private credential boundary, proving refusal instrument is nonvacuous',async()=>{const error=await rejectedMain(()=>{},s=>s,{credentials:1,claims:0,core:0});assert.equal(error.message,'CREDENTIAL_READ_BEFORE_TYPED_REFUSAL');});
+
+test('actual main requires exact class-owned mandatory/optional file names before private credentials',async()=>{
+ const required=['action.json','config.json','env.json'];
+ for(const name of required)await rejectedMain(f=>delete f.ticket.control.files[name]);
+ for(const name of ['foreign.json','environment.json','env.JSON','Env.json','config-copy.json','action-extra.json','placement-copy.json','__proto__'])await rejectedMain(f=>{f.ticket.control.files={...f.ticket.control.files,[name]:'a'.repeat(64)};});
+ for(const original of required)for(const replacement of [original.toUpperCase(),original.replace('.json','.JSON'),original.replace('.json','-copy.json')])await rejectedMain(f=>{const files=f.ticket.control.files,hash=files[original];delete files[original];files[replacement]=hash;});
+ for(const malformed of [null,[],{},'env.json',17])await rejectedMain(f=>{f.ticket.control.files=malformed;});
+ await rejectedMain(f=>{f.ticket.control.files=[f.ticket.control.files];});
+ // Both declared lifecycle source rosters pass to the next credential boundary.
+ for(const placement of [false,true]){const error=await rejectedMain(f=>{if(placement)f.ticket.control.files['placement.json']='a'.repeat(64);},s=>s,{credentials:1,claims:0,core:0});assert.equal(error.message,'CREDENTIAL_READ_BEFORE_TYPED_REFUSAL');}
+});
+test('omitting class file roster guard fails the original zero-credential oracle; restored rejects',async()=>{
+ const guard="  need(equal(Object.keys(ticket.control.files).sort(),['action.json','config.json','env.json',...(Object.hasOwn(ticket.control.files,'placement.json')?['placement.json']:[])]),'LIFECYCLE_OPERATOR_FILE_ROSTER');";
+ const transform=s=>s.replace(guard,'');assert.notEqual(transform(fs.readFileSync(require.resolve('../lifecycle-operator-entry'),'utf8')),fs.readFileSync(require.resolve('../lifecycle-operator-entry'),'utf8'));
+ for(const change of [f=>delete f.ticket.control.files['env.json'],f=>delete f.ticket.control.files['config.json'],f=>f.ticket.control.files['foreign.json']='a'.repeat(64)]){await assert.rejects(()=>rejectedMain(change,transform),/NO_CREDENTIAL_CLAIM_CORE_EFFECT/);await rejectedMain(change);}
+});
