@@ -3,10 +3,9 @@
 
 // One-shot step after the imported deploy/multitenant/bootstrap.js, in the application image, on
 // the private network. It adds the `<prefix>_ownership_operator` database identity the `admin`
-// role connects as, with exactly the grants core's deployment plan carries at the commit
-// ../SOURCE.md records (cgm-remote-monitor deploy/multitenant/config.js: one role name in layout(),
-// six GRANT statements in grants() plus the tenant-phase read). This repository's config.js leaves
-// the role out, so its per-role control-namespace loop never reaches it.
+// role connects as, with exactly the grants the ownership store needs (cgm-remote-monitor
+// lib/tenant-ownership, the store's table shape: six GRANT statements plus the tenant-phase read). The base plan's
+// config.js leaves the role out, so its per-role control-namespace loop never reaches it.
 //
 // It never prints a credential. The identity's connection string is written to
 // /state/ownership-admin/env.json (0600); the admin configuration to admin.json (0600).

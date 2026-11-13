@@ -14,15 +14,12 @@ Kubernetes, single-tenant targets, an operator CLI and conformance kits. Home:
 | Vault Agent overlay | [`bindings/compose/vault-agent/`](bindings/compose/vault-agent/) | a Vault Agent sidecar logs in and renews the token the application reads for Transit calls |
 | Ownership-operations overlay | [`bindings/compose/ownership-admin/`](bindings/compose/ownership-admin/) | the `admin` service and the `ownership_operator` database identity with its grants |
 
-The Compose tree came from core's `deploy/multitenant` and lives here now; core keeps only the
-modules its tests load. It builds from a core checkout, so it runs overlaid on core at the recorded
-commit.
+The Compose tree came from core's `deploy/multitenant` and lives here now: this repository is the
+home of the deployment plan, and core publishes the contract a plan must meet. The tree builds from a
+core checkout, so it runs overlaid on core at the pinned commit.
 
-**Core commit pinned:** `0392acf97c720a7e121eea47a9d42a0c8dbe9e73`, the 2026-11-11 batch-join head of
-core's draft pull request [#8898](https://github.com/nightscout/cgm-remote-monitor/pull/8898), accepted
-at that head. It carries the `admin` role, the Vault token-file reader both overlays need, and the
-change-stamp function the realtime and evaluator roles read. The source, tree hash and import method
-are in [`bindings/compose/SOURCE.md`](bindings/compose/SOURCE.md).
+**Core commit pinned:** recorded in [`bindings/compose/SOURCE.md`](bindings/compose/SOURCE.md), with
+the binding's tree hash and what is checked against that commit.
 
 ## Run the Compose binding
 
@@ -30,7 +27,7 @@ Needs Docker Engine with Compose v2, Node.js 22 or newer, OpenSSL, and a host us
 From this repository:
 
 ```bash
-tools/compose-identity-check.sh /path/to/cgm-remote-monitor        # the tree matches core at the pinned commit
+tools/plan-contract-check.sh /path/to/cgm-remote-monitor          # the plan's documents satisfy core's contract at the pinned commit
 tools/compose-overlay.sh /path/to/cgm-remote-monitor /tmp/ns-core   # a core worktree with this tree in place
 cd /tmp/ns-core/deploy/multitenant
 ./demo.sh prepare       # then build, bootstrap, up and demo, as bindings/compose/multitenant/README.md says

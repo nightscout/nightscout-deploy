@@ -12,5 +12,6 @@ is [claimed public names and the deploy companion, section 3](https://github.com
 | 4 | `bindings/kubernetes/`, `console/`, first two single-tenant targets | thin owner page | not started |
 | 5 | owner journeys over the owner API, connector sync tooling, `observability/` | group and schedule policy decision | not started |
 
-The Compose tree's source commit moves when it is re-imported from core; `bindings/compose/SOURCE.md`
-records the commit and tree hash, and `tools/compose-identity-check.sh` checks them.
+`bindings/compose/SOURCE.md` records the core commit the Compose tree is pinned to and the tree hash;
+`tools/plan-contract-check.sh` checks the tree hash and, given a core checkout, the plan's generated
+role documents against core's deployment plan contract at that commit.

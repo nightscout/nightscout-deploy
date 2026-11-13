@@ -12,10 +12,9 @@ transfers and recovers tenant owners. The imported tree in `../multitenant` is n
 
 ## What it needs from core
 
-The core commit pinned in `../SOURCE.md` (`16a1fc2d`) carries the `admin` role. Core's own plan at
-that commit names `ownership_operator` in `layout()` and grants it in `grants()`; this repository's
-`../multitenant/config.js` leaves both out (the recorded delta, `../SOURCE.delta.patch`), so the
-identity and its grants come only from this overlay.
+The core commit pinned in `../SOURCE.md` carries the `admin` role. The base plan
+(`../multitenant/config.js`) does not name `ownership_operator` in `layout()` or grant it in
+`grants()`, so the identity and its grants come only from this overlay.
 
 The grants are core's, statement for statement. The identity has `SELECT` and `UPDATE(owner_fence)` on
 `tenant_authorization_config` and `tenant_owner_policy`; `SELECT`, `INSERT` and

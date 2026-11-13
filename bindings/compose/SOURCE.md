@@ -3,26 +3,50 @@
 | field | value |
 |---|---|
 | upstream repository | nightscout/cgm-remote-monitor |
-| upstream path | `deploy/multitenant` |
-| upstream commit | `debcc2c7a44fb812b342d0e524ff0611045094d1` (joined evaluator settings lifecycle, unit-tier classification and registry-current fixture repair; qualification of this new pair is UNMEASURED) |
-| upstream tree hash of that path | `fdc9f8dd2644b8789c86abeb030fbc0ad7304780` (core's reduced fixture: `config.js`, `demo.js`, `health.js`, `restore.js`, `ui.js`, `README.md`) |
-| import method | Recorded core fixture plus reviewed deployment-owned bootstrap, placement, edge and preparation changes; the patch is checked by `tools/compose-identity-check.sh`. |
-| local delta | [`SOURCE.delta.patch`](SOURCE.delta.patch), against the recorded core fixture. This binding generates fixed API instances and exact maintenance addresses, supports local health probes for network listeners, removes realtime maxSockets and renders explicit per-IP edge budgets. The reduced core fixture stays test-only. |
-| tree hash here | `56183e354d33c0d7e83d5ba3656f4cceb9d1ca58` |
-| imported on | 2026-11-12 |
+| upstream commit | `a27ce5f88a8480e7f6e61b30b43bfc21b8d93c43` (core `debcc2c7` plus the static-retire leaf and the deployment plan contract; local lane commit, qualification of this pair is UNMEASURED) |
+| contract | core's deployment plan contract, version 1, at that commit (`docs/multitenant-plan-contract.md` there). `tools/plan-contract-check.sh <core>` runs that commit's `nightscout plan check` on the role documents this plan generates. |
+| tree hash here | `af68e0c065cbb925ff31e05d0586aa5eee858174` |
+| pinned on | 2026-11-13 |
 
-History: first imported 2026-11-09 from `ed2ced00c80bd0a6a7d75f834d2c6e2af8c71364` (tree
+This repository is the home of the Compose plan (core decision `deployment-plan-contract`). Nothing
+here is compared byte for byte with core. The pinned commit is the core this binding is overlaid on,
+builds its image from and is checked against:
+
+- `tools/plan-contract-check.sh` (no argument, in `npm test`): `multitenant/` is committed and is the
+  tree recorded above.
+- `tools/plan-contract-check.sh <core checkout>`: the same, and the documents `multitenant/plan-documents.js`
+  prints for the default topology, two API replicas and two evaluator workers are accepted by the
+  pinned commit's `nightscout plan check`: each role document against core's schema, then core's own
+  role loaders and start-up rules. Core at the pinned commit and this tree are extracted with
+  `git archive` into a scratch directory; the checkout supplies `node_modules` and is not written to.
+
+The tree references core by relative path (`../../lib/...`) and the Dockerfile builds from the core
+checkout, so it runs only overlaid on a core checkout at this commit; `tools/compose-overlay.sh` does
+that. When the tree changes, update the tree hash in the same commit. When the pin moves, run the
+contract check against the new commit before recording it.
+
+Not covered by the contract check: a selected realtime placement (`NS_REALTIME_WORKERS`; its maps are
+published at run time), the ui service (this repository's own `ui.js`), grants and the bootstrap's
+database and Vault steps. `multitenant/config.js validateFiles` still runs core's loaders on the files
+the bootstrap writes.
+
+The ownership identity is overlay-shaped: the base plan does not create or grant it, and
+`ownership-admin/ownership-grants.js` creates it after bootstrap (the overlay README has the
+statements).
+
+## History
+
+Sections below are dated records. Until 2026-11-13 this file recorded a byte comparison: core kept a
+reduced `deploy/multitenant` (`config.js`, `demo.js`, `health.js`, `restore.js`, `ui.js`), a recorded
+`SOURCE.delta.patch` was applied to it, and `tools/compose-identity-check.sh` required the result to
+equal the same files here. "The delta", "the five reduced fixture files" and "the identity check" in
+the records below refer to that arrangement; the last pin under it was core
+`debcc2c7a44fb812b342d0e524ff0611045094d1` (upstream tree `fdc9f8dd2644b8789c86abeb030fbc0ad7304780`,
+tree here `56183e354d33c0d7e83d5ba3656f4cceb9d1ca58`).
+
+First imported 2026-11-09 from `ed2ced00c80bd0a6a7d75f834d2c6e2af8c71364` (tree
 `8be3d761cbe592428357d6cee29612affafe4122`) by `git subtree`, which keeps the per-file history; the
 2026-11-10 copy brings in the 13 core commits (merges included) that touched the path since then.
-
-From core commit `16a1fc2d` onward this repository is the home of the Compose tree. Core keeps a
-reduced `deploy/multitenant` with only the modules its own tests load (`config.js`, `demo.js`,
-`health.js`, `restore.js`, `ui.js`). `tools/compose-identity-check.sh <core>` compares exactly those
-files: core's copy at the recorded commit with the delta applied must equal the copy here, byte for
-byte (core's `README.md` is not compared). Every other file here (`bootstrap.js`, `compose.yaml`, the
-Dockerfile, `prepare.js`, ...) has no upstream copy and is checked only against the tree hash above.
-Changes core makes to those files on a lane branch reach this tree by hand, as listed in the import
-method.
 
 2026-11-11 sync to `0392acf9` (alignment `reports/tenancy/batch-join-2026-11-11/0392acf9-acceptance/README.md`,
 "What nightscout-deploy needs to match this head"):
@@ -37,16 +61,6 @@ method.
   and refuses any other argument list. The function owner owns every catalogue schema, the clock schema
   included, which is the USAGE the definer function needs.
 - `compose.yaml`: api, realtime and evaluator healthchecks get `start_period: 900s`, `start_interval: 2s`.
-
-The delta keeps the ownership identity overlay-shaped: core's plan creates and grants it in
-`layout()` and `grants()`; here the base plan does not, and `ownership-admin/ownership-grants.js`
-creates it after bootstrap with the same statements. Base `grants()` plus the overlay's statements
-equal core's `grants()` at the recorded commit (the overlay README has the measurement).
-
-The tree references core by relative path (`../../lib/...`) and the Dockerfile builds from the core
-checkout, so it runs only overlaid on a core checkout at this commit; `tools/compose-overlay.sh` does
-that. When this copy or the delta changes, update this file, the delta and the recorded hashes in the same
-commit; `tools/compose-identity-check.sh <core>` checks all three.
 
 ## Bench fixes (branch `bench/compose-baseline-20261110`)
 
