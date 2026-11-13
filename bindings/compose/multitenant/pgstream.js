@@ -3,7 +3,6 @@
 // and receiver. DBA setup is never part of the running role's startup command.
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const {execFileSync}=require('node:child_process');
-const yaml=require('js-yaml');
 function enabled(env=process.env){if(env.NS_PGSTREAM!==undefined&&!['0','1'].includes(env.NS_PGSTREAM))throw new Error('PGSTREAM_SELECTION_INVALID');return env.NS_PGSTREAM==='1';}
 function configure(docs,layout){
  if(!enabled())return;
@@ -11,6 +10,7 @@ function configure(docs,layout){
  const evaluator=docs.configs.evaluator,realtime=docs.configs.realtime;
  delete evaluator.changeFeed;delete realtime.changeFeed;
  evaluator.pgstream=configuration(layout);
+ evaluator.timeIntervalMs=60000; // single-site heartbeat cadence; exact due instants remain independent
  realtime.completedOutput={namespace:layout.namespaces.eval_checkpoint,consumer:evaluator.consumer};
  Object.assign(docs.environments.evaluator,{NS_PGSTREAM_BINARY:'/usr/local/bin/pgstream',NS_PGSTREAM_CONFIG:'/run/ns-config/pgstream.yaml'});
  if(docs.feed)docs.feed.environment.NS_PGSTREAM='1';
@@ -28,7 +28,7 @@ function wire(config,runtimeURL){
 async function init({admin,adminURL,layout,config}){
  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'ns-pgstream-dba-'));
  try{
-  const file=path.join(directory,'init.yaml');fs.writeFileSync(file,yaml.dump({source:{postgres:{url:adminURL,replication:{replication_slot:config.pgstream.slot}}}}),{mode:0o600});
+  const file=path.join(directory,'init.yaml');fs.writeFileSync(file,JSON.stringify({source:{postgres:{url:adminURL,replication:{replication_slot:config.pgstream.slot}}}}),{mode:0o600});
   execFileSync('/usr/local/bin/pgstream',['init','-c',file],{stdio:['ignore','pipe','pipe'],timeout:30000});
  }finally{fs.rmSync(directory,{recursive:true,force:true});}
  const q=require('./config').quote,role=q(layout.roles.pgstream),evaluator=q(layout.roles.evaluator),realtime=q(layout.roles.realtime),table=q(layout.namespaces.eval_checkpoint)+'.tenant_consumer_checkpoint';
