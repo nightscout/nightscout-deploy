@@ -273,7 +273,7 @@ diff --git a/health.js b/health.js
 -const internalSocket = name => '/run/ns-ipc/' + name + '.sock';
  async function main () {
 +  if (role === 'admin') {
-+    require('./load-env');
++    require('./service-environment').applyHealth();
 +    const response = await fetch('http://' + process.env.ADMIN_HOSTNAME + ':' + process.env.ADMIN_PORT + '/v1/openapi.json', {signal: AbortSignal.timeout(1500)});
 +    if (!response.ok || typeof (await response.json()).openapi !== 'string') throw new Error();
 +    return;
@@ -284,7 +284,7 @@ diff --git a/health.js b/health.js
      return;
    }
    if (!Object.hasOwn(roles, role)) throw new Error();
-+  require('./load-env');
++  require('./service-environment').applyHealth();
    const spec = roles[role];
 -  if (!fs.lstatSync(internalSocket(role)).isSocket()) throw new Error();
 +  const own = require('../../lib/server/internal-api/listener-config').resolve([role], process.env);
