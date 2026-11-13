@@ -58,7 +58,7 @@ function create({directory,plan,expected,ports}){
      need(book.version===1&&book.planSha256===plan.sha256&&equal(book.resourceEpoch,[plan.resource.systemIdentifier,plan.resource.postmasterStartedAt])
        &&book.slots&&equal(Object.keys(book.slots).sort(),plan.slots.map(s=>s.processInstanceId).sort()),'CONNECTION_ADMISSION_LEDGER_CHANGED');
      const generations=Object.values(book.slots).flat();
-     need(generations.length<=4096&&generations.every(r=>r&&['ISSUED','RETIRED'].includes(r.state)&&Array.isArray(r.tags)),'CONNECTION_CONTROLLER_LEDGER');
+     need(generations.length<=4096&&generations.every(r=>r&&['ISSUED','RETIRED'].includes(r.state)&&/^[a-f0-9]{32}$/.test(r.incarnation)&&Array.isArray(r.tags)),'CONNECTION_CONTROLLER_LEDGER');
      const tags=[...new Set(generations.filter(r=>r.state!=='RETIRED').flatMap(r=>r.tags))].sort();
      const startedNs=process.hrtime.bigint().toString();
      const raw=chargedCounts(plan,selector,tags);
