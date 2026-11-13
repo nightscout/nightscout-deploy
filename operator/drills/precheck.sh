@@ -13,7 +13,11 @@ prefix=${NS_DRILL_SCHEMA_PREFIX:-nsdemo}
 sql() { "$here/stack.sh" compose exec -T postgres psql -U postgres -d nightscout_compose_test -X -A -t -v ON_ERROR_STOP=1 -c "$1"; }
 phase=$(sql "SELECT phase FROM ${prefix}_control.tenant_lifecycle_windows WHERE tenant_id='$tenant'")
 registry=$(sql "SELECT state FROM ${prefix}_registry.tenant_registry WHERE tenant_id='$tenant'")
-unfinished=$(sql "SELECT count(*) FROM ${prefix}_control.tenant_lifecycle_operations WHERE tenant_id='$tenant' AND NOT finished")
+count_unfinished() { sql "SELECT count(*) FROM ${prefix}_control.tenant_lifecycle_operations WHERE tenant_id='$tenant' AND NOT finished"; }
+# A request in flight has an unfinished marker for as long as it runs. Only a count that is
+# still there after re-reading is a blocking condition.
+unfinished=$(count_unfinished); tries=0
+while [ "$unfinished" != 0 ] && [ $tries -lt 3 ]; do sleep 2; unfinished=$(count_unfinished); tries=$((tries + 1)); done
 authority=$(sql "SELECT count(*) FROM ${prefix}_control.tenant_lifecycle_restore_authority WHERE tenant_id='$tenant' AND active")
 healthy=0; for role in api realtime evaluator tenant-admin; do
   id=$("$here/stack.sh" compose ps -q "$role"); [ -n "$id" ] && [ "$(docker inspect --format '{{.State.Health.Status}}' "$id")" = healthy ] && healthy=$((healthy + 1))

@@ -9,7 +9,9 @@ drill=orphaned-operations
 source "$(dirname "$0")/lib.sh"
 name=oo; fresh $name
 tenant=$(driver oo-seed seed $name | field tenant)
-step precheck-allows-before "$("$here/precheck.sh" "$tenant" | field start)" true
+before=$("$here/precheck.sh" "$tenant" || true)
+step precheck-allows-before "$(echo "$before" | field start)" true
+[ "$(echo "$before" | field start)" = true ] || printf '{"drill":"%s","step":"precheck-reasons-before","observed":%s}\n' "$drill" "$(echo "$before" | field reasons)"
 ( driver oo-churn churn $name --tenant a --count 2000 >/dev/null 2>&1 || true ) &
 wait_file "$drill_state/$name.churn-started" 30 || true; sleep 1.5
 docker kill "$(container api)" >/dev/null
