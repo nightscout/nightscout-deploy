@@ -88,7 +88,7 @@ function prepare (args) {
   }
   write(path.join(state, 'edge/nginx.conf'), require('./edge').render(fs.readFileSync(path.join(base, 'nginx.compose.conf'), 'utf8'), { replicas: apiReplicas, realtime: !!selectedRealtime }));
   write(path.join(state, 'compose.replicas.yaml'), replicas.compose(apiReplicas, path.join(base, 'compose.yaml'))+require('./networks').render(selectedNetworks));
-  write(path.join(base, '.env'), 'NS_DEPLOY_COMMIT=' + deployCommit + '\nNS_DEMO_PROJECT=' + options.project + '\nNS_API_REPLICAS=' + apiReplicas + '\n' +
+  write(path.join(base, '.env'), 'NS_PGSTREAM='+(require('./pgstream').enabled()?'1':'0')+'\nNS_DEPLOY_COMMIT=' + deployCommit + '\nNS_DEMO_PROJECT=' + options.project + '\nNS_API_REPLICAS=' + apiReplicas + '\n' +
     (selectedRealtime ? 'NS_REALTIME_WORKERS=' + selectedRealtime.workers + '\nNS_REALTIME_SHARDS=' + selectedRealtime.shards + '\n' : '') +
     (selectedEvaluator ? 'NS_EVALUATOR_WORKERS=' + selectedEvaluator.workers + '\n' : '') +
     (connectionBudget?'NS_CONNECTION_BUDGET=1\n':'') + 'NS_M7_DIAGNOSTICS=' + diagnostics.enabled + '\nNS_M7_DIAGNOSTICS_INTERVAL_MS=' + diagnostics.interval + '\n' +

@@ -6,4 +6,4 @@ if (!['api', 'realtime', 'evaluator', 'tenant-admin', 'admin', 'feed-reader'].in
   process.stderr.write('Select one multitenant service role\n');
   process.exit(64);
 }
-require('../../lib/cli').main(['multitenant', role]);
+if(role==='feed-reader'&&process.env.NS_PGSTREAM==='1'){process.stdout.write('pgstream is owned by evaluator; legacy reader disabled\n');}else require('../../lib/cli').main(['multitenant', role]);

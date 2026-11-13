@@ -55,7 +55,7 @@ function catalogues() {
 function layout(prefix = 'nsdemo') {
   quote(prefix);
   if (prefix.length > 24) throw new TypeError('Deployment prefix too long');
-  const names = ['api','readiness','realtime','evaluator','alarm','suppression','outbox','owner_writer','owner_reader','root_writer','operator','provisioner','display_reader','activity_reader','feed_reader','feed_listener','placement_publisher','ownership_operator','connector_writer','management_issuer','ui_registry',
+  const names = [...(require('./pgstream').enabled()?['pgstream']:[]),'api','readiness','realtime','evaluator','alarm','suppression','outbox','owner_writer','owner_reader','root_writer','operator','provisioner','display_reader','activity_reader','feed_reader','feed_listener','placement_publisher','ownership_operator','connector_writer','management_issuer','ui_registry',
     ...(require('./evaluator-workers').selection() ? ['pool_member','pool_operator'] : []),
     ...serviceRoles.map(name=>'lifetime_'+name.replace('-','_'))];
   return {prefix,owner:prefix+'_owner',feedOwner:prefix+'_feed_owner',managementAuthorityOwner:prefix+'_management_authority',namespaces:Object.fromEntries(Object.keys(catalogues()).map(name=>[name,prefix+'_'+name])),

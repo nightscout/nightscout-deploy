@@ -14,13 +14,15 @@ function provisioningNamespaces(ns) {
     access: ns.access, clock: ns.clock, control: ns.control, settings: ns.display_settings, operatorPolicy: ns.operator_policy };
 }
 function checkpoints(docs, ns) {
-  return [['rt_checkpoint','realtime','realtime-current-rows-v1'],['eval_checkpoint','evaluator','clinical-current-rows-v1']].map(([kind, role, projectionVersion]) => {
+  const rows=[['rt_checkpoint','realtime','realtime-current-rows-v1'],['eval_checkpoint','evaluator','clinical-current-rows-v1']].map(([kind, role, projectionVersion]) => {
     const document = docs.configs[role];
     const replay = require('../../lib/storage/postgres-durable-replay')({ connection: { query() { throw new Error('CONSTRUCTOR_ONLY'); }, snapshotTransaction() { throw new Error('CONSTRUCTOR_ONLY'); } },
       checkpointTable: ns[kind] + '.tenant_consumer_checkpoint', clockTable: ns.clock + '.tenant_write_clock', consumer: document.consumer,
       domains: Object.fromEntries(clinical.map(name => [name, ns[name] + '.' + name])), projectionVersion, pageSize: document.pageSize, maxRows: document.maxRows });
     return { namespace: ns[kind], consumer: document.consumer, digest: replay.digest };
   });
+  if(docs.configs.evaluator.pgstream){const document=docs.configs.evaluator;const output=require('../../lib/pgstream/checkpoint').create({connection:{},namespace:ns.eval_checkpoint,consumer:document.consumer,maxBytes:document.maxBytes*2,timeIntervalMs:document.timeIntervalMs});rows.push({namespace:ns.eval_checkpoint,consumer:output.consumer,digest:output.digest});}
+  return rows;
 }
 function expand(docs, { layout, urls, vaultAddress }) {
   const ns = layout.namespaces, registry = { namespace: ns.registry, maxTenants: 10000, refreshMs: 2000 };
@@ -58,6 +60,7 @@ function expand(docs, { layout, urls, vaultAddress }) {
     slot: layout.prefix + '_feed_slot', publication: layout.prefix + '_feed_publication', owner: layout.feedOwner, channel: layout.prefix + '_changes',
     pollMs: 50, heartbeatMs: 1000, targetChanges: 128, maxMessages: 10000, maxBytes: 1048576, statementTimeoutMs: 2000, rssRefuseBytes: 268435456 },
     environment: { MULTITENANT_FEED_CONFIG: '/run/ns-config/config.json', NS_FEED_PG: urls.feed_reader } };
+  require('./pgstream').configure(docs,layout);
   // Recompute manifest coverage from the selected product configuration.
   const protectedNamespaces = require('../../lib/server/serve/operation-cohort').protectedNamespaces;
   const participants = Object.entries(docs.configs).map(([role, config]) => ({ id: role, roles: [role],

@@ -125,8 +125,9 @@ async function bootstrap(options) {
     if(freshControl)for(const sql of require('./control-recovery-bootstrap').grants(l))await admin.query(sql);
     const managementGrants=require('../../lib/management-sessions/authority').grants({namespaces:{registry:l.namespaces.registry,authorization:l.namespaces.authorization,access:l.namespaces.access,control:l.namespaces.control},issuer:l.roles.management_issuer,authorityOwner:l.managementAuthorityOwner});
     for(const sql of [...managementGrants.authorityOwner,...managementGrants.issuer])await admin.query(sql);
-    for(const sql of require('../../lib/change-feed/postgres').provision({namespace:l.namespaces.feed,clockNamespace:l.namespaces.clock,activityNamespace:l.namespaces.control,settingsNamespace:l.namespaces.display_settings,policyNamespace:l.namespaces.operator_policy,
+    if(!require('./pgstream').enabled())for(const sql of require('../../lib/change-feed/postgres').provision({namespace:l.namespaces.feed,clockNamespace:l.namespaces.clock,activityNamespace:l.namespaces.control,settingsNamespace:l.namespaces.display_settings,policyNamespace:l.namespaces.operator_policy,
       slot:l.prefix+'_feed_slot',publication:l.prefix+'_feed_publication',owner:l.feedOwner,reader:l.roles.feed_reader}))await admin.query(sql);
+    if(require('./pgstream').enabled()){if(options.connectionBudgetProfile)throw fail('PGSTREAM_EXTERNAL_ADMISSION_UNQUALIFIED');await require('./pgstream').init({admin,adminURL:pg.toString(),layout:l,config:require('./pgstream').descriptor(l)});}
     if(options.connectionBudgetProfile&&require('./connection-budget-files').read(options.connectionBudgetProfile).version===2){
       const database=(await admin.query('SELECT current_database() AS database,(SELECT oid::text FROM pg_database WHERE datname=current_database()) AS "databaseOid"')).rows;
       if(database.length!==1)throw fail('WORKER_DATABASE_IDENTITY');
