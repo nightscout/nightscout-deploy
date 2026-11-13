@@ -7,6 +7,17 @@ const exact=(v,keys)=>v&&typeof v==='object'&&!Array.isArray(v)&&equal(Object.ke
 const CLASSES=Object.freeze(['lifecycle-operator','restore-commissioner','realtime-recovery']);
 const HEX32=/^[a-f0-9]{32}$/,HEX64=/^[a-f0-9]{64}$/;
 function principal(p){need(exact(p,['role','roleOid','database','databaseOid'])&&['role','database'].every(k=>/^[a-z][a-z0-9_]{0,62}$/.test(p[k]))&&['roleOid','databaseOid'].every(k=>typeof p[k]==='string'&&/^[1-9][0-9]{0,9}$/.test(p[k])&&Number(p[k])<=4294967295),'CONTROL_RECOVERY_PRINCIPAL');return p;}
+function intent(className,value){
+ need(CLASSES.includes(className),'CONTROL_RECOVERY_CLASS');
+ if(className==='realtime-recovery')need(exact(value,['version','command'])&&value.version===1&&['inspect','reconcile-step'].includes(value.command),'CONTROL_RECOVERY_INTENT');
+ else if(className==='restore-commissioner')need(exact(value,['version','command'])&&value.version===2&&value.command==='commission','CONTROL_RECOVERY_INTENT');
+ else {
+  const extras=value?.command==='resume'?['claimId']:value?.command==='restore'?['artifactDigest']:[];
+  const uuid=v=>typeof v==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(v)&&v!=='00000000-0000-0000-0000-000000000000';
+  need(exact(value,['version','command','tenant',...extras])&&value.version===2&&['inspect','resume','clear-operations','capture','restore'].includes(value.command)&&uuid(value.tenant)&&(value.command!=='resume'||uuid(value.claimId))&&(value.command!=='restore'||typeof value.artifactDigest==='string'&&HEX64.test(value.artifactDigest)),'CONTROL_RECOVERY_INTENT');
+ }
+ return structuredClone(value);
+}
 function epoch(plan){return [plan.resource.systemIdentifier,plan.resource.postmasterStartedAt];}
 function tag(className,incarnation){need(CLASSES.includes(className)&&HEX32.test(incarnation),'CONTROL_RECOVERY_CLASS');return 'nscb:'+incarnation+':'+crypto.createHash('sha256').update(className).digest('hex').slice(0,16);}
 function planCheck(plan){
@@ -56,4 +67,4 @@ function occupancy(plan,book,tags){
  for(const t of tags){const row=book.controlLeases.find(r=>r.state!=='CLOSED'&&r.tags.includes(t.applicationName));if(row)physical.control[row.class]+=t.count;else physical.workers+=t.count;}
  return {physical,heldControlCredits:book.controlLeases.filter(r=>r.state!=='CLOSED').length,activeControlExecutions:book.controlLeases.filter(r=>['ISSUED','BOUND'].includes(r.state)).length};
 }
-module.exports=Object.freeze({CLASSES,principal,tag,validate,ledger,allocate,bound,uncertain,stopped,known,occupancy});
+module.exports=Object.freeze({CLASSES,principal,intent,tag,validate,ledger,allocate,bound,uncertain,stopped,known,occupancy});

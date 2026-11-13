@@ -7,8 +7,9 @@ It grants no executable source, image, resource or native-plan selection.
 ## Versions and fixed classes
 
 Fresh profile2 compiles plan2 with `lifecycleOperator.version=2` and creates
-ledger3 exclusively. Admission tickets retain core version1. Typed action intents,
-completion receipts and observation/stored-count envelopes use version2. No
+ledger3 exclusively. Admission tickets retain core version1. Lifecycle and commissioning typed action intents,
+completion receipts and observation/stored-count envelopes use version2. The separately versioned
+realtime caller intent is exactly version1 under the fresh class capability2. No
 existing ledger is upgraded, recreated or reset. Mixed tuples refuse before
 credential, ticket, process or authentication effects.
 
@@ -21,9 +22,14 @@ Entry sources respectively are `deploy/multitenant/lifecycle-operator-entry.js`,
 `deploy/multitenant/restore-commissioner-entry.js` and
 `deploy/multitenant/realtime-recovery-entry.js`. This is a closed set, not an
 extension registry. No caller selects a module, SQL, principal, path or exemption.
-The actual realtime action vocabulary is separately owned and must be reviewed
-before binding; reserving its class does not authorize dispatch or publication
-retry. An uncertain publication journal cannot redispatch.
+The exact realtime caller intent is `{version:1,command:'inspect'}` or
+`{version:1,command:'reconcile-step'}` with no additional fields, per the owner
+interface INTERFACE-realtime-recovery-control-2026-11-13.md. Host action, worker,
+map, grace, target and proof fields are never caller intent fields. An uncertain
+publication journal prohibits reconcile-step or other mutation/redispatch; only
+a separately debited fixed inspect may run after exact predecessor stop proof.
+Result completion never closes the common physical credit. The realtime lane
+owns journal enforcement and action implementation after contract review.
 
 Plan2 contains `controlRecovery:{version:1,classes:{<each fixed class>:{principal}}}`.
 Each principal is exactly `{role,roleOid,database,databaseOid}`: names and decimal
@@ -31,6 +37,14 @@ OID strings are read from sealed private custody. Commissioning has a separate
 bootstrap DDL principal, never the ordinary operator credential. The three class
 entries bind to the same resource and budget. Names/OIDs, source/image, epoch,
 roster and action documents cannot be supplied by ordinary intent fields.
+
+Lifecycle intent2 is exactly `{version:2,command,tenant}`, with command inspect,
+clear-operations or capture; resume additionally requires only `claimId`, restore
+additionally requires only `artifactDigest`. Tenant and claim are nonzero UUIDs;
+digest is lowercase hex64. Plan roster admission remains the lifecycle binding's
+responsibility. Commission intent2 is exactly `{version:2,command:'commission'}`;
+its roster and principals are sealed host inputs, never request selectors. The
+common `intent(class,value)` validates this closed vocabulary, before hashing.
 
 ## Exact common ledger3 row
 

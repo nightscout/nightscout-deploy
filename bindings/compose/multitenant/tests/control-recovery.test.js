@@ -22,3 +22,12 @@ test('red controls: live predecessor, third credit, and UNKNOWN tag omission fai
   ["...book.controlLeases.filter(r=>r.state!=='CLOSED').flatMap(r=>r.tags)","...book.controlLeases.filter(r=>r.state==='BOUND').flatMap(r=>r.tags)",impl=>{const f=fixture(impl),r=f.allocate();f.bind(r);impl.uncertain(f.plan,f.book,r);assert.deepEqual(impl.known(f.plan,f.book),r.tags,'UNKNOWN_TAG_REQUIRED');}]
  ];for(const [from,to,oracle] of cases){assert.throws(()=>oracle(mutant(from,to)));oracle(C);}
 });
+
+test('fixed realtime intent and typed lifecycle/commission intent have no selectors or extensible fields',()=>{
+ for(const command of ['inspect','reconcile-step'])assert.deepEqual(C.intent('realtime-recovery',{version:1,command}),{version:1,command});
+ for(const field of ['worker','tenant','target','cid','source','epoch','grace','lock','sql','module','retry'])assert.throws(()=>C.intent('realtime-recovery',{version:1,command:'reconcile-step',[field]:'caller'}),/INTENT/);
+ for(const value of [{version:2,command:'inspect'},{version:1,command:'restart'}])assert.throws(()=>C.intent('realtime-recovery',value),/INTENT/);
+ assert.deepEqual(C.intent('restore-commissioner',{version:2,command:'commission'}),{version:2,command:'commission'});
+ const tenant='11111111-1111-4111-8111-111111111111';
+ for(const command of ['inspect','clear-operations','capture','restore','resume']){const v={version:2,command,tenant,...(command==='restore'?{artifactDigest:'a'.repeat(64)}:command==='resume'?{claimId:tenant}:{})};assert.deepEqual(C.intent('lifecycle-operator',v),v);assert.throws(()=>C.intent('lifecycle-operator',{...v,path:'/caller'}),/INTENT/);}
+});
