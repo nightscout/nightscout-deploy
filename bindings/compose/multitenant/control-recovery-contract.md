@@ -16,6 +16,10 @@ ab95fbb9f3b60f6de21f570477a23f19526c850f implements the fixed 1000ms same-admitt
 backend identity gate before Promise/callback/connect-event/public-query exposure;
 no generic callback or extra backend. Companion generation and worker runtime now
 carry and compare the exact cloned tuple before one-use claim/core admission.
+The physical2 receiver requires primitive authority strings, exact non-array
+ticket/control/gate objects and bounded integer fields before claims, credential
+reads in the fixed entry, admission install or PG constructors. Serialized array
+identities are refused rather than coerced. Legacy1 retains its valid schema.
 Fixed class ticket construction uses the same physical2 fields. The lifecycle
 entry supports that tuple for inspect/resume/clear-operations; capture/restore
 explicitly refuse before admission until their artifact runtime joins. Fresh
