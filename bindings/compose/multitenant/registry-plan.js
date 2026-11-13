@@ -37,7 +37,10 @@ function expand(docs, { layout, urls, vaultAddress }) {
       config.socketForwarding.maxTenants = 10000;
     }
     if (role === 'tenant-admin') delete config.management.keys;
-    if (role === 'evaluator' || role === 'realtime') config.maxTenants = 10000;
+    if (role === 'evaluator' || role === 'realtime') {
+      config.maxTenants = 10000;
+      config.trustedWorker = { activity: ns.control, clock: ns.clock, settings: ns.display_settings, operatorPolicy: ns.operator_policy };
+    }
     if (role === 'realtime') delete config.admissionFileEnv;
     const env = docs.environments[role];
     for (const name of Object.keys(env)) if (/^NS_VAULT_\d+$/.test(name) || name === 'NS_ADMISSION_FILE') delete env[name];

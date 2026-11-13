@@ -159,6 +159,7 @@ function grants(l) {
   sql.push(...require('../../lib/tenant-registry/provision').provisionerGrants({namespaces:require('./registry-plan').provisioningNamespaces(ns),role:r.provisioner,
     checkpoints:[{namespace:ns.rt_checkpoint},{namespace:ns.eval_checkpoint}]}));
   if(ns.pool)sql.push(...require('../../lib/pool-membership/postgres').grants({namespace:ns.pool,member:r.pool_member,operator:r.pool_operator}));
+  sql.push(...require('../../lib/trusted-worker/postgres').grants({ namespaces: { activity: ns.control, clock: ns.clock, settings: ns.display_settings, operatorPolicy: ns.operator_policy }, roles: [r.evaluator, r.realtime] }));
   return sql;
 }
 function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress,registryMode=false,realtimePlacement=null}) {

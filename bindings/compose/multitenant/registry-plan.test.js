@@ -136,3 +136,16 @@ test('explicit consumer heartbeat horizon preserves default and is parsed by act
   try{for(const role of ['evaluator','realtime']){assert.equal(on.configs[role].changeFeed.heartbeatTimeoutMs,300000);assert.equal(on.configs[role].changeFeed.intervalMs,1000);assert.equal(on.configs[role].changeFeed.pageSize,256);assert.equal(Object.hasOwn(on.configs[role].changeFeed,'sweepMs'),Object.hasOwn(off.configs[role].changeFeed,'sweepMs'));}plan.validateFiles(directory,on);}finally{fs.rmSync(directory,{recursive:true,force:true});}
  }finally{if(saved===undefined)delete process.env.NS_FEED_HEARTBEAT_TIMEOUT_MS;else process.env.NS_FEED_HEARTBEAT_TIMEOUT_MS=saved;}
 });
+test('trusted workers receive ordinary cross-tenant metadata SELECT; public roles keep tenant policies', () => {
+  const { layout, docs } = generated(), ns = layout.namespaces;
+  const expected = { activity: ns.control, clock: ns.clock, settings: ns.display_settings, operatorPolicy: ns.operator_policy };
+  for (const role of ['evaluator','realtime']) assert.deepEqual(docs.configs[role].trustedWorker, expected);
+  assert.equal(docs.configs.api.trustedWorker, undefined);
+  const policies = plan.grants(layout).filter(sql => /^CREATE POLICY "trusted_worker_/.test(sql));
+  assert.equal(policies.length, 8);
+  for (const sql of policies) {
+    assert.ok(sql.includes('TO "' + layout.roles.evaluator + '"') || sql.includes('TO "' + layout.roles.realtime + '"'));
+    assert.match(sql, /FOR SELECT .* USING \(true\)$/);
+    assert.ok(!sql.includes('PUBLIC') && !sql.includes(layout.roles.api) && !sql.includes(layout.roles.display_reader));
+  }
+});
