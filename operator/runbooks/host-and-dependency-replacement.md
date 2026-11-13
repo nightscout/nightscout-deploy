@@ -5,7 +5,7 @@ the status line and the stop conditions in [README.md](README.md).*
 
 | what was restarted or replaced | what users see | recovery (rehearsed) |
 |---|---|---|
-| one application role | API: requests fail (the edge answers 504) until it is back. Others: that role's output pauses | start that role again. Nothing else is restarted. Then read every tenant's unfinished-operation count ([role-death-mid-operation.md](role-death-mid-operation.md)) |
+| one application role | API: requests fail (the edge answers 502 or 504) until it is back. Others: that role's output pauses | start that role again. Nothing else is restarted. Then read every tenant's unfinished-operation count ([role-death-mid-operation.md](role-death-mid-operation.md)) |
 | Vault (restart, or it comes back sealed) | requests that need a key or a token are refused; the roles stay up | unseal (`stack.sh bootstrap` does only that on a completed deployment). No role is restarted |
 | PostgreSQL (restart on the same data) | **every tenant is refused** (the edge answers 503) and stays refused | restart **every** application role, in order: `stack.sh roles-restart` |
 | the host, or any volume | everything is down | whole-deployment recovery from a cold backup: [backup-and-restore.md](backup-and-restore.md), part D |
