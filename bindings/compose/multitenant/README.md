@@ -248,6 +248,13 @@ lifetimes and restore exclusion remain protected. Unselected application profile
 retain their prior operation path. Four is a synthetic measurement profile, not
 a portable throughput claim; record it alongside the pool sizes.
 
+`NS_FEED_SWEEP_MS` at bootstrap (off when empty; 1000 to 30000) sets the period in which the
+evaluator's and realtime's healthy feed rotation covers every tenant. Unset, each healthy tick
+rechecks one page of 256 tenants, so a deployment of 256 tenants or fewer rechecks every tenant every
+second. A tenant with a change hint (a write, a pause or suspend, a settings change) is still checked
+on the next tick, and a degraded feed still rotates full pages; the value bounds only how long a lost
+hint can go unnoticed. It needs a core that accepts `changeFeed.sweepMs`.
+
 The opted-in `shipping-sharding.integration.test.js` first proves every fixed API
 instance × synthetic seed tenant through a private, authorized status GET. A bare
 readiness client uses only a short-lived mode-0600 DATA-credential input and three
@@ -321,3 +328,13 @@ wrong-tenant denial, private-route refusal and existing clinical-row continuity.
 Its private once-only journal refuses a repeated qualification run. It performs
 no container lifecycle, SQL seeding, membership or settings mutation. A skipped
 native test is UNMEASURED, not deployment acceptance.
+
+
+`NS_FEED_HEARTBEAT_TIMEOUT_MS` at bootstrap optionally selects the existing
+consumer heartbeat timeout for both evaluator and realtime, from 100 to 300000
+milliseconds. Absent or empty preserves 5000. It is forwarded explicitly to
+bootstrap and captured in generated role configurations; changing it after
+bootstrap does not change a running consumer. This bounded selector supports
+controlled fault experiments with the same configuration in both comparison
+arms; it is not a production timeout recommendation. It does not change the
+reader heartbeat cadence, sweep selection (OFF remains absent), or any data TTL.
