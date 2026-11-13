@@ -16,8 +16,8 @@ function install(env=process.env){
  need(slot&&ticket.planSha256===sha256&&equal(ticket.source,plan.source)&&equal(ticket.capabilities,slot.capabilities)&&equal(ticket.directGroups,slot.directGroups)&&equal(ticket.cold,slot.cold)&&ticket.pgResourceId===plan.resource.pgResourceId&&equal(ticket.resourceAliases,plan.resource.aliases)&&/^[a-f0-9]{32}$/.test(ticket.nonce)&&/^[a-f0-9]{32}$/.test(ticket.incarnation),'CONNECTION_BUDGET_SLOT_CHANGED');
  need(require('../../lib/server/serve/pool-config').startupConcurrency(env)===slot.startupConcurrency,'CONNECTION_BUDGET_STARTUP_CHANGED');
  need(env.NS_SOURCE_COMMIT===plan.source.coreCommit,'CONNECTION_BUDGET_IMAGE_SOURCE');
- const overlay=JSON.parse(fs.readFileSync(path.join(__dirname,'.overlay.json'),'utf8'));
- need(overlay.deployCommit===plan.source.deployCommit,'CONNECTION_BUDGET_IMAGE_BINDING');
+ const imageFile=fs.openSync(path.join(__dirname,'.image-source.json'),fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);let imageSource;try{const stat=fs.fstatSync(imageFile);need(stat.isFile()&&stat.size<=512,'CONNECTION_BUDGET_IMAGE_BINDING');const bytes=Buffer.alloc(513),length=fs.readSync(imageFile,bytes,0,bytes.length,0);need(length<=512,'CONNECTION_BUDGET_IMAGE_BINDING');imageSource=JSON.parse(bytes.subarray(0,length));}finally{fs.closeSync(imageFile);}
+ need(imageSource.version===1&&imageSource.coreCommit===plan.source.coreCommit&&imageSource.deployCommit===plan.source.deployCommit&&Object.keys(imageSource).sort().join(',')==='coreCommit,deployCommit,version','CONNECTION_BUDGET_IMAGE_BINDING');
  const claim=files.directory(env.NS_CONNECTION_BUDGET_CLAIM_DIR),prefix=ticket.incarnation;
  try{
   files.writeAt(claim,'claim-'+prefix+'.json',{kind:'one-use-connection-budget-claim',planSha256:sha256,source:plan.source,processInstanceId:ticket.processInstanceId,incarnation:ticket.incarnation,nonce:ticket.nonce},{exclusive:true});

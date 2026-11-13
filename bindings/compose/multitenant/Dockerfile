@@ -21,7 +21,10 @@ FROM node:24.22.1-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d
 WORKDIR /opt/app
 ENV NODE_ENV=production
 ARG NS_SOURCE_COMMIT
+ARG NS_DEPLOY_COMMIT
 ENV NS_SOURCE_COMMIT=${NS_SOURCE_COMMIT}
 COPY --from=build --chown=node:node /opt/app /opt/app
+# Immutable image-local binding, not the host-only preparation overlay marker.
+RUN node -e 'const f=require("node:fs"),pin=k=>{const v=process.env[k];if(v&&!/^[a-f0-9]{40}$/.test(v))throw Error("IMAGE_SOURCE_INVALID");return v||null;};f.writeFileSync("deploy/multitenant/.image-source.json",JSON.stringify({version:1,coreCommit:pin("NS_SOURCE_COMMIT"),deployCommit:pin("NS_DEPLOY_COMMIT")})+"\n",{mode:0o444,flag:"wx"});f.chmodSync("deploy/multitenant/.image-source.json",0o444);'
 USER node
 CMD ["node", "deploy/multitenant/entrypoint.js", "api"]

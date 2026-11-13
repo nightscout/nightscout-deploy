@@ -51,7 +51,7 @@ function assertCleanSource (root, expected) {
 }
 function configuration () {
   const source = assertCleanSource(ROOT);
-  const config = JSON.parse(execFileSync('docker', ['compose', '--env-file', '.env', '-f', 'compose.yaml', 'config', '--format', 'json'], {cwd: __dirname, encoding: 'utf8'}));
+  const config = JSON.parse(execFileSync('docker', ['compose', '--project-name', require('./project').read(__dirname), '--env-file', '.env', '-f', 'compose.yaml', 'config', '--format', 'json'], {cwd: __dirname, encoding: 'utf8'}));
   if (config.services.api.build.args.NS_SOURCE_COMMIT !== source) throw new Error('PREPARED_SOURCE_COMMIT_CHANGED');
   return {source, config, marker: overlay(ROOT)};
 }
@@ -77,7 +77,7 @@ function build () {
       extractDeployTree(marker, deployDirectory);
       labels.push('--label', 'org.nightscout.deploy.revision=' + marker.deployCommit);
     }
-    execFileSync('docker', ['build', '--pull=false', '--build-arg', 'NS_SOURCE_COMMIT=' + source,
+    execFileSync('docker', ['build', '--pull=false', '--build-arg', 'NS_SOURCE_COMMIT=' + source, '--build-arg', 'NS_DEPLOY_COMMIT=' + (marker?.deployCommit || source),
       ...labels, '-t', config.services.api.image,
       '-f', 'deploy/multitenant/Dockerfile', '.'], {cwd: context, stdio: 'inherit', timeout: 1200000});
   } finally { fs.rmSync(temporary, {recursive: true, force: true}); }

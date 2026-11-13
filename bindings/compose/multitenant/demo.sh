@@ -2,10 +2,10 @@
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 
-# Deliberately fixed project: commands never search other projects or remove
-# volumes implicitly. For another instance, use a separate checkout and invoke
-# Compose with its own explicit --project-name.
-compose=(docker compose --project-name nightscout-multitenant-demo --env-file .env -f compose.yaml)
+# Identity is prepared explicitly, never inherited from ambient Compose variables.
+# Legacy state without NS_DEMO_PROJECT retains the original fixed project.
+project=$(node project.js)
+compose=(docker compose --project-name "$project" --env-file .env -f compose.yaml)
 realtime_services="realtime"
 evaluator_services="evaluator"
 if [ -f .env ]; then

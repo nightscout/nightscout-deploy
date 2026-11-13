@@ -12,6 +12,7 @@ function main(args){
  const directory=path.join(args[0],'connection-budget'),config=F.read(path.join(directory,'controller-config.json')),plan=F.read(path.join(directory,'plan.json'));
  need(plan.source?.coreCommit===B.REVIEWED_CORE_COMMIT,'CONNECTION_BUDGET_UNREVIEWED_SOURCE');
  need(B.hash((({sha256,...b})=>b)(plan))===plan.sha256&&JSON.stringify(config.source)===JSON.stringify(plan.source),'CONNECTION_CONTROLLER_PLAN');
+ need(config.project===require('./project').read(config.workingDirectory),'CONNECTION_CONTROLLER_PROJECT_CHANGED');
  need(config.fileDigests&&[...config.composeFiles,path.join(config.workingDirectory,'.env'),path.join(directory,'postgres-ready.sh')].every(file=>{const stat=fs.lstatSync(file);return stat.isFile()&&!stat.isSymbolicLink()&&fs.realpathSync(file)===file&&config.fileDigests[file]===crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');}),'CONNECTION_CONTROLLER_PREPARED_FILES_CHANGED');
  const build=require('./build'),sourceRoot=path.resolve(__dirname,'../..');need(build.assertCleanSource(sourceRoot)===plan.source.coreCommit&&build.overlay(sourceRoot)?.deployCommit===plan.source.deployCommit,'CONNECTION_CONTROLLER_HOST_SOURCE_CHANGED');
  const complete=F.read(path.join(args[0],'bootstrap','complete.json'));need(complete.sourceCommit===plan.source.coreCommit&&complete.deployCommit===plan.source.deployCommit,'CONNECTION_CONTROLLER_BOOTSTRAP_SOURCE');
@@ -34,6 +35,7 @@ function main(args){
  }
  need(args[1]==='observe'?args.length===2:args.length===3&&plan.slots.some(s=>s.processInstanceId===args[2]),'CONNECTION_ADMISSION_UNPLANNED_WORKER');
  const custody=F.read(path.join(directory,'custody.json'));need(JSON.stringify(custody.expected.source)===JSON.stringify(plan.source),'CONNECTION_CONTROLLER_PLAN');
+ need(custody.expected.project===config.project&&custody.expected.workingDirectory===config.workingDirectory,'CONNECTION_CONTROLLER_PROJECT_CHANGED');
  const ports=require('./connection-budget-docker').create({directory,plan,...custody});
  return require('./connection-budget-controller').create({directory,plan,expected:custody.expected,ports})[args[1]](args[2]);
 }

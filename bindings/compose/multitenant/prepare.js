@@ -9,12 +9,15 @@ const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 const base = __dirname;
 function prepare (args) {
-  const options = {bind: '127.0.0.1', port: '18080', state: path.join(base, '.state')};
+  const project = require('./project');
+  const options = {project:project.DEFAULT, bind: '127.0.0.1', port: '18080', state: path.join(base, '.state')};
   for (let i = 0; i < args.length; i += 2) {
     const key = args[i].slice(2);
-    if (!['--bind', '--port', '--state', '--connection-budget'].includes(args[i]) || !args[i + 1]) throw new Error('Invalid preparation arguments');
+    if (!['--bind', '--port', '--state', '--connection-budget', '--project', '--backend-subnet', '--edge-subnet'].includes(args[i]) || !args[i + 1]) throw new Error('Invalid preparation arguments');
     options[key] = args[i + 1];
   }
+  project.validate(options.project);
+  const selectedNetworks=require('./networks').select(options['backend-subnet'],options['edge-subnet']);
   if (!['127.0.0.1', '169.254.1.1'].includes(options.bind) ||
       !Object.values(os.networkInterfaces()).flat().some(row => row.address === options.bind)) {
     throw new Error('Bind address must already exist: 127.0.0.1 or 169.254.1.1');
@@ -54,7 +57,7 @@ function prepare (args) {
     write(path.join(state,'connection-budget/preparation.json'),JSON.stringify({kind:'source-derived-connection-sizing',source:{coreCommit:source,deployCommit},requiredMaximum:budgetResolution.requiredMaximum,configuredMaximum:connectionBudget.resource.serverMaximum,derived:budgetResolution.derived,authorization:'SOURCE_ONLY_NOT_CAPACITY'})+'\n');
     const services=budgetResolution.slots;
     write(path.join(state,'compose.connection-budget.yaml'),require('./connection-budget-compose').render({state,services,serverMaximum:budgetResolution.derived?budgetResolution.requiredMaximum:null}));
-    write(path.join(state,'connection-budget/controller-config.json'),JSON.stringify({project:'nightscout-multitenant-demo',workingDirectory:base,source:{coreCommit:source,deployCommit},composeFiles:[path.join(base,'compose.yaml'),path.join(state,'compose.replicas.yaml'),...(selectedEvaluator?[path.join(state,'compose.evaluator.yaml')]:[]),...(selectedRealtime?[path.join(state,'compose.realtime.yaml')]:[]),path.join(state,'compose.connection-budget.yaml')],image:process.env.NS_DEMO_IMAGE||'nightscout-multitenant-demo:local'})+'\n');
+    write(path.join(state,'connection-budget/controller-config.json'),JSON.stringify({project:options.project,workingDirectory:base,source:{coreCommit:source,deployCommit},composeFiles:[path.join(base,'compose.yaml'),path.join(state,'compose.replicas.yaml'),...(selectedEvaluator?[path.join(state,'compose.evaluator.yaml')]:[]),...(selectedRealtime?[path.join(state,'compose.realtime.yaml')]:[]),path.join(state,'compose.connection-budget.yaml')],image:process.env.NS_DEMO_IMAGE||'nightscout-multitenant-demo:local'})+'\n');
   }
   write(path.join(state, 'bootstrap/postgres-password'), crypto.randomBytes(32).toString('hex') + '\n');
   const tls = path.join(state, 'tls');
@@ -81,8 +84,8 @@ function prepare (args) {
     write(path.join(state, 'compose.evaluator.yaml'), evaluator.compose(selectedEvaluator, path.join(base, 'compose.yaml')));
   }
   write(path.join(state, 'edge/nginx.conf'), require('./edge').render(fs.readFileSync(path.join(base, 'nginx.compose.conf'), 'utf8'), { replicas: apiReplicas, realtime: !!selectedRealtime }));
-  write(path.join(state, 'compose.replicas.yaml'), replicas.compose(apiReplicas, path.join(base, 'compose.yaml')));
-  write(path.join(base, '.env'), 'NS_DEPLOY_COMMIT=' + deployCommit + '\nNS_API_REPLICAS=' + apiReplicas + '\n' +
+  write(path.join(state, 'compose.replicas.yaml'), replicas.compose(apiReplicas, path.join(base, 'compose.yaml'))+require('./networks').render(selectedNetworks));
+  write(path.join(base, '.env'), 'NS_DEPLOY_COMMIT=' + deployCommit + '\nNS_DEMO_PROJECT=' + options.project + '\nNS_API_REPLICAS=' + apiReplicas + '\n' +
     (selectedRealtime ? 'NS_REALTIME_WORKERS=' + selectedRealtime.workers + '\nNS_REALTIME_SHARDS=' + selectedRealtime.shards + '\n' : '') +
     (selectedEvaluator ? 'NS_EVALUATOR_WORKERS=' + selectedEvaluator.workers + '\n' : '') +
     (connectionBudget?'NS_CONNECTION_BUDGET=1\n':'') + 'NS_M7_DIAGNOSTICS=' + diagnostics.enabled + '\nNS_M7_DIAGNOSTICS_INTERVAL_MS=' + diagnostics.interval + '\n' +

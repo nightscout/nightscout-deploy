@@ -7,6 +7,7 @@ x-app: &app
     dockerfile: deploy/multitenant/Dockerfile
     args:
       NS_SOURCE_COMMIT: ${NS_SOURCE_COMMIT:?Run prepare.js first}
+      NS_DEPLOY_COMMIT: ${NS_DEPLOY_COMMIT:-}
   init: true
   restart: "no"
   environment:

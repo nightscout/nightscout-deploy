@@ -9,7 +9,7 @@ const role = process.argv[2];
 const roles = {api: {port: 1337}, realtime: {port: 1339}, evaluator: {}, 'tenant-admin': {port: 1341}};
 async function main () {
   if (role === 'admin') {
-    require('./load-env');
+    require('./service-environment').applyHealth();
     const response = await fetch('http://' + process.env.ADMIN_HOSTNAME + ':' + process.env.ADMIN_PORT + '/v1/openapi.json', {signal: AbortSignal.timeout(1500)});
     if (!response.ok || typeof (await response.json()).openapi !== 'string') throw new Error();
     return;
@@ -20,7 +20,7 @@ async function main () {
     return;
   }
   if (!Object.hasOwn(roles, role)) throw new Error();
-  require('./load-env');
+  require('./service-environment').applyHealth();
   const spec = roles[role];
   const own = require('../../lib/server/internal-api/listener-config').resolve([role], process.env);
   const endpoint = own.peer(role, { maxBytes: 1048576, timeoutMs: 1500 });

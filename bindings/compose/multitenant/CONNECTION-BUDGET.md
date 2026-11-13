@@ -104,6 +104,37 @@ is added and the executable/process-epoch checks remain intact. The same platfor
 control measured numeric self birth, a matching live OS process and normal backend
 exit; full application runtime acceptance remains unmeasured.
 
+## Explicit instance preparation and image identity
+
+`prepare.js --project <name> --backend-subnet <CIDR> --edge-subnet <CIDR>` selects
+an instance before any state or custody is created. Project names use the same
+bounded lowercase identifier contract as controller custody. The optional subnet
+pair must be canonical, wholly RFC1918 and disjoint. They enter the existing
+replica overlay before its digest is recorded. Omitted options retain the legacy
+project and Docker network allocation. Source validation does not prove that
+ports or ranges are free: the episode owner must freshly inspect Docker networks,
+listener ports, routing and roster address capacity before allocation. Ambient
+Compose project variables do not override prepared identity. Every shipped
+lifecycle/build/controller path supplies the prepared project explicitly.
+
+The image builder supplies validated core and deployment build arguments. The
+Dockerfile writes fixed public `.image-source.json` metadata, mode0444, in the
+final root stage. Selected installation compares its exact pins/schema before
+claiming a ticket; missing, null, stale or mismatching metadata refuses. The host
+`.overlay.json` is preparation metadata, not an image file. Unselected direct
+builds may carry null pins and cannot enter selected admission. Saved-image
+qualification must inspect this generated file separately from Git-tracked files.
+
+Operational health reads only the existing private listener/admin/operation
+metadata through a bounded reader. It neither copies database environment values
+nor installs admission or claims tickets. Actual role entrypoints and Node
+preloads still apply the full validated environment and unconditionally install
+selected admission once. Private NODE_OPTIONS/NODE_PATH/preload overrides remain
+forbidden. Docker health inherits container Config.Env, not the running server's
+mutated environment: the reviewed Compose commands contain no Node preload for
+health, and qualified image environment contains no preload override. The actual
+native episode must verify these selected container commands/environment too.
+
 ## Controlled lifecycle
 
 After the normal explicit bootstrap completes, use:
