@@ -1,23 +1,27 @@
 # Fresh common control recovery contract
 
-SOURCE PROPOSAL FOR INDEPENDENT REVIEW. Runtime integration is open. This file
+SOURCE CANDIDATE FOR INDEPENDENT REVIEW. Full runtime integration is open. This file
 freezes the common boundary before collector or realtime bindings consume it.
 It grants no executable source, image, resource or native-plan selection.
 
 ## Versions and fixed classes
 
 Fresh profile2 compiles plan2 with `lifecycleOperator.version=2` and creates
-ledger3 exclusively. Legacy admission tickets remain core version1. Fresh host plan2 is distinct from
-the core physical admission ticket/plan2 contract: the proposed fresh ticket2
-adds exactly `workerDatabase:{database,databaseOid}` at its top level. Database
-uses the existing lowercase identifier grammar; databaseOid is a canonical
-decimal STRING in 1..4294967295, no number, zero or leading zeros. Core owner
-next_pair is implementing the separately reviewed fixed 1000ms same-admitted-
-backend identity gate before Promise/callback/connect-event/public-query
-exposure; no generic callback or extra backend. Actual companion worker
-integration remains HELD until its immutable core contract is approved. Current
-controller and worker runtime explicitly refuse host plan2 before effects. No pending core fields/API are
-assumed in executable companion code. Lifecycle and commissioning typed action intents,
+ledger3 exclusively. Legacy physical admission tickets remain core version1.
+Fresh host plan2 is distinct from the core physical admission ticket/plan2 contract.
+Fresh ticket2 adds exactly `workerDatabase:{database,databaseOid}` at its top level.
+Database uses the existing lowercase identifier grammar; databaseOid is a canonical
+decimal STRING in 1..4294967295, no number, zero or leading zeros. Approved core
+ab95fbb9f3b60f6de21f570477a23f19526c850f implements the fixed 1000ms same-admitted-
+backend identity gate before Promise/callback/connect-event/public-query exposure;
+no generic callback or extra backend. Companion generation and worker runtime now
+carry and compare the exact cloned tuple before one-use claim/core admission.
+Fixed class ticket construction uses the same physical2 fields. The lifecycle
+entry supports that tuple for inspect/resume/clear-operations; capture/restore
+explicitly refuse before admission until their artifact runtime joins. Fresh
+controller/bootstrap dispatch remains HELD. Source fixtures exercise approved
+ab95 APIs with synthetic source metadata. The selected d003 source/image pair is
+unchanged and is not a runnable fresh2 selection. Lifecycle and commissioning typed action intents,
 completion receipts and observation/stored-count envelopes use version2. The separately versioned
 realtime caller intent is exactly version1 under the fresh class capability2. No
 existing ledger is upgraded, recreated or reset. Mixed tuples refuse before
@@ -51,12 +55,14 @@ Every fixed class principal equals BOTH this worker database name and OID; match
 classes only to each other is insufficient. URL equality is not actual backend
 OID proof. Each class's existing singlePool verifier checks its actual admitted
 backend name/OID against its sealed principal; class-to-worker equality makes the
-same worker DB constraint mandatory. Actual universal worker-backend verification
-awaits the independent immutable core physical ticket2 gate. Missing/mixed identity
+same worker DB constraint mandatory. The physical2 core gate verifies actual worker backend identity when the
+approved API is exercised; selected source/image execution remains unselected. Missing/mixed identity
 refuses; no old ledger upgrade.
 
 Each principal is exactly `{role,roleOid,database,databaseOid}`: names and decimal
-OID strings are read from sealed private custody. Commissioning has a separate
+OID strings are read from sealed private custody. Every authority-bearing regex
+value must be a primitive string; regex coercion of arrays/objects is refused.
+Source, principal, container, descriptor and ledger row objects must not be arrays. Commissioning has a separate
 bootstrap DDL principal, never the ordinary operator credential. The three class
 entries bind to the same resource and budget. Names/OIDs, source/image, epoch,
 roster and action documents cannot be supplied by ordinary intent fields.
@@ -80,7 +86,7 @@ Ledger root remains `{version:3,planSha256,resourceEpoch,slots,controlLeases}`.
 ```
 
 `state` is ISSUED, BOUND, UNKNOWN or CLOSED. Incarnation and nonce are distinct
-fresh 32-character lowercase hex values. Intent digest is 64-character lowercase
+fresh primitive-string 32-character lowercase hex values. Intent digest is 64-character lowercase
 hex of the class-specific validated immutable action. Class-specific bindings
 retain that action separately; the common allocator never dispatches it. Source
 is the sealed plan source. Principal equals that class's sealed plan principal.

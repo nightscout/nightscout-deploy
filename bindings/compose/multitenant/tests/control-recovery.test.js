@@ -56,3 +56,38 @@ test('worker tag and duplicate-generation ablations go red; restored rejects bef
   assert.throws(()=>oracle(mutant(from,to)),/Missing expected exception/);oracle(C);
  }
 });
+
+const json=value=>JSON.parse(JSON.stringify(value));
+function typedOracle(impl=C){
+ const f=fixture(impl),row=f.allocate();row.incarnation=[row.incarnation];row.nonce=[row.nonce];
+ assert.throws(()=>impl.validate(json(f.plan),json(f.book)),/CONTROL_RECOVERY_ROW/);
+ const g=workerFixture(impl);g.plan.slots[0].maximumOutstandingGenerations=2;const {sha256,...body}=g.plan;g.plan.sha256=B.hash(body);g.book.planSha256=g.plan.sha256;
+ g.book.slots.api=[0,1].map(()=>({...json(g.row),incarnation:[g.row.incarnation],nonce:[g.row.nonce]}));
+ assert.throws(()=>impl.known(json(g.plan),json(g.book)),/CONTROL_RECOVERY_WORKER_ROW/);
+}
+test('serialized array identities refuse before managed authority; equal-content array generations cannot evade uniqueness',()=>{typedOracle();});
+test('every common authority regex requires primitive strings after JSON roundtrip',()=>{
+ for(const field of ['incarnation','nonce','intentSha256'])for(const malformed of [value=>[value],()=>null,()=>({}),()=>17]){
+  const f=fixture(),row=f.allocate();row[field]=malformed(row[field]);assert.throws(()=>C.validate(json(f.plan),json(f.book)),/CONTROL_RECOVERY_ROW/);
+ }
+ for(const field of ['incarnation','nonce']){const f=workerFixture();f.row[field]=[f.row[field]];assert.throws(()=>C.known(json(f.plan),json(f.book)),/WORKER_ROW/);}
+ for(const field of ['role','database','roleOid','databaseOid']){const f=fixture();for(const c of C.CLASSES)f.plan.controlRecovery.classes[c].principal[field]=[f.plan.controlRecovery.classes[c].principal[field]];const {sha256,...body}=f.plan;f.plan.sha256=B.hash(body);assert.throws(()=>C.ledger(json(f.plan)),/PRINCIPAL/);}
+ for(const field of ['cid','project','imageId']){const f=fixture(),row=f.allocate();f.bind(row);row.container[field]=[row.container[field]];assert.throws(()=>C.validate(json(f.plan),json(f.book)),/CONTAINER/);}
+ for(const field of ['coreCommit','deployCommit']){const f=fixture();f.plan.source[field]=[f.plan.source[field]];const {sha256,...body}=f.plan;f.plan.sha256=B.hash(body);assert.throws(()=>C.ledger(json(f.plan)),/PLAN/);}
+ const f=fixture();assert.throws(()=>C.allocate(f.plan,f.book,json({class:'lifecycle-operator',intentSha256:['e'.repeat(64)]})),/DESCRIPTOR/);assert.throws(()=>C.tag('lifecycle-operator',['a'.repeat(32)]),/CLASS/);
+});
+test('removing primitive string predicate fails original serialized typed-row refusal oracle; restored passes',()=>{
+ const mutantC=mutant("const matches=(pattern,value)=>typeof value==='string'&&pattern.test(value);","const matches=(pattern,value)=>pattern.test(value);");
+ assert.throws(()=>typedOracle(mutantC),/Missing expected exception/);typedOracle(C);
+});
+
+test('all fixed class tickets carry cloned physical2 database and exact capability/control/gate tuples',()=>{for(const c of C.CLASSES){const f=fixture(),r=f.allocate(c),expected={source:f.plan.source,project:'synthetic',workingDirectory:'/private/synthetic',imageId:'sha256:'+'d'.repeat(64)};f.plan.resource.pgResourceId='synthetic-pg';f.plan.resource.aliases=['synthetic-pg:5432'];const {sha256,...body}=f.plan;f.plan.sha256=B.hash(body);f.book.planSha256=f.plan.sha256;r.planSha256=f.plan.sha256;
+ const t=C.ticket(f.plan,f.book,r,expected,{'action.json':'a'.repeat(64)});assert.equal(t.version,2);assert.deepEqual(t.workerDatabase,f.plan.workerDatabase);assert.notEqual(t.workerDatabase,f.plan.workerDatabase);assert.deepEqual(t.capabilities,C.capability(c));assert.equal(t.control.class,c);assert(!Object.hasOwn(t.control,'intent'));assert.equal(t.control.principal.databaseOid,t.workerDatabase.databaseOid);t.workerDatabase.databaseOid='999';assert.equal(f.plan.workerDatabase.databaseOid,'16384');f.bind(r);assert.deepEqual(C.gate(f.plan,f.book,r),{version:2,class:c,incarnation:r.incarnation,nonce:r.nonce,intentSha256:r.intentSha256,container:r.container});}});
+test('common physical closure requires receipt2, core quiescence, exact container and same-epoch zero tags; UNKNOWN never closes',()=>{
+ function candidate(){const f=fixture();Object.assign(f.plan.resource,{pgResourceId:'synthetic-pg',serverMaximum:20,reserved:{superuser:3,other:0}});f.plan.resource.allowances.unmanaged=0;const {sha256,...body}=f.plan;f.plan.sha256=B.hash(body);f.book=C.ledger(f.plan);const row=C.allocate(f.plan,f.book,{class:'lifecycle-operator',intentSha256:'e'.repeat(64)});C.bound(f.plan,f.book,row,{source:f.plan.source,project:'synthetic',workingDirectory:'/private/synthetic',imageId:'sha256:'+'d'.repeat(64),cid:'a'.repeat(64),startedAt:'start',service:row.class},{source:f.plan.source,project:'synthetic',workingDirectory:'/private/synthetic',imageId:'sha256:'+'d'.repeat(64)});
+ const quiescence={processInstanceId:row.class,incarnation:row.incarnation,nonce:row.nonce,planSha256:f.plan.sha256,source:f.plan.source,constructorsFrozen:true,pendingConnects:0,liveConnections:0,unconfirmedCleanup:false,cleanShutdown:true,tags:row.tags};
+ const receipt={version:2,kind:'controlled-operation-complete',class:row.class,incarnation:row.incarnation,nonce:row.nonce,planSha256:f.plan.sha256,source:f.plan.source,intentSha256:row.intentSha256,container:row.container,outcome:'COMPLETED',result:{},quiescence};
+ const observation={resource:{pgResourceId:'synthetic-pg',systemIdentifier:'123',postmasterStartedAt:'epoch',serverMaximum:20,superuserReserved:3,otherReserved:0,unmanagedClients:0,bootstrapClosed:true},tags:row.tags.map(applicationName=>({applicationName,count:0}))};return {...f,row,receipt,observation};}
+ for(const change of [f=>f.receipt.version=1,f=>f.receipt.class='realtime-recovery',f=>f.receipt.quiescence.pendingConnects=1,f=>f.receipt.quiescence.unconfirmedCleanup=true,f=>f.receipt.quiescence.cleanShutdown=false,f=>f.receipt.quiescence.tags=[],f=>f.observation.tags[0].count=1,f=>f.observation.resource.postmasterStartedAt='other',f=>C.uncertain(f.plan,f.book,f.row)]){const f=candidate();change(f);assert.throws(()=>C.close(f.plan,f.book,f.row,f.receipt,f.row.container,f.observation));assert.notEqual(f.row.state,'CLOSED');}
+ const f=candidate();C.close(f.plan,f.book,f.row,f.receipt,f.row.container,f.observation);assert.equal(f.row.state,'CLOSED');C.validate(f.plan,f.book);assert(!Object.hasOwn(f.row,'outcome'),'EXACT_LEDGER_ROW_RETAINS_NO_RECEIPT_FIELDS');
+});
