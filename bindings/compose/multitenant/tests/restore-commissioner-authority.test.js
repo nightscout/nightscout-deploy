@@ -14,3 +14,22 @@ test('missing/extra/case/types/duplicate catalogue rows and malformed baseline r
 test('observer privilege-fence ablation fails its actual verifier oracle; restored fixed verifier refuses',()=>{const file=require.resolve('../restore-commissioner-authority'),source=fs.readFileSync(file,'utf8'),changed=source.replace('raw.observer===false','true');assert.notEqual(changed,source);const m=new Module(file,module);m.filename=file;m.paths=Module._nodeModulePaths(path.dirname(file));m._compile(changed,file);const oracle=implementation=>{const value=valid();value.observer=true;assert.throws(()=>implementation.validate(value,config,principal),/RESTORE_COMMISSION_PRIVILEGES/);};assert.throws(()=>oracle(m.exports),/Missing expected exception/);oracle(A);});
 
 test('unquoted camel result alias breaks actual verifier/recording projection; restored quoted projection passes',async()=>{const file=require.resolve('../restore-commissioner-authority'),source=fs.readFileSync(file,'utf8'),changed=source.replace('AS "applicationFunctions"','AS applicationFunctions');assert.notEqual(changed,source);const m=new Module(file,module);m.filename=file;m.paths=Module._nodeModulePaths(path.dirname(file));m._compile(changed,file);const oracle=implementation=>implementation.verify({async query(sql){return {rows:[require('./restore-commissioner-authority-fixture').recorded(sql,config,principal)]};}},config,principal);await assert.rejects(oracle(m.exports),/RESTORE_COMMISSION_PRIVILEGES/);await oracle(A);});
+
+// Source recording of legal predicate reordering, not a PostgreSQL evaluator or
+// native reproduction. The retained root R5 native experiment establishes the
+// original 42809. This control ensures the function's argument type is protected
+// inside CASE even if the outer WHERE relkind conjunct is evaluated later.
+function sequenceProjection(sql,rows){
+ const expression=sql.split('\n').find(line=>line.includes(' AS sequences,')).match(/n\.nspname !~ '\^pg_' AND (.*?)\) AS sequences,/s)?.[1];assert(expression,'EXACT_SEQUENCE_PROJECTION');
+ const guarded=expression==="CASE WHEN c.relkind='S' THEN has_sequence_privilege(c.oid,'USAGE,SELECT,UPDATE') ELSE false END";
+ assert(guarded||expression==="has_sequence_privilege(c.oid,'USAGE,SELECT,UPDATE')",'FIXED_SEQUENCE_PRIVILEGE_POLICY');
+ const calls=[];function privilege(row){calls.push(row.relation);if(row.relkind!=='S')throw Object.assign(Error('recording relation is not a sequence'),{code:'42809'});return row.effectiveSequencePrivilege;}
+ const selected=rows.map(row=>({row,allowed:guarded?(row.relkind==='S'?privilege(row):false):privilege(row)}));
+ return{calls,count:selected.filter(({row,allowed})=>row.relkind==='S'&&!row.namespace.startsWith('pg_')&&allowed).length};
+}
+test('CASE guards sequence function itself for table/index rows; accessible sequence still refuses allowlist',()=>{
+ const rows=[{namespace:'synthetic_window',relation:'tenant_lifecycle_windows',relkind:'r'},{namespace:'pg_toast',relation:'synthetic_toast_index',relkind:'i'},{namespace:'synthetic_window',relation:'synthetic_sequence',relkind:'S',effectiveSequencePrivilege:false}];
+ assert.deepEqual(sequenceProjection(A.SQL,rows),{calls:['synthetic_sequence'],count:0});
+ const denied=valid();denied.sequences=sequenceProjection(A.SQL,[...rows,{namespace:'synthetic_window',relation:'accessible_sequence',relkind:'S',effectiveSequencePrivilege:true}]).count;assert.equal(denied.sequences,1);assert.throws(()=>A.validate(denied,config,principal),/RESTORE_COMMISSION_PRIVILEGES/);
+ const original=A.SQL.replace("CASE WHEN c.relkind='S' THEN has_sequence_privilege(c.oid,'USAGE,SELECT,UPDATE') ELSE false END","has_sequence_privilege(c.oid,'USAGE,SELECT,UPDATE')");assert.notEqual(original,A.SQL);assert.throws(()=>sequenceProjection(original,rows),error=>error.code==='42809');assert.equal(sequenceProjection(A.SQL,rows).count,0);
+});
