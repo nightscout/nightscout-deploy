@@ -54,7 +54,7 @@ function prepare (args) {
   if(connectionBudget){
     fs.mkdirSync(path.join(state,'connection-budget'),{mode:0o700});
     fs.copyFileSync(path.join(base,'postgres-ready.sh'),path.join(state,'connection-budget/postgres-ready.sh'),fs.constants.COPYFILE_EXCL);fs.chmodSync(path.join(state,'connection-budget/postgres-ready.sh'),0o444);
-    if(options['lifecycle-operator'])write(path.join(state,'connection-budget/operator-enabled.json'),JSON.stringify({version:1,kind:'fresh-lifecycle-operator'})+'\n');
+    if(options['lifecycle-operator'])write(path.join(state,'connection-budget/operator-enabled.json'),JSON.stringify({version:connectionBudget.version,kind:'fresh-lifecycle-operator'})+'\n');
     write(path.join(state,'connection-budget/profile.json'),JSON.stringify(connectionBudget)+'\n');
     write(path.join(state,'connection-budget/preparation.json'),JSON.stringify({kind:'source-derived-connection-sizing',source:{coreCommit:source,deployCommit},requiredMaximum:budgetResolution.requiredMaximum,configuredMaximum:connectionBudget.resource.serverMaximum,derived:budgetResolution.derived,authorization:'SOURCE_ONLY_NOT_CAPACITY'})+'\n');
     const services=budgetResolution.slots;

@@ -12,12 +12,17 @@ function prepare({options,docs,writePrivate}){
  let plan=B.compile(profile,docs,{source:{coreCommit:options.sourceCommit,deployCommit:options.deployCommit},poolConfig:require('../../lib/server/serve/pool-config')});
  if(plan.version===2){const {sha256,...body}=plan;const workerDatabase=require('./worker-database').seal(options.workerDatabase,docs);plan={...body,workerDatabase};plan={...plan,sha256:B.hash(plan)};}
  if(options.lifecycleOperator){
-  need(plan.version===1,'CONTROL_RECOVERY_FRESH_RUNTIME_NOT_INTEGRATED');
+  need([1,2].includes(plan.version),'CONTROL_RECOVERY_VERSION');
+  need(options.lifecycleOperatorPrincipal&&plan.resource.allowances.controlRecovery>=1,'LIFECYCLE_OPERATOR_PRINCIPAL');
+  if(plan.version===2)require('./control-recovery-bootstrap').identities(plan,options);
   const fs=require('node:fs'),crypto=require('node:crypto'),digest=file=>crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
   const placement=!!require('./realtime-workers').selection();
-  const lifecycleOperator={version:1,principal:options.lifecycleOperatorPrincipal,tenants:docs.locks.map(r=>r.tenant),placement,files:{'env.json':digest(path.join(options.output,'ops','env.json')),'config.json':digest(path.join(options.output,'ops','config.json')),...(placement?{'placement.json':digest(path.join(options.output,'placement','backend.json'))}:{})}};
+  const lifecycleOperator={version:plan.version,principal:options.lifecycleOperatorPrincipal,tenants:docs.locks.map(r=>r.tenant),placement,files:{'env.json':digest(path.join(options.output,'ops','env.json')),'config.json':digest(path.join(options.output,'ops','config.json')),...(placement?{'placement.json':digest(path.join(options.output,'placement','backend.json'))}:{})}};
   need(lifecycleOperator.principal&&plan.resource.allowances.controlRecovery>=1,'LIFECYCLE_OPERATOR_PRINCIPAL');
-  const {sha256,...body}=plan;plan={...body,lifecycleOperator};plan={...plan,sha256:B.hash(plan)};
+  const {sha256,...body}=plan;plan={...body,lifecycleOperator};
+  if(plan.version===2)plan=require('./control-recovery-bootstrap').seal(plan,options);
+  plan={...plan,sha256:B.hash(plan)};
+  if(plan.version===2)require('./control-recovery').ledger(plan);
  }
  for(const env of [...Object.values(docs.environments),docs.admin.environment,docs.feed.environment,docs.uiEnvironment])env.NS_SOURCE_COMMIT=options.sourceCommit;
  const own={uid:options.uid,gid:options.gid},base=path.join(options.output,'connection-budget');
@@ -30,7 +35,10 @@ function prepare({options,docs,writePrivate}){
  // directory. Socket edge shares UI authority documents, never its slot claim.
  const fs=require('node:fs');
  for(const slot of plan.slots){const dir=path.join(base,slot.processInstanceId,'claims');fs.mkdirSync(dir,{recursive:true,mode:0o700});fs.chownSync(path.dirname(dir),options.uid,options.gid);fs.chownSync(dir,options.uid,options.gid);}
- if(options.lifecycleOperator){fs.mkdirSync(path.join(base,'lifecycle-operator'),{mode:0o700});fs.chownSync(path.join(base,'lifecycle-operator'),options.uid,options.gid);writePrivate(path.join(base,'ledger.json'),require('./lifecycle-operator').ledger(plan),own,{compact:true});}
+ if(options.lifecycleOperator){
+  for(const name of plan.version===2?['lifecycle-operator','restore-commissioner','realtime-recovery','artifacts','artifacts/captures','artifacts/catalogue']:['lifecycle-operator']){fs.mkdirSync(path.join(base,name),{mode:0o700});fs.chownSync(path.join(base,name),options.uid,options.gid);}
+  writePrivate(path.join(base,'ledger.json'),(plan.version===2?require('./control-recovery'):require('./lifecycle-operator')).ledger(plan),own,{compact:true});
+ }
  return plan;
 }
 module.exports={prepare};
