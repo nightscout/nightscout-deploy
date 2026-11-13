@@ -49,7 +49,7 @@ async function run(command='resume',flags={}){
    throw Error('Unexpected fixture SQL '+text);
   }
  }
- const source={coreCommit:'a'.repeat(40),deployCommit:'b'.repeat(40)},expected={source,project:'synthetic',workingDirectory:'/synthetic',imageId:'sha256:'+'c'.repeat(64)};
+ const source=flags.admittedTicket?.source||{coreCommit:'a'.repeat(40),deployCommit:'b'.repeat(40)},expected={source,project:'synthetic',workingDirectory:'/synthetic',imageId:'sha256:'+'c'.repeat(64)};
  const intent={version:1,command,tenant:flags.wrongTenant?CLAIM:A,...(command==='resume'?{claimId:flags.wrongClaim?OP:CLAIM}:{})};
  const row={incarnation:'d'.repeat(32),nonce:'e'.repeat(32),intent,intentSha256:B.hash(intent)},plan={source,sha256:'f'.repeat(64),resource:{pgResourceId:'synthetic-pg',aliases:['synthetic-pg:5432'],systemIdentifier:'123',postmasterStartedAt:'epoch'},lifecycleOperator:{principal:{role:'synthetic_operator',roleOid:'31',database:'synthetic',databaseOid:'16384'}}};
  let ticket=O.ticket(plan,row,expected,{});const container={...expected,service:O.NAME,cid:'a'.repeat(64),startedAt:'start'};let gate={version:1,incarnation:row.incarnation,nonce:row.nonce,intentSha256:row.intentSha256,container};
@@ -58,6 +58,7 @@ async function run(command='resume',flags={}){
   const freshPlan={...freshBody,sha256:B.hash(freshBody)},book=C.ledger(freshPlan),freshRow=C.allocate(freshPlan,book,{class:O.NAME,intentSha256:B.hash(intent)});
   ticket=C.ticket(freshPlan,book,freshRow,expected,{'action.json':'1'.repeat(64)});C.bound(freshPlan,book,freshRow,container,expected);gate=C.gate(freshPlan,book,freshRow);
  }
+ if(flags.admittedTicket){ticket=structuredClone(flags.admittedTicket);gate=structuredClone(flags.admittedGate);}
  const credential=new URL('postgresql://'+plan.resource.aliases[0]);credential.username=plan.lifecycleOperator.principal.role;credential.password=require('node:crypto').randomBytes(16).toString('hex');credential.pathname='/'+plan.lifecycleOperator.principal.database;credential.searchParams.set('sslmode','disable');
  if(flags.wrongSource)ticket.source={...source,coreCommit:'b'.repeat(40)};if(flags.wrongImage)gate.container.imageId='sha256:'+'e'.repeat(64);if(flags.workerTicket)ticket.processInstanceId='api';
  if(flags.malformed){const keys=flags.malformed.split('.'),field=keys.pop();let target=keys.shift()==='gate'?gate:ticket;for(const key of keys)target=target[key];target[field]=[target[field]];}
