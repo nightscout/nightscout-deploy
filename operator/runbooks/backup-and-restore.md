@@ -34,8 +34,10 @@ Tell the tenant's users first: the site is closed for the length of the restore.
 1. **Pre-check.** `drills/precheck.sh <tenant>` must print `"start":true`. A request that is being
    served has an unfinished marker while it runs, so the pre-check re-reads a non-zero count for a
    few seconds; only a count that stays is a blocking condition. If it reports
-   `UNFINISHED_OPERATIONS_PRESENT`, `TENANT_WINDOW_NOT_ACTIVE` or `PARTICIPANT_NOT_HEALTHY`, stop: a
-   restore started now closes the tenant and is then refused (stop conditions 1 and 2).
+   `UNFINISHED_OPERATIONS_PRESENT`, `TENANT_WINDOW_NOT_ACTIVE` or `PARTICIPANT_NOT_HEALTHY`, stop and
+   follow [README.md](README.md#a-tenant-held-closed-by-an-interrupted-restore). The restore refuses by itself, with the tenant still
+   open, when an unfinished operation's owner is gone; a restore that is interrupted after it closed
+   the tenant leaves it closed until an operator resumes it.
 2. **Restore.** `... restore.js restore --tenant <tenant> --directory /run/ns-artifacts --digest <digest>`.
    Success prints `"state":"restored-and-active"`. A refusal prints one line with an `error` code
    and the words "Do not automatically replay or reopen the tenant"; an unknown digest is `ENOENT`

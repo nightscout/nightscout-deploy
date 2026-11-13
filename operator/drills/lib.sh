@@ -22,7 +22,10 @@ operator_cli() {
 sql() { "$stack" compose exec -T postgres psql -U postgres -d nightscout_compose_test -X -A -t -v ON_ERROR_STOP=1 -c "$1"; }
 window() { sql "SELECT phase||'|'||(claim_id IS NOT NULL)||'|'||(artifact_digest IS NOT NULL) FROM nsdemo_control.tenant_lifecycle_windows WHERE tenant_id='$1'"; }
 audit() { sql "SELECT COALESCE((SELECT state FROM nsdemo_control.tenant_lifecycle_restore_audit WHERE tenant_id='$1' ORDER BY started_at DESC LIMIT 1),'none')"; }
-unfinished() { sql "SELECT count(*) FROM nsdemo_control.tenant_lifecycle_operations WHERE tenant_id='$1' AND NOT finished"; }
+# Unfinished operation records an operator has not cleared (what a restore counts), and all of them.
+unfinished() { sql "SELECT count(*) FROM nsdemo_control.tenant_lifecycle_operations o WHERE tenant_id='$1' AND NOT finished AND NOT EXISTS (SELECT 1 FROM nsdemo_control.tenant_lifecycle_operation_clearance c WHERE c.operation_id=o.operation_id)"; }
+unfinished_records() { sql "SELECT count(*) FROM nsdemo_control.tenant_lifecycle_operations WHERE tenant_id='$1' AND NOT finished"; }
+resumed() { sql "SELECT COALESCE((SELECT interrupted FROM nsdemo_control.tenant_lifecycle_restore_resume WHERE claim_id='$1'),'none')"; }
 rows_digest() { sql "SELECT COALESCE(md5(string_agg(md5(t::text),'' ORDER BY md5(t::text))),'empty') FROM nsdemo_entries.entries t WHERE tenant_id='$1'"; }
 # Tenants that have stored rows (a write clock) and no registry entry: roles cannot resolve them.
 unregistered() { sql "SELECT count(*) FROM nsdemo_clock.tenant_write_clock c WHERE NOT EXISTS (SELECT 1 FROM nsdemo_registry.tenant_registry r WHERE r.tenant_id=c.tenant_id)"; }

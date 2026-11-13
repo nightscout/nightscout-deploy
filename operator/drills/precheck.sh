@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Read-only check before a tenant-local restore is started. A restore first closes the tenant
-# and only then waits for unfinished operations; if any marker never finishes, the restore is
-# refused and the tenant STAYS closed. So the conditions are read before, not after.
+# Read-only check before a tenant-local restore is started. The restore makes the same check on
+# unfinished operations itself and refuses while the tenant is still open; this script reads the
+# other conditions too and lets an operator see them without starting anything.
 #   precheck.sh <tenant-uuid>
 # Exit 0: no blocking condition was read. Exit 1: do not start the restore; see the reasons.
 set -euo pipefail
@@ -13,7 +13,7 @@ prefix=${NS_DRILL_SCHEMA_PREFIX:-nsdemo}
 sql() { "$here/stack.sh" compose exec -T postgres psql -U postgres -d nightscout_compose_test -X -A -t -v ON_ERROR_STOP=1 -c "$1"; }
 phase=$(sql "SELECT phase FROM ${prefix}_control.tenant_lifecycle_windows WHERE tenant_id='$tenant'")
 registry=$(sql "SELECT state FROM ${prefix}_registry.tenant_registry WHERE tenant_id='$tenant'")
-count_unfinished() { sql "SELECT count(*) FROM ${prefix}_control.tenant_lifecycle_operations WHERE tenant_id='$tenant' AND NOT finished"; }
+count_unfinished() { sql "SELECT count(*) FROM ${prefix}_control.tenant_lifecycle_operations o WHERE tenant_id='$tenant' AND NOT finished AND NOT EXISTS (SELECT 1 FROM ${prefix}_control.tenant_lifecycle_operation_clearance c WHERE c.operation_id=o.operation_id)"; }
 # A request in flight has an unfinished marker for as long as it runs. Only a count that is
 # still there after re-reading is a blocking condition.
 unfinished=$(count_unfinished); tries=0

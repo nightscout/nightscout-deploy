@@ -20,12 +20,14 @@ run postgres-restart "$here/drill-dependency-restart.sh" postgres-restart
 run source-change "$here/drill-interrupted-bootstrap.sh" source-change
 run host-replacement-tampered "$here/drill-host-replacement.sh" "$out/backup-1" --control tampered-archive
 run host-replacement-keys-omitted "$here/drill-host-replacement.sh" "$out/backup-2" --control keys-omitted
+# Each interruption is followed by the operator's resume (drill-restore-resume.sh runs both).
 for mode in operator-death-in-transaction operator-death-after-data-commit participant-death lost-acknowledgement; do
-  run "restore-interruption:$mode" "$here/drill-restore-interruption.sh" "$mode"
-  run "recovery-after:$mode" "$here/drill-whole-deployment-recovery.sh" "$out/backup-2"
+  run "restore-resume:$mode" "$here/drill-restore-resume.sh" "$mode"
 done
 run orphaned-operations "$here/drill-orphaned-operations.sh"
-run recovery-after:orphaned-operations "$here/drill-whole-deployment-recovery.sh" "$out/backup-2"
+# Whole-deployment recovery stays rehearsed once: it is the way back when a tenant cannot be resumed.
+run restore-interruption:operator-death-in-transaction "$here/drill-restore-interruption.sh" operator-death-in-transaction
+run whole-deployment-recovery "$here/drill-whole-deployment-recovery.sh" "$out/backup-2"
 # Last: these leave tenants admitted without root custody (stop condition 4) on the drill deployment.
 run provision-lost-acknowledgement "$here/drill-operation-death.sh" provision-lost-acknowledgement
 NS_DRILL_OTHER_TENANTS=42 run provision-admin-death "$here/drill-operation-death.sh" provision-admin-death

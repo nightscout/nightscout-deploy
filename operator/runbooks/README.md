@@ -43,8 +43,11 @@ SELECT tenant_id, phase, generation, claim_id IS NOT NULL AS claimed, artifact_d
 -- How far did the last restore get? suspended -> restored -> activated
 SELECT claim_id, generation, state, started_at, restored_at, activated_at
   FROM <prefix>_control.tenant_lifecycle_restore_audit WHERE tenant_id = '<tenant>' ORDER BY started_at DESC LIMIT 3;
--- Work that never reported finishing.
-SELECT count(*) FROM <prefix>_control.tenant_lifecycle_operations WHERE tenant_id = '<tenant>' AND NOT finished;
+-- Work that never reported finishing, and that no operator has cleared.
+SELECT count(*) FROM <prefix>_control.tenant_lifecycle_operations o WHERE tenant_id = '<tenant>' AND NOT finished
+   AND NOT EXISTS (SELECT 1 FROM <prefix>_control.tenant_lifecycle_operation_clearance c WHERE c.operation_id = o.operation_id);
+-- Was a closed tenant reopened by an operator? before-data or data-replaced, one row per restore claim.
+SELECT claim_id, interrupted, resumed_at FROM <prefix>_control.tenant_lifecycle_restore_resume WHERE tenant_id = '<tenant>';
 -- Is the tenant admitted at all?
 SELECT tenant_id, state FROM <prefix>_registry.tenant_registry WHERE tenant_id = '<tenant>';
 ```
@@ -62,15 +65,19 @@ SELECT tenant_id, state FROM <prefix>_registry.tenant_registry WHERE tenant_id =
 
 At each of these the procedure ends and a person decides. They are the same on every runbook.
 
-1. **A tenant is held closed and no restore is running.** At core `debcc2c7` there is no supported
-   command that reopens it or resumes the restore (`docs/tenant-operation-cohort.md:113`,
-   `lib/tenant-lifecycle/maintenance-window.md:60`). Rehearsed: it stays closed after waiting, after a
-   second restore attempt (refused, `LIFECYCLE_RESTORE_ALREADY_SUSPENDED`) and after a role restart.
+1. **A tenant is held closed and no restore is running.** With a core that has the operator's
+   `resume` (core branch `claude/restore-resume-20261113`; core `debcc2c7` does not have it), follow
+   "A tenant held closed by an interrupted restore" below. Stop, and take the persisted state to the
+   maintainers, when `inspect` does not say `"resumable":true`, when `resume` is refused, or when the
+   core has no `resume`. It stays closed after waiting, after a second restore attempt (refused,
+   `LIFECYCLE_RESTORE_ALREADY_SUSPENDED`) and after a role restart (rehearsed).
    **Never** update the window row, delete an audit or operation row, or change the claim by hand:
    the stored rows may be half of what you think they are, and every role caches what it last proved.
-2. **Unfinished operations exist for a tenant.** Never clear them. Do not start a tenant-local
-   restore on that tenant: it would close the tenant first and then be refused
-   (`LIFECYCLE_RESTORE_DRAIN_TIMEOUT`), leaving stop condition 1. Rehearsed.
+2. **Unfinished operations exist for a tenant.** Never clear them by hand. A restore started on
+   that tenant refuses before it closes the tenant
+   (`LIFECYCLE_RESTORE_PREFLIGHT_ORPHANED_OPERATIONS`) when a record's owner is gone; the tenant
+   keeps serving (rehearsed). `clear-operations`, below, records the ones whose owner is provably
+   gone. Stop when it reports any record as `retained`: something may still be running it.
 3. **A restore ended with `LIFECYCLE_RESTORE_SUSPENSION_OUTCOME_UNCERTAIN`,
    `..._DATA_OUTCOME_UNCERTAIN` or `..._ACTIVATION_OUTCOME_UNCERTAIN`.** The reply to a commit was
    lost; the commit may or may not have happened. Read the persisted state above; do not run the
@@ -86,11 +93,50 @@ At each of these the procedure ends and a person decides. They are the same on e
 6. **The backup is not a complete unit** (database, Vault and private state from the same instant),
    or its digests do not match its manifest. Do not start a deployment from it. Rehearsed.
 
-The only rehearsed way out of stop conditions 1 and 2 is the whole-deployment recovery in
-[backup-and-restore.md](backup-and-restore.md). It returns **every** tenant to the backup instant:
-everything any tenant wrote after the backup is gone. That trade is the decision; the runbook does
-not make it for you. The other choice is to leave the one tenant closed, tell its users, and take the
-persisted state (the three queries above, role logs, the artifact digest) to the maintainers.
+## A tenant held closed by an interrupted restore
+
+Rehearsed 2026-11-13 on the synthetic Compose binding with core branch `claude/restore-resume-20261113`
+(`drills/drill-restore-resume.sh`, four interruption kinds; `drills/drill-orphaned-operations.sh`).
+The three commands run in the private operator container, like `restore`:
+
+```bash
+drills/stack.sh ops demo node -r ./deploy/multitenant/load-env.js deploy/multitenant/restore.js inspect --tenant <tenant>
+drills/stack.sh ops demo node -r ./deploy/multitenant/load-env.js deploy/multitenant/restore.js resume --tenant <tenant> --claim <claimId from inspect>
+drills/stack.sh ops demo node -r ./deploy/multitenant/load-env.js deploy/multitenant/restore.js clear-operations --tenant <tenant>
+```
+
+1. Tell the tenant's users it is closed and to rely on their CGM's or pump's own display and alarms.
+2. Make sure the restore that closed it has ended (its operator container has exited) and every role
+   is running and healthy. A resume asks every role to answer; with one role down it is refused and
+   nothing changes.
+3. `inspect`. It changes nothing. Read `interrupted`:
+   - `before-data`: the tenant was closed and the restored rows were **not** stored. After a resume
+     the tenant serves the data it had before the restore was started. The restore did not happen;
+     start it again afterwards if it is still wanted.
+   - `data-replaced`: the restored rows **are** stored. After a resume the tenant serves the
+     restored data. Verify state and history as in [backup-and-restore.md](backup-and-restore.md).
+   If `resumable` is `false`, read `reasons` and stop. `LIFECYCLE_RESUME_RESTORE_OWNER_PRESENT`
+   means the restore is still running: wait for it. `LIFECYCLE_RESUME_PENDING_OPERATIONS` means
+   unfinished operations must be cleared first (step 4).
+4. Only when asked to by step 3 or by a refused restore: `clear-operations`. It records, for each
+   unfinished operation whose owning process is provably gone, that nothing is running it. It never
+   deletes or edits an operation record. If it lists any operation under `retained`, stop: a process
+   may still be running it.
+5. `resume --claim <claimId>`, with the claim `inspect` printed. A refusal leaves the tenant closed
+   and changes nothing; read the code and stop.
+6. Read the persisted state again: the window is `active`, the restore audit row is unchanged, and
+   `<prefix>_control.tenant_lifecycle_restore_resume` has one row for the claim. Check the tenant
+   answers, then tell its users.
+
+Other tenants are not touched by any of these steps: in the rehearsal the other tenant wrote while
+the first was closed and those records were still there after the resume.
+
+When a resume is refused and cannot be made to pass, the remaining way out is the whole-deployment
+recovery in [backup-and-restore.md](backup-and-restore.md). It returns **every** tenant to the backup
+instant: everything any tenant wrote after the backup is gone. That trade is the decision; the
+runbook does not make it for you. The other choice is to leave the one tenant closed, tell its
+users, and take the persisted state (the queries above, role logs, the artifact digest) to the
+maintainers.
 
 ## Decided, and not yet in this source
 
@@ -105,8 +151,9 @@ The decisions live in the alignment workspace, `releases/cgm-remote-monitor-16.0
   data, and so it keeps the keys that protect that data. For these runbooks: a missing key is still
   recovered only from the Vault part of a cold backup, and stop condition 4 is where `ensure` or
   `factory reset` would be the supported answer once they exist. Whether either reissues a lost root
-  secret, reopens a tenant that is held closed, or resolves unfinished operation markers is not
-  decided; until it is, stop conditions 1, 2 and 4 stand as written.
+  secret is not decided; until it is, stop condition 4 stands as written. Reopening a tenant held
+  closed and clearing unfinished operations are the operator's `resume` and `clear-operations`
+  (decision `restore-resume-and-precheck`), not factory reset.
 - **`realtime-automatic-recovery`.** Realtime workers restart on failure and keep their shards; a
   surviving worker takes over after a grace period. In this binding every role still has
   `restart: "no"` (`bindings/compose/multitenant/compose.yaml:11`), so today the operator restarts a
