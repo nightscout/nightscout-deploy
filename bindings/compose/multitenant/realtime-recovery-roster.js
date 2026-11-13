@@ -50,7 +50,7 @@ function desired(plan,prepared,value,internal){
 function select({plan,prepared,map,platform,internal}){
  checked(plan,prepared,internal);const parsed=placement.parse(map,{internal,ownershipVersion:2});
  need(Array.isArray(platform)&&platform.length<=256,'REALTIME_RECOVERY_PLATFORM_BOUND');
- const byWorker=new Map(prepared.templates.map(row=>[row.worker,row])),seen=new Set(),assignments=new Set();
+ const byWorker=new Map(prepared.templates.map(row=>[row.worker,row])),seen=new Set(),possibleBoots=new Set();
  for(const worker of parsed.workers.values()){
   const template=byWorker.get(worker.id),peer=prepared.participants.find(row=>row.id===template?.participantId);
   need(template&&peer&&ipc.key(peer.endpoint)===ipc.key(worker.endpoint)&&new URL(template.consumerOrigin).origin===worker.consumerOrigin,'REALTIME_RECOVERY_UNPREPARED_WORKER');
@@ -58,7 +58,8 @@ function select({plan,prepared,map,platform,internal}){
  for(const row of platform){
   need(exact(row,['worker','assignmentIncarnation','inspection','container','noFutureDispatch'])&&id(row.worker)&&uuid(row.assignmentIncarnation)&&['RUNNING','STOPPED','UNKNOWN'].includes(row.inspection)&&typeof row.noFutureDispatch==='boolean','REALTIME_RECOVERY_PLATFORM');
   const template=byWorker.get(row.worker);need(template,'REALTIME_RECOVERY_UNPLANNED_ACTOR');
-  const assignment=row.worker+'\0'+row.assignmentIncarnation;need(!assignments.has(assignment),'REALTIME_RECOVERY_DUPLICATE_ACTOR');assignments.add(assignment);
+  const assignment=row.worker+'\0'+row.assignmentIncarnation;
+  if(row.inspection!=='STOPPED'){need(!possibleBoots.has(assignment),'REALTIME_RECOVERY_AMBIGUOUS_BOOT');possibleBoots.add(assignment);}
   const c=row.container;
   if(c!==null){
    need(exact(c,['cid','startedAt','service','project','workingDirectory','imageId','source','running'])&&hex(c.cid,64)&&typeof c.startedAt==='string'&&c.startedAt.length>=1&&c.startedAt.length<=100&&c.service===template.service&&equal(Object.fromEntries(Object.keys(prepared.expected).map(k=>[k,c[k]])),prepared.expected)&&typeof c.running==='boolean'&&!seen.has(c.cid),'REALTIME_RECOVERY_PLATFORM_CUSTODY');seen.add(c.cid);
@@ -72,6 +73,6 @@ function select({plan,prepared,map,platform,internal}){
  const currentIds=new Set(parsed.workers.keys()),rows=prepared.participants.filter(row=>!row.roles.includes('realtime')||currentIds.has(row.worker));
  const selected=manifests.validate(rows);
  need(selected.filter(row=>row.roles.includes('realtime')).length===currentIds.size,'REALTIME_RECOVERY_COVERAGE');
- return frozen({version:1,ownershipVersion:2,planSha256:plan.sha256,inventorySha256:prepared.sha256,mapGeneration:parsed.generation,mapDigest:parsed.digest,participants:selected,authority:'PEER_SELECTION_ONLY_NOT_LIVENESS_OR_CREDIT_RETIREMENT'});
+ return frozen({version:1,ownershipVersion:2,planSha256:plan.sha256,inventorySha256:prepared.sha256,mapGeneration:parsed.generation,mapDigest:parsed.digest,participants:selected,actorObservations:platform,authority:'PEER_SELECTION_ONLY_NOT_LIVENESS_OR_CREDIT_RETIREMENT'});
 }
 module.exports=Object.freeze({prepare,desired,select});

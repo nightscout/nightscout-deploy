@@ -37,9 +37,16 @@ test('stopped excluded actor needs exact custody/no-future-dispatch; duplicates 
  const f=fixture();const row={worker:'c',assignmentIncarnation:'cccccccc-cccc-4ccc-8ccc-cccccccccccc',inspection:'STOPPED',noFutureDispatch:true,container:{...f.expected,service:'realtime-c',cid:'3'.repeat(64),startedAt:'synthetic-birth-c',running:false}};
  f.platform.push(row);assert.equal(select(f).participants.length,5);
  for(const change of [r=>{r.noFutureDispatch=false;},r=>{r.container.running=true;},r=>{r.container.imageId='sha256:'+'f'.repeat(64);},r=>{r.worker='unplanned';},r=>{r.assignmentIncarnation=[r.assignmentIncarnation];}]){const g=fixture();const bad=structuredClone(row);change(bad);g.platform.push(bad);assert.throws(()=>select(g));}
- f.platform.push(structuredClone(row));assert.throws(()=>select(f),{code:'REALTIME_RECOVERY_DUPLICATE_ACTOR'});
+ f.platform.push(structuredClone(row));assert.throws(()=>select(f),{code:'REALTIME_RECOVERY_PLATFORM_CUSTODY'});
 });
 test('desired declarations and map cannot bypass prepared roster/profile/endpoints',()=>{
  const f=fixture();for(const workers of [[],['unplanned'],['a','a'],[['a']]])assert.throws(()=>R.desired(f.plan,f.prepared,{version:1,workers},f.internal));
  for(const change of [m=>{m.version=1;},m=>{m.workers[0].address={socket:'/private/other.sock'};},m=>{m.workers[0].id='unplanned';m.owners=['unplanned','unplanned'];}]){const g=fixture();change(g.map);assert.throws(()=>select(g));}
+});
+
+test('same assignment crash restart retains old stopped boot and new physical boot without a map revision',()=>{
+ const f=fixture(),old=structuredClone(f.platform[0]);old.inspection='STOPPED';old.noFutureDispatch=true;old.container.running=false;
+ f.platform[0].container.cid='4'.repeat(64);f.platform[0].container.startedAt='synthetic-new-birth';f.platform.unshift(old);
+ const out=select(f);assert.equal(out.mapGeneration,1);assert.equal(out.actorObservations.length,3);assert.deepEqual(out.actorObservations.filter(r=>r.worker==='a').map(r=>[r.inspection,r.container.cid]),[['STOPPED','1'.repeat(64)],['RUNNING','4'.repeat(64)]]);assert.equal(out.participants.filter(p=>p.worker==='a').length,1);
+ for(const inspection of ['RUNNING','UNKNOWN']){const g=fixture(),other=structuredClone(g.platform[0]);other.inspection=inspection;other.container.cid='5'.repeat(64);other.container.startedAt='synthetic-other-birth';g.platform.push(other);assert.throws(()=>select(g),{code:'REALTIME_RECOVERY_AMBIGUOUS_BOOT'});}
 });
