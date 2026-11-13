@@ -29,7 +29,7 @@ function input(env=process.env) {
   if(capRaw&&(!/^[1-9][0-9]{0,9}$/.test(capRaw)||Number(capRaw)<65536||Number(capRaw)>67108864))throw fail('BOOTSTRAP_CONFIG_MAX_BYTES_INVALID');
   const deployCommit=env.NS_DEPLOY_COMMIT||env.NS_SOURCE_COMMIT;
   if(!/^[a-f0-9]{40}$/.test(deployCommit))throw fail('BOOTSTRAP_DEPLOY_IDENTITY_INVALID');
-  return {deployCommit,pg,vault,output:path.resolve(env.NS_BOOTSTRAP_OUTPUT),sourceCommit:env.NS_SOURCE_COMMIT,uid,gid,configMaxBytes:capRaw?Number(capRaw):undefined};
+  return {connectionBudgetProfile:env.NS_CONNECTION_BUDGET_PROFILE_FILE||undefined,deployCommit,pg,vault,output:path.resolve(env.NS_BOOTSTRAP_OUTPUT),sourceCommit:env.NS_SOURCE_COMMIT,uid,gid,configMaxBytes:capRaw?Number(capRaw):undefined};
 }
 // Generated machine documents (role config, env, admission) are written compact: about a third
 // smaller, which matters against the configuration byte cap at large tenant counts. Bootstrap
@@ -74,6 +74,10 @@ async function bootstrap(options) {
   try{
     // This script owns a dedicated database. It never adopts existing application
     // schemas/roles; a partial run must be inspected and its demo volumes replaced.
+    if(options.connectionBudgetProfile){
+      const observed=await admin.query("SELECT (SELECT system_identifier::text FROM pg_control_system()) AS \"systemIdentifier\", pg_postmaster_start_time()::text AS \"postmasterStartedAt\", current_setting('max_connections')::int AS \"serverMaximum\", current_setting('superuser_reserved_connections')::int AS \"superuserReserved\", coalesce(current_setting('reserved_connections',true),'0')::int AS \"otherReserved\"");
+      if(observed.rows.length!==1)throw fail('CONNECTION_BUDGET_TARGET_UNKNOWN');options.connectionBudgetObserved=observed.rows[0];
+    }
     const preexisting=await admin.query('SELECT nspname FROM pg_namespace WHERE nspname LIKE $1',[l.prefix+'_%']);
     const roles=await admin.query('SELECT rolname FROM pg_roles WHERE rolname LIKE $1',[l.prefix+'_%']);
     if(preexisting.rows.length||roles.rows.length)throw fail('BOOTSTRAP_OBJECTS_ALREADY_EXIST');

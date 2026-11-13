@@ -34,6 +34,7 @@ try {
         ['NODE_OPTIONS', 'NODE_PATH', 'PATH', 'LD_PRELOAD', 'NS_ENV_FILE', 'MULTITENANT_CONFIG_MAX_BYTES'].includes(key)) throw new Error();
   }
   Object.assign(process.env, values);
+  require('./connection-budget-runtime').install();
 } catch {
   process.stderr.write('Private service environment is missing or invalid\n');
   process.exit(78);

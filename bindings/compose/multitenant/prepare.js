@@ -12,7 +12,7 @@ function prepare (args) {
   const options = {bind: '127.0.0.1', port: '18080', state: path.join(base, '.state')};
   for (let i = 0; i < args.length; i += 2) {
     const key = args[i].slice(2);
-    if (!['--bind', '--port', '--state'].includes(args[i]) || !args[i + 1]) throw new Error('Invalid preparation arguments');
+    if (!['--bind', '--port', '--state', '--connection-budget'].includes(args[i]) || !args[i + 1]) throw new Error('Invalid preparation arguments');
     options[key] = args[i + 1];
   }
   if (!['127.0.0.1', '169.254.1.1'].includes(options.bind) ||
@@ -38,10 +38,20 @@ function prepare (args) {
   const source = require('./build').assertCleanSource(path.join(base, '../..'));
   const deployCommit = require('./build').overlay(path.join(base, '../..'))?.deployCommit || source;
   if (!/^[a-f0-9]{40}$/.test(source)) throw new Error('Source commit unavailable');
+  let connectionBudget, budgetResolution;
+  if(options['connection-budget']){connectionBudget=require('./connection-budget-files').read(path.resolve(options['connection-budget']));if(connectionBudget.kind!=='explicit-connection-budget-profile'||connectionBudget.source.coreCommit!==source||connectionBudget.source.deployCommit!==deployCommit||connectionBudget.bootstrapSchedule!=='EXPLICIT_OVERLAP')throw new Error('CONNECTION_BUDGET_PROFILE_SOURCE');budgetResolution=require('./connection-budget-profile').resolve(connectionBudget,{source:{coreCommit:source,deployCommit}});connectionBudget=budgetResolution.profile;}
   fs.mkdirSync(state, {mode: 0o700});
   const write = (file, value) => fs.writeFileSync(file, value, {mode: 0o600, flag: 'wx'});
   for (const name of ['bootstrap', 'tls', 'vault', 'ipc', 'artifacts', 'api', 'realtime', 'evaluator', 'tenant-admin', 'ui', 'ops', 'edge', 'admin', 'primer', 'feed-reader', 'placement-operator']) {
     fs.mkdirSync(path.join(state, name), {mode: 0o700});
+  }
+  if(connectionBudget){
+    fs.mkdirSync(path.join(state,'connection-budget'),{mode:0o700});
+    write(path.join(state,'connection-budget/profile.json'),JSON.stringify(connectionBudget)+'\n');
+    write(path.join(state,'connection-budget/preparation.json'),JSON.stringify({kind:'source-derived-connection-sizing',source:{coreCommit:source,deployCommit},requiredMaximum:budgetResolution.requiredMaximum,configuredMaximum:connectionBudget.resource.serverMaximum,derived:budgetResolution.derived,authorization:'SOURCE_ONLY_NOT_CAPACITY'})+'\n');
+    const services=budgetResolution.slots;
+    write(path.join(state,'compose.connection-budget.yaml'),require('./connection-budget-compose').render({state,services,serverMaximum:budgetResolution.derived?budgetResolution.requiredMaximum:null}));
+    write(path.join(state,'connection-budget/controller-config.json'),JSON.stringify({project:'nightscout-multitenant-demo',workingDirectory:base,source:{coreCommit:source,deployCommit},composeFiles:[path.join(base,'compose.yaml'),path.join(state,'compose.replicas.yaml'),...(selectedEvaluator?[path.join(state,'compose.evaluator.yaml')]:[]),...(selectedRealtime?[path.join(state,'compose.realtime.yaml')]:[]),path.join(state,'compose.connection-budget.yaml')],image:process.env.NS_DEMO_IMAGE||'nightscout-multitenant-demo:local'})+'\n');
   }
   write(path.join(state, 'bootstrap/postgres-password'), crypto.randomBytes(32).toString('hex') + '\n');
   const tls = path.join(state, 'tls');
@@ -72,8 +82,9 @@ function prepare (args) {
   write(path.join(base, '.env'), 'NS_DEPLOY_COMMIT=' + deployCommit + '\nNS_API_REPLICAS=' + apiReplicas + '\n' +
     (selectedRealtime ? 'NS_REALTIME_WORKERS=' + selectedRealtime.workers + '\nNS_REALTIME_SHARDS=' + selectedRealtime.shards + '\n' : '') +
     (selectedEvaluator ? 'NS_EVALUATOR_WORKERS=' + selectedEvaluator.workers + '\n' : '') +
-    'NS_M7_DIAGNOSTICS=' + diagnostics.enabled + '\nNS_M7_DIAGNOSTICS_INTERVAL_MS=' + diagnostics.interval + '\n' +
+    (connectionBudget?'NS_CONNECTION_BUDGET=1\n':'') + 'NS_M7_DIAGNOSTICS=' + diagnostics.enabled + '\nNS_M7_DIAGNOSTICS_INTERVAL_MS=' + diagnostics.interval + '\n' +
     'NS_OPERATION_LEASE_SESSIONS=' + leaseSessions + '\nNS_DEMO_STATE=' + state + '\nNS_DEMO_BIND=' + options.bind + '\nNS_DEMO_PORT=' + options.port + '\nNS_SOURCE_COMMIT=' + source + '\n');
+  if(connectionBudget){const configFile=path.join(state,'connection-budget/controller-config.json'),c=require('./connection-budget-files').read(configFile);c.fileDigests=Object.fromEntries([...c.composeFiles,path.join(base,'.env')].map(file=>[file,crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')]));require('./connection-budget-files').write(configFile,c);}
   process.stdout.write('Prepared private synthetic deployment state. Run the explicit bootstrap before starting roles.\n');
   return {state, source};
 }

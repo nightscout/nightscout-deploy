@@ -23,6 +23,7 @@ async function finish({ options, request, rootToken, layout, roleURLs, writePriv
   const provisioningToken = await token('provisioner', [rule('keys/tenant-*', ['create','read','update']), rule('encrypt/tenant-data-*', ['update'])]);
   const realtimePlacement = require('./realtime-workers').selection() ? JSON.parse(fs.readFileSync(path.join(output, 'placement/backend.json'), 'utf8')) : null;
   const docs = plan.documents({ layout: l, urls: roleURLs, tokens: [], publicKeys: [], managementKeys: [], vaultAddress: options.vault.origin, registryMode: true, realtimePlacement });
+  if(options.connectionBudgetProfile) require('./connection-budget-bootstrap').prepare({options,docs,writePrivate});
   for (const role of Object.keys(docs.configs)) {
     const dir = path.join(output, role);
     writePrivate(path.join(dir, 'env.json'), docs.environments[role], own, compact);

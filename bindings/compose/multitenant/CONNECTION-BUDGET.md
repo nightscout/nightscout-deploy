@@ -1,0 +1,140 @@
+# Opt-in controlled PostgreSQL admission candidate
+
+This is a source candidate, not capacity or native acceptance. The default
+Compose path is unchanged. The selected profile accounts for every reviewed
+constructor in the expanded registry API/realtime/evaluator/admin/feed/UI roster.
+New source, unknown capabilities, undeclared workers or operator SQL paths refuse.
+The exact reviewed core is `connection-budget.js:REVIEWED_CORE_COMMIT`; changing
+that pin requires constructor/factory, configuration, shutdown and consumer review.
+
+The library keeps three different facts separate:
+
+* Source inventory and evaluated configuration describe requested pool sizes,
+  simultaneous instances, direct-client groups and lifetime sessions already
+  within a physical pool. Lazy creation never makes a declared cost zero.
+* A private explicit profile selects finite limits and unmanaged, observer,
+  control/recovery, bootstrap and old/new overlap allowances. Aggregate process
+  maxima plus these allowances and PostgreSQL reserved slots must fit.
+* Bootstrap binds actual PostgreSQL system identity, postmaster epoch and settings.
+  The controller rechecks them before every controlled start/retirement. Source
+  arithmetic is not a measured backend count or a physical capacity recommendation.
+
+## Profile and preparation
+
+Use a clean prepared core/deployment source tree. `node
+ deploy/multitenant/connection-budget-profile.js inventory` admits source/overlay
+identity before evaluating the pure configuration graph, and emits no credentials.
+The existing replica, realtime, evaluator and operation-lease selectors determine
+that expanded graph. The output is inventory, never a launch authorization.
+
+A private owner-readable-only profile has:
+
+```
+version: 1
+kind: explicit-connection-budget-profile
+source: { coreCommit, deployCommit }
+resource:
+  pgResourceId, systemIdentifier, postmasterStartedAt, serverMaximum
+  reserved: { superuser, other }
+  aliases: [ canonical-host:port ]
+  allowances: { unmanaged, observers, controlRecovery,
+                bootstrapOverlap, oldNewRolloutOverlap }
+slots: [ { processInstanceId, capabilities, directGroups, cold,
+           maximumOutstandingGenerations } ]
+bootstrapSchedule: EXPLICIT_OVERLAP
+```
+
+Each inventory capability must appear exactly once. Pool entries contain
+`kind: pool`, explicit `poolMax` and `maxInstances`; direct entries contain
+`kind: client` and a declared concurrency group. The group costs once across its
+members; persistent listeners/readers require their own group. EVAL settings
+requires one retained pool and at least four shared settings/catalogue direct
+slots. Lifetime sessions must fit their selected pool. The selected constructor
+quota can refuse exhaustion, including DATA retries with unconfirmed cleanup;
+it does not silently change the DATA cleanup implementation or release its credit.
+
+Cold configuration contains positive bounded `activeLimit`, `pendingLimit`,
+`minDelayMs` and `maxDelayMs`; capacity must cover source startup producers.
+FIFO orders admission slots. Concurrent jitter can reorder actual work starts.
+Only the selected profile adds queued health fields; existing readiness and
+per-read authority/schema/privilege checks remain in force.
+
+`serverMaximum: DERIVE_DECLARED` explicitly selects deployment sizing from the
+complete declared aggregate plus reserved slots and headroom. A numeric maximum
+is instead checked for overcommit. This follows the maintainer's PostgreSQL
+connection-budget decision; it supplies no memory/throughput or production sizing
+claim. `OBSERVE_AT_BOOTSTRAP` for both server identity fields requests one-time
+binding to the fresh actual target; all numeric settings must still match exactly.
+At least two observer slots, positive control/recovery reserve and two permanently
+held bootstrap overlap slots are required. No existing baseline is resized.
+
+`demo.sh prepare --connection-budget /absolute/private/profile.json` validates
+source/configuration before generating the selected overlay. It records digests
+of every Compose input and `.env`. Derived sizing adds the corresponding explicit
+PostgreSQL command only to that selected overlay. Bootstrap creates the final
+private plan and per-process claim directories, without any worker ticket.
+
+## Controlled lifecycle
+
+After the normal explicit bootstrap completes, use:
+
+```
+./demo.sh admission bind
+./demo.sh admission start api
+./demo.sh admission stop api
+```
+
+Repeat `start` for each declared process, preserving application provisioning and
+API/realtime/evaluator dependencies. Primer provisioning and evaluator membership
+initialization remain ordinary HTTP clients of admitted services. This is not an
+all-services orchestrator or an instruction to skip those existing prerequisites.
+Ordinary selected `up`, restore/demo, commissioning and placement-operator SQL
+routes refuse. Additional operator/CLI overlap requires its own reviewed finite
+source declaration; it is never charged to an assumed spare slot. Non-PG edge
+startup remains separate and must not implicitly start unadmitted PG workers.
+
+The controller uses one held private lock, fixed local Docker commands, prepared
+file digests, immutable selected image ID, image-source labels and exact project,
+working directory, service, CID and StartedAt custody. Prepared image/bundle
+provenance must be qualified separately; labels alone do not certify a build.
+Credit is durable before the ticket and before the process effect. A failed effect
+retains its complete generation credit. Each ticket is one use, and each process
+gets only its own ticket and writable claim directory. No per-query SQL or disk
+admission hop is introduced.
+
+Normal stop freezes constructors/handshakes and cold producers, drains services,
+then awaits actual underlying PG Connection end and all pending connect outcomes.
+Pool.end alone is insufficient. Only successful shutdown publishes an atomic
+private nonce/source/incarnation ACK, including lossless original application-name
+mapping and the complete expected bounded incarnation tag set. The controller
+also requires the original exact container stopped and fresh absence of every
+old tag on the same server epoch before retiring credit. A forced stop, stale ACK,
+late backend, missing tag or uncertain cleanup never refunds credit. Explicit
+finite overlap can cover uncertain generations; exhaustion refuses. Stale locks
+and uncertain observer markers require operator investigation, not timed deletion.
+
+The fixed metadata observer has finite durable reservations too. Known stock
+psql exit prevents future authentication; a later fresh census must show its old
+backend PID absent before credit reuse. A timeout/unknown command outcome retains
+its observer reservation and blocks repeated attempts. SQL has connect/statement
+bounds and fixed output bounds, with no tenant data or URI persistence.
+
+## Qualification boundary
+
+Focused pure/source controls cover aggregate/roster/coverage/headroom/lifetime,
+source refusal, whole cold work/context/drain, actual pg-pool early-end behavior,
+private publication, generation/observer retention, stale/forged ACKs and selected
+CLI refusal. They do not establish runtime capacity or a chosen production
+profile. The existing shipping measurement selector intentionally rejects this
+new overlay until its coordinator integrates a separately identified instrument.
+Tagged diagnostics must use the private mapping, not the old application-name
+filters. Preserve original application/instrument evidence.
+
+Before acceptance: freeze the joined core/deployment/image and actual bundle;
+qualify fixed Docker custody, actual SHOW/settings and physical census; then one
+matched simultaneous start/full restart, role restart with healthy tenant B,
+scaling/drain/resume, delayed-auth/uncertain cleanup and negative-control campaign.
+Retain isolation, RLS/authority, stored-count, reconnect, alarm and TIME checks.
+Warm-up/recovery durations are measured outputs, not invented capacity SLOs.
+Full/browser/clinical acceptance and final prcheck belong to the coherent joined
+candidate, not this leaf. No runtime or remote result is claimed here.

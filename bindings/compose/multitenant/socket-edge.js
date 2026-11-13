@@ -89,7 +89,7 @@ async function main(source = process.env) {
     edge.server.once('error', () => { void edge.close().catch(() => {}); process.exitCode = 1; });
     edge.server.listen(1343, '0.0.0.0');
     let closing;
-    for (const signal of ['SIGTERM','SIGINT']) process.once(signal, () => { closing ||= edge.close().catch(() => { process.exitCode = 1; }); });
+    for (const signal of ['SIGTERM','SIGINT']) process.once(signal, () => { closing ||= (async()=>{require('./connection-budget-runtime').beginQuiesce();await edge.close();await require('./connection-budget-runtime').finalizeQuiescence(true);})().catch(() => { process.exitCode = 1; }); });
   } catch (error) { await resolver.close(); throw error; }
 }
 if (require.main === module) main().catch(() => { process.stderr.write('Socket edge unavailable\n'); process.exitCode = 1; });

@@ -4,11 +4,11 @@
 |---|---|
 | upstream repository | nightscout/cgm-remote-monitor |
 | upstream path | `deploy/multitenant` |
-| upstream commit | `debcc2c7a44fb812b342d0e524ff0611045094d1` (joined evaluator settings lifecycle, unit-tier classification and registry-current fixture repair; qualification of this new pair is UNMEASURED) |
+| upstream commit | `1c6a1c2cf0fa898ece933c49f4e6cc5096f762da` (opt-in constructor/cold-start admission and physical-close quiescence candidate; runtime and qualification of this new pair are UNMEASURED) |
 | upstream tree hash of that path | `fdc9f8dd2644b8789c86abeb030fbc0ad7304780` (core's reduced fixture: `config.js`, `demo.js`, `health.js`, `restore.js`, `ui.js`, `README.md`) |
 | import method | Recorded core fixture plus reviewed deployment-owned bootstrap, placement, edge and preparation changes; the patch is checked by `tools/compose-identity-check.sh`. |
-| local delta | [`SOURCE.delta.patch`](SOURCE.delta.patch), against the recorded core fixture. This binding generates fixed API instances and exact maintenance addresses, supports local health probes for network listeners, removes realtime maxSockets and renders explicit per-IP edge budgets. The reduced core fixture stays test-only. |
-| tree hash here | `56183e354d33c0d7e83d5ba3656f4cceb9d1ca58` |
+| local delta | [`SOURCE.delta.patch`](SOURCE.delta.patch), against the recorded core fixture. This binding generates fixed API instances and exact maintenance addresses, supports local health probes for network listeners, removes realtime maxSockets and renders explicit per-IP edge budgets. The reduced core fixture stays test-only. Selected connection-budget support adds explicit source-derived PostgreSQL sizing, finite worker/observer credits, private one-use tickets and actual-close quiescence; default behavior remains unchanged. See [`multitenant/CONNECTION-BUDGET.md`](multitenant/CONNECTION-BUDGET.md). |
+| tree hash here | `361f13830ea3679aac4032d09b401c1acd6987cd` |
 | imported on | 2026-11-12 |
 
 History: first imported 2026-11-09 from `ed2ced00c80bd0a6a7d75f834d2c6e2af8c71364` (tree
