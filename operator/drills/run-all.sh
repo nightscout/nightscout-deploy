@@ -17,6 +17,7 @@ run ownership-admin-death "$here/drill-operation-death.sh" ownership-admin-death
 run api-death "$here/drill-dependency-restart.sh" api-death
 run vault-restart "$here/drill-dependency-restart.sh" vault-restart
 run postgres-restart "$here/drill-dependency-restart.sh" postgres-restart
+run postgres-outage "$here/drill-dependency-restart.sh" postgres-outage
 run source-change "$here/drill-interrupted-bootstrap.sh" source-change
 run host-replacement-tampered "$here/drill-host-replacement.sh" "$out/backup-1" --control tampered-archive
 run host-replacement-keys-omitted "$here/drill-host-replacement.sh" "$out/backup-2" --control keys-omitted

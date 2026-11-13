@@ -40,6 +40,7 @@ backup directories hold synthetic data and the synthetic deployment's credential
 | `drill-operation-death.sh export\|ownership-admin-death\|ownership-lost-acknowledgement` | role death, lost acknowledgement | deployment healthy |
 | `drill-operation-death.sh provision-admin-death\|provision-lost-acknowledgement` | role death, lost acknowledgement | tenants admitted without root custody (stop condition 4) |
 | `drill-dependency-restart.sh api-death\|vault-restart\|postgres-restart` | host and dependency replacement | deployment healthy |
+| `drill-dependency-restart.sh postgres-outage` (`NS_DRILL_OUTAGE_SECONDS`, default 12) | host and dependency replacement | deployment healthy; needs a core that recovers in place |
 | `drill-interrupted-bootstrap.sh source-change` | interrupted upgrade | deployment unchanged |
 | `drill-interrupted-bootstrap.sh interrupted` | interrupted upgrade | needs its own prepared, never bootstrapped deployment; ends recreated and bootstrapped |
 
@@ -62,6 +63,7 @@ A drill that cannot fail proves nothing, so each has a way to break the thing it
 | the resume is what reopens the tenant | `NS_DRILL_SKIP_RESUME=1 drill-restore-resume.sh <mode>` | the window, admission and state steps after the resume |
 | a resume needs every role to answer | built in (`participant-death`): the resume is tried with realtime stopped | refused; the tenant stays closed |
 | the clearance is what lets the restore start | `NS_DRILL_SKIP_CLEARANCE=1 drill-orphaned-operations.sh` | `LIFECYCLE_RESTORE_PREFLIGHT_ORPHANED_OPERATIONS` again; the restore and state steps |
+| the roles' own recovery is what brings service back after PostgreSQL | `drill-dependency-restart.sh postgres-restart` on an image built from a core without in-place recovery | `api-health-check-passes` is not the measure there (it passes while tenants are refused); `a-admitted` and the steps after it go red |
 | a partial bootstrap is not adopted | built in: start marker set aside | `BOOTSTRAP_OBJECTS_ALREADY_EXIST` |
 | the tooling touches only a drill project | `node --test operator/drills/guards.test.js`; remove a guard in a copy and point `NS_DRILL_GUARD_DIR` at it | the matching guard test |
 
