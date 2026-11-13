@@ -1,8 +1,25 @@
 'use strict';
 const path=require('node:path'),F=require('./connection-budget-files'),B=require('./connection-budget');
 const need=(v,c)=>{if(!v)throw Object.assign(new Error(c),{code:c});};
+// Profile2 is supported only as the complete fresh lifecycle selection. The
+// bootstrap may infer its flag from the private preparation marker; lower
+// publication boundaries require that bootstrap-selected true flag explicitly.
+function selection(options,profile,infer=false){
+ need(profile&&[1,2].includes(profile.version),'LIFECYCLE_OPERATOR_SELECTION');
+ if(profile.version===1){
+  const parent=F.directory(path.dirname(options.connectionBudgetProfile));
+  try{if(F.inspect(parent,'operator-enabled.json'))need(require('node:util').isDeepStrictEqual(F.readAt(parent,'operator-enabled.json'),{version:1,kind:'fresh-lifecycle-operator'}),'LIFECYCLE_OPERATOR_SELECTION');}finally{require('node:fs').closeSync(parent);}
+  return;
+ }
+ need((infer&&!Object.hasOwn(options,'lifecycleOperator'))||options.lifecycleOperator===true,'LIFECYCLE_OPERATOR_SELECTION');
+ let marker;try{marker=F.read(path.join(path.dirname(options.connectionBudgetProfile),'operator-enabled.json'));}catch{need(false,'LIFECYCLE_OPERATOR_SELECTION');}
+ need(require('node:util').isDeepStrictEqual(marker,{version:2,kind:'fresh-lifecycle-operator'}),'LIFECYCLE_OPERATOR_SELECTION');
+ need(profile.resource?.allowances?.controlRecovery===2,'CONTROL_RECOVERY_VERSION');
+ if(infer)options.lifecycleOperator=true;
+}
 function prepare({options,docs,writePrivate}){
  const profile=F.read(options.connectionBudgetProfile),observed=options.connectionBudgetObserved;
+ selection(options,profile);
  need(observed&&profile.resource,'CONNECTION_BUDGET_TARGET_UNKNOWN');
  need(profile.resource.serverMaximum===observed.serverMaximum&&profile.resource.reserved.superuser===observed.superuserReserved&&profile.resource.reserved.other===observed.otherReserved,'CONNECTION_BUDGET_ACTUAL_SETTINGS_CHANGED');
  for(const key of ['systemIdentifier','postmasterStartedAt']){
@@ -41,4 +58,4 @@ function prepare({options,docs,writePrivate}){
  }
  return plan;
 }
-module.exports={prepare};
+module.exports={prepare,selection};

@@ -46,13 +46,12 @@ async function bootstrap(options) {
     const F=require('./connection-budget-files');selected=F.read(options.connectionBudgetProfile);
     if(![1,2].includes(selected.version))throw fail('LIFECYCLE_OPERATOR_SELECTION');
     const marker=path.join(path.dirname(options.connectionBudgetProfile),'operator-enabled.json');
-    if(fs.existsSync(marker)){
+    if(selected.version===2)require('./connection-budget-bootstrap').selection(options,selected,true);
+    else if(fs.existsSync(marker)){
       const value=F.read(marker);
       if(!require('node:util').isDeepStrictEqual(value,{version:selected.version,kind:'fresh-lifecycle-operator'}))throw fail('LIFECYCLE_OPERATOR_SELECTION');
       options.lifecycleOperator=true;
     }
-    if(options.lifecycleOperator&&selected.version===2&&!fs.existsSync(marker))throw fail('LIFECYCLE_OPERATOR_SELECTION');
-    if(options.lifecycleOperator&&selected.version===2&&selected.resource?.allowances?.controlRecovery!==2)throw fail('CONTROL_RECOVERY_VERSION');
   }else if(options.lifecycleOperator)throw fail('LIFECYCLE_OPERATOR_SELECTION');
   const freshControl=!!(options.lifecycleOperator&&selected.version===2);
   const {pg,vault,output,sourceCommit,deployCommit,uid,gid,configMaxBytes}=options;

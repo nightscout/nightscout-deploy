@@ -3,7 +3,7 @@
 // directory and capture identity derive from this sealed catalogue.
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto'),{isDeepStrictEqual:equal}=require('node:util');
 const F=require('./connection-budget-files'),B=require('./connection-budget'),C=require('./control-recovery');
-const LIMIT=16*1024*1024,HEX=/^[a-f0-9]{64}$/;
+const LIMIT=require('./lifecycle-capture-bound').LIMIT,HEX=/^[a-f0-9]{64}$/;
 const need=(v,c)=>{if(!v)throw Object.assign(new Error(c),{code:c});};
 const hash=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
 async function boundedBytes(file){
@@ -26,7 +26,9 @@ async function load(directory,digest){
  }finally{if(child!==undefined)fs.closeSync(child);fs.closeSync(root);}
 }
 async function saveCapture(artifact,directory){
- const raw=Buffer.from(JSON.stringify(artifact)+'\n');need(raw.length<=LIMIT,'LIFECYCLE_ARTIFACT_BOUND');
+ // Reject oversized input before any whole-object serialization or directory
+ // access. Core validation/save/load remains unchanged after this boundary.
+ require('./lifecycle-capture-bound').jsonBytes(artifact,LIMIT-1);
  // Exact per-lease output root is exclusively created before the fixed child.
  const fd=F.directory(directory);try{need(fs.readdirSync('/proc/self/fd/'+fd).length===0,'LIFECYCLE_ARTIFACT_OUTPUT_REUSED');}finally{fs.closeSync(fd);}
  await require('../../lib/tenant-lifecycle/filesystem-artifact').saveTenantArtifact(artifact,{directory});return load(directory,artifact.digest);

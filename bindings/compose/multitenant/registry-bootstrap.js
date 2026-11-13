@@ -4,6 +4,7 @@
 // admin REST API; lab subjects and data are a separate API client job.
 const path = require('node:path');
 async function finish({ options, request, rootToken, layout, roleURLs, writePrivate }) {
+  if(options.connectionBudgetProfile)require('./connection-budget-bootstrap').selection(options,require('./connection-budget-files').read(options.connectionBudgetProfile));
   const plan = require('./config'), { output, uid, gid, sourceCommit, configMaxBytes } = options;
   const l = layout, own = { uid, gid }, compact = { compact: true };
   const fs = require('node:fs');
