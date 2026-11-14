@@ -8,7 +8,7 @@
 | upstream tree hash of that path | `fdc9f8dd2644b8789c86abeb030fbc0ad7304780` (core's reduced fixture: `config.js`, `demo.js`, `health.js`, `restore.js`, `ui.js`, `README.md`) |
 | import method | Recorded core fixture plus reviewed deployment-owned bootstrap, placement, edge and preparation changes; the patch is checked by `tools/compose-identity-check.sh`. |
 | local delta | [`SOURCE.delta.patch`](SOURCE.delta.patch), against the recorded core fixture. This binding generates fixed API instances and exact maintenance addresses, supports local health probes for network listeners, removes realtime maxSockets and renders explicit per-IP edge budgets. The reduced core fixture stays test-only. The maintained evaluator owns capture and completed clinical output; realtime reads that output and updates only delivery receipt columns. The custom feed service, raw realtime clinical cursor, and static product roster are retired. Connection-budget support retains finite worker/observer credits, private one-use tickets and actual-close quiescence; the historical external profile is unqualified for this maintained pair. See [`multitenant/CONNECTION-BUDGET.md`](multitenant/CONNECTION-BUDGET.md). |
-| tree hash here | `38156c033844f0a66296bcce0eeb4339401271c8` |
+| tree hash here | `b9262283e697186f269f7e2469b0cb49acc9c6b0` |
 | imported on | 2026-11-12 |
 
 Current binding selects maintained pgstream capture by default and refuses `NS_PGSTREAM=0`.
