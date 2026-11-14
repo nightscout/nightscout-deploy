@@ -1,3 +1,4 @@
+diff --git a/config.js b/config.js
 --- a/config.js
 +++ b/config.js
 @@ -7,6 +7,29 @@
@@ -39,8 +40,8 @@
      authorization:require('../../lib/tenant-authorization/postgres-candidate.json'), secrets:require('../../lib/secrets/postgres-candidate.json'),
      legacy:require('../../lib/secrets/legacy-credentials-candidate.json'), access:require('../../lib/tenant-authorization/access-candidate.json'),
 -    clock:require('../../migrations/candidates/postgres-write-clock-v1.json'), rt_checkpoint:require('../../migrations/candidates/postgres-consumer-checkpoint-v1.json'),
--    eval_checkpoint:require('../../migrations/candidates/postgres-consumer-checkpoint-v1.json'), alarm:require('../../migrations/candidates/postgres-alarm-suppression-v1.json'),
 +    clock:require('../../migrations/candidates/postgres-write-clock-v1.json'), rt_checkpoint:require(require('./pgstream').enabled()?'../../migrations/candidates/postgres-realtime-output-v2.json':'../../migrations/candidates/postgres-consumer-checkpoint-v1.json'),
+-    eval_checkpoint:require('../../migrations/candidates/postgres-consumer-checkpoint-v1.json'), alarm:require('../../migrations/candidates/postgres-alarm-suppression-v1.json'),
 +    eval_checkpoint:require(require('./pgstream').enabled()?'../../migrations/candidates/postgres-evaluator-work-v2.json':'../../migrations/candidates/postgres-consumer-checkpoint-v1.json'), alarm:require('../../migrations/candidates/postgres-alarm-suppression-v1.json'),
      outbox:require('../../lib/tenant-notifications/postgres-candidate.json'),control:require('../../lib/tenant-lifecycle/postgres-candidate.json'),
 -    change_stamps:require('../../lib/change-stamps/postgres-candidate.json')};
@@ -57,7 +58,7 @@
    quote(prefix);
    if (prefix.length > 24) throw new TypeError('Deployment prefix too long');
 -  const names = ['api','readiness','realtime','evaluator','alarm','suppression','outbox','owner_writer','owner_reader','root_writer','operator','ownership_operator',
-+  const names = [...(require('./pgstream').enabled()?['pgstream']:[]),'api','readiness','realtime','evaluator','alarm','suppression','outbox','owner_writer','owner_reader','root_writer','operator','provisioner','display_reader','activity_reader','feed_reader','feed_listener','placement_publisher','ownership_operator','connector_writer','management_issuer','ui_registry',
++  const names = ['api','readiness','realtime','evaluator','alarm','suppression','outbox','owner_writer','owner_reader','root_writer','operator','provisioner','display_reader','activity_reader','feed_reader','feed_listener','placement_publisher','ownership_operator','connector_writer','management_issuer','ui_registry',
 +    ...(require('./evaluator-workers').selection() ? ['pool_member','pool_operator'] : []),
      ...serviceRoles.map(name=>'lifetime_'+name.replace('-','_'))];
 -  return {prefix,owner:prefix+'_owner',namespaces:Object.fromEntries(Object.keys(catalogues()).map(name=>[name,prefix+'_'+name])),
@@ -93,7 +94,7 @@
      schema('control',who);for(const name of ['schema_migrations','tenant_lifecycle_windows','tenant_lifecycle_operations'])grant('SELECT',table('control',name),who);
      if(who.startsWith('lifetime_')){
        grant('INSERT(tenant_id,operation_id,generation),UPDATE(finished)',table('control','tenant_lifecycle_operations'),who);
-@@ -119,14 +149,26 @@
+@@ -119,14 +149,25 @@
    // Decision change-stamp-definer-function: search_path pinned, EXECUTE for realtime and evaluator only;
    // both read the function's catalogue ledger at readiness (write-clock-complete: the evaluator adopts it).
    sql.push(...require('../../lib/change-stamps/postgres').grants({namespace:ns.change_stamps,clockNamespace:ns.clock,roles:[r.realtime,r.evaluator]}));
@@ -107,7 +108,6 @@
 +  sql.push(...require('../../lib/tenant-registry/provision').provisionerGrants({namespaces:require('./registry-plan').provisioningNamespaces(ns),role:r.provisioner,
 +    checkpoints:[{namespace:ns.rt_checkpoint},{namespace:ns.eval_checkpoint}]}));
 +  if(ns.pool)sql.push(...require('../../lib/pool-membership/postgres').grants({namespace:ns.pool,member:r.pool_member,operator:r.pool_operator}));
-+  sql.push(...require('../../lib/trusted-worker/postgres').grants({ namespaces: { activity: ns.control, clock: ns.clock, settings: ns.display_settings, operatorPolicy: ns.operator_policy }, roles: [r.evaluator, r.realtime] }));
    return sql;
  }
 -function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress}) {
@@ -124,7 +124,7 @@
    const pgAddress=new URL(urls.evaluator);
    const evaluator={version:1,datastore:{hostname:pgAddress.hostname,port:Number(pgAddress.port||5432),database:decodeURIComponent(pgAddress.pathname.slice(1))},postgres:{connectionEnv:'NS_EVALUATOR_PG',namespaces:{...domainNamespaces,clock:ns.clock,checkpoint:ns.eval_checkpoint,changeStamps:ns.change_stamps}},
      consumer:'evaluator-compose-demo',...limits,timeIntervalMs:1000,socketOrderDomains:['treatments','devicestatus','profile'],tenants,
-@@ -146,7 +188,7 @@
+@@ -146,7 +187,7 @@
      vault:{address:vaultAddress,mount:l.mount,timeoutMs:5000},resolution:{mode:'direct-alias'},tenants:tenants.map((tenant,i)=>({id:tenant.id,aliases:aliases[i],settings:tenant.settings,
        vault:{tokenEnv:'NS_VAULT_'+i,encryptionKey:'tenant-'+i+'-data',signingKey:'tenant-'+i+'-signing',signingVersion:1}})),
      accessTokens:{issuer:'nightscout-compose-demo',audience:'nightscout-data',keys:publicKeys},
@@ -133,7 +133,7 @@
        alarm:{connectionEnv:'NS_ALARM_PG',namespace:ns.alarm},consumerState:{evaluatorConfigEnv:'MULTITENANT_EVALUATOR_CONFIG'}}};
    const owner={version:1,postgres:{writerConnectionEnv:'NS_OWNER_WRITER_PG',accessConnectionEnv:'NS_OWNER_READER_PG',namespaces:{authorization:ns.authorization,credentials:ns.legacy,access:ns.access}},
      ownerPolicy:{catalogue:ownerCatalogue.slice()},resolution:{mode:'direct-alias'},tenants:api.tenants.map(({id,aliases})=>({id,aliases})),
-@@ -157,35 +199,66 @@
+@@ -157,35 +198,62 @@
    const socketOf=role=>ipc+'/'+role+'.sock';
    const common={...Object.fromEntries(serviceRoles.map(role=>[require('../../lib/server/internal-api/listener-config').envName(role)+'SOCKET',socketOf(role)])),NODE_EXTRA_CA_CERTS:'/run/ns-ca/ca.crt'};
    const own=role=>({NS_SERVE_INTERNAL_SOCKET:socketOf(role)});
@@ -175,10 +175,6 @@
      catalogues:Object.entries(tables).map(([name,tables])=>({kind:aliases[name]||name,candidate:selected[name],tables,secrets:name==='secrets'?['secret_records']:[]}))};
  }
  function validateFiles(directory, docs) {
-+  const evaluated=docs.configs.evaluator;
-+  if(evaluated.pgstream)for(const [role,config]of Object.entries(docs.configs))if(role==='realtime'||role.startsWith('realtime-')){
-+    if(config.changeFeed||config.completedOutput?.namespace!==evaluated.postgres.namespaces.checkpoint||config.completedOutput?.consumer!==evaluated.consumer)throw new TypeError('PGSTREAM_COMPLETED_SOURCE_MISMATCH');
-+  }
    const parsers={api:require('../../lib/server/serve/preview-config').load,realtime:require('../../lib/server/realtime/config').load,
      evaluator:require('../../lib/server/serve/evaluator-config').load,'tenant-admin':require('../../lib/server/serve/owner-preview-config').load};
    const namespaces=require('../../lib/server/serve/operation-cohort').protectedNamespaces;
@@ -216,6 +212,7 @@
 +  require('./ui').parseConfig(fs.existsSync(uiFile)?JSON.parse(fs.readFileSync(uiFile,'utf8')):docs.ui);
 +}
 +module.exports={A,B,subject,tenantCount,tenantIds,tenantAlias,clinical,ordered,serviceRoles,quote,catalogues,layout,insertionGrants,grants,documents,lifecycle,validateFiles};
+diff --git a/demo.js b/demo.js
 --- a/demo.js
 +++ b/demo.js
 @@ -38,14 +38,24 @@
@@ -268,6 +265,7 @@
    if (value?.status !== status) throw fail('COMPOSE_DEMO_HTTP_SHAPE');
    return value;
  }
+diff --git a/health.js b/health.js
 --- a/health.js
 +++ b/health.js
 @@ -7,16 +7,24 @@
@@ -309,20 +307,12 @@
 +  if (reply.request !== request || reply.participant !== operation.participantId || JSON.stringify(reply.roles) !== JSON.stringify([role])) throw new Error();
  }
  main().catch(() => { process.exitCode = 1; });
+diff --git a/restore.js b/restore.js
 --- a/restore.js
 +++ b/restore.js
-@@ -12,14 +12,15 @@
- const validName = value => typeof value === 'string' && NAME.test(value) && value !== 'public' && value !== 'information_schema' && !value.startsWith('pg_');
- const exact = (v, keys) => v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).every(k => keys.includes(k)) && keys.every(k => Object.hasOwn(v, k));
- 
--function validateConfig (value, env = process.env) {
-+function validateConfig (value, env = process.env, requireTokens = true) {
-   if (!exact(value, ['version', 'tenants', 'apiOrigin', 'control', 'namespaces', 'catalogues', 'drainTimeoutMs']) || value.version !== 1 ||
-       !Number.isSafeInteger(value.drainTimeoutMs) || value.drainTimeoutMs < 1 || value.drainTimeoutMs > 2147483647 ||
-       !Array.isArray(value.tenants) || value.tenants.length !== 2 ||
+@@ -19,7 +19,8 @@
        !value.tenants.every(t => exact(t, ['id', 'host', 'tokenEnv']) && UUID.test(t.id) && /^[a-z0-9.-]+$/.test(t.host) &&
--        /^[A-Z][A-Z0-9_]*$/.test(t.tokenEnv) && typeof env[t.tokenEnv] === 'string' && env[t.tokenEnv].length > 0) ||
-+        /^[A-Z][A-Z0-9_]*$/.test(t.tokenEnv) && (!requireTokens || typeof env[t.tokenEnv] === 'string' && env[t.tokenEnv].length > 0)) ||
+         /^[A-Z][A-Z0-9_]*$/.test(t.tokenEnv) && typeof env[t.tokenEnv] === 'string' && env[t.tokenEnv].length > 0) ||
        new Set(value.tenants.map(t => t.id)).size !== 2 || new Set(value.tenants.map(t => t.host)).size !== 2 ||
 -      !exact(value.control, ['namespace', 'locks', 'participants']) || !validName(value.control.namespace) ||
 +      !exact(value.control, ['namespace', 'locks', 'participants', ...(Object.hasOwn(value.control || {}, 'registry') ? ['registry'] : [])]) || !validName(value.control.namespace) ||
@@ -391,63 +381,13 @@
    const { Pool } = require('pg');
    const pool = new Pool({ connectionString: env.NS_OPERATOR_PG, max: 1, connectionTimeoutMillis: 5000,
      statement_timeout: 10000, options: '-c search_path=pg_catalog' });
-@@ -115,6 +113,50 @@
-     if (!committed) throw fail('COMPOSE_RESTORE_COMMIT_NOT_OBSERVED');
-     return result;
-   } finally { try { await cohort.close(); } finally { await pool.end(); } }
-+}
-+
-+// The admitted entry owns construction; this adapter accepts only its branded
-+// context. Preserve registry scope and the selected private placement manifest.
-+function validateRecoveryConfig(value,env){return validateConfig(value,env,false);}
-+async function recoveryCohort(config,env){return require('../../lib/server/serve/operation-cohort').createRemote({namespace:config.control.namespace,tenants:cohortTenants(config),participants:config.control.participants,placement:operationPlacement(env)});}
-+function recoveryController(config,cohort,context){
-+ if(!require('./lifecycle-operator-entry').isContext(context))throw fail('LIFECYCLE_OPERATOR_CONTEXT');
-+ context.check();return require('../../lib/tenant-lifecycle/restore-resume').create({namespace:config.control.namespace,locks:config.control.locks,pool:context.pool,cohort,statementTimeoutMs:10000,lockWaitMs:2000});
-+}
-+// SOURCE-only admitted capture/restore boundary. The fixed entry owns the
-+// branded pool; no constructor or startup acquisition is invented here.
-+function admittedContext(context) {
-+  if (!require('./lifecycle-operator-entry').isContext(context)) throw fail('LIFECYCLE_OPERATOR_CONTEXT');
-+  context.check();
-+}
-+async function admittedCapture(config, tenant, context, env = process.env) {
-+  admittedContext(context); tenantFor(config, tenant);
-+  const lifecycle = lifecycleFor(config);
-+  const snapshot = require('./lifecycle-snapshot').create(context,{catalogues:lifecycle.admittedCatalogue(),namespaces:config.namespaces,sourceCommit:env.NS_SOURCE_COMMIT});
-+  const artifact = await lifecycle.exportTenant(snapshot, { tenant, namespaces: config.namespaces, sourceCommit: env.NS_SOURCE_COMMIT });
-+  context.check(); return artifact;
-+}
-+async function admittedRestore(config, artifact, context, env = process.env, hooks = {}) {
-+  admittedContext(context);
-+  const tenant = tenantFor(config, artifact?.manifest?.tenant), lifecycle = lifecycleFor(config);
-+  let cohort, controller;
-+  try {
-+    cohort = await recoveryCohort(config, env); context.check();
-+    controller = require('../../lib/tenant-lifecycle/maintenance-window').create({ namespace: config.control.namespace,
-+      locks: config.control.locks, pool: context.pool, cohort, drainTimeoutMs: config.drainTimeoutMs });
-+    let committed = false;
-+    const result = await controller.withRestore(tenant, { artifactDigest: artifact.digest }, async ({ connection, maintenanceClaim }) => {
-+      context.check();
-+      if (hooks.beforeData) await hooks.beforeData();
-+      context.check();
-+      return lifecycle.restoreLogical(connection, artifact, { tenant, namespaces: config.namespaces, ledgerNamespace: config.control.namespace, maintenanceClaim,
-+        ...(hooks.onRow ? { onRow: hooks.onRow } : {}), onCommitted: async summary => {
-+          context.check(); committed = true; if (hooks.onCommitted) await hooks.onCommitted(summary); context.check();
-+        } });
-+    });
-+    context.check(); if (!committed) throw fail('COMPOSE_RESTORE_COMMIT_NOT_OBSERVED');
-+    return result;
-+  } finally { try { await controller?.close(); } finally { await cohort?.close(); } }
- }
- 
- function argumentsFor (args) {
-@@ -152,4 +194,4 @@
+@@ -152,4 +150,4 @@
      recovery: 'Inspect persisted operation state. Do not automatically replay or reopen the tenant.' }) + '\n');
    process.exitCode = 1;
  });
 -module.exports = { validateConfig, loadConfig, lifecycleFor, tenantFor, ready, capture, restore, argumentsFor, main };
-+module.exports = { admittedCapture, admittedRestore, validateRecoveryConfig, recoveryCohort, recoveryController, validateConfig, loadConfig, lifecycleFor, tenantFor, cohortTenants, ready, capture, restore, argumentsFor, main };
++module.exports = { validateConfig, loadConfig, lifecycleFor, tenantFor, cohortTenants, ready, capture, restore, argumentsFor, main };
+diff --git a/ui.js b/ui.js
 --- a/ui.js
 +++ b/ui.js
 @@ -1,6 +1,6 @@
