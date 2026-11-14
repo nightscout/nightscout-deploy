@@ -2,7 +2,7 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),crypto=require('node:crypto'),{spawnSync}=require('node:child_process');
 const recovery=require('./pgstream-rebootstrap');
 const digest=value=>crypto.createHash('sha256').update(value).digest('hex');
-const routes=[['clock','tenant_write_clock'],['settings','tenant_settings'],['policy','tenant_operator_policy'],['control','tenant_activity'],['control','tenant_lifecycle_windows'],['checkpoint','tenant_consumer_checkpoint'],['clock','nightscout_heartbeat']].map(([schema,table])=>({schema,table}));
+const routes=[['clock','tenant_write_clock'],['settings','tenant_settings'],['policy','tenant_operator_policy'],['control','tenant_activity'],['control','tenant_lifecycle_windows'],['clock','nightscout_heartbeat']].map(([schema,table])=>({schema,table}));
 function fixture(action='create-missing'){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'pgstream-rebootstrap-')),state=path.join(root,'state'),deployment=path.join(root,'deployment');fs.mkdirSync(deployment);fs.mkdirSync(path.join(state,'bootstrap'),{recursive:true});fs.mkdirSync(path.join(state,'evaluator'));
  const config={consumer:'synthetic',postgres:{namespaces:{clock:'clock',checkpoint:'checkpoint'}},trustedWorker:{settings:'settings',operatorPolicy:'policy',activity:'control'},pgstream:{slot:'selected_slot',streamRole:'stream_reader',receiverPort:19913}};

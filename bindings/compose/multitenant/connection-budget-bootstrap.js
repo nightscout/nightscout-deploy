@@ -41,7 +41,7 @@ function prepare({options,docs,writePrivate}){
   plan={...plan,sha256:B.hash(plan)};
   if(plan.version===2)require('./control-recovery').ledger(plan);
  }
- for(const env of [...Object.values(docs.environments),docs.admin.environment,docs.feed.environment,docs.uiEnvironment])env.NS_SOURCE_COMMIT=options.sourceCommit;
+ for(const env of [...Object.values(docs.environments),docs.admin.environment,docs.uiEnvironment])env.NS_SOURCE_COMMIT=options.sourceCommit;
  const own={uid:options.uid,gid:options.gid},base=path.join(options.output,'connection-budget');
  writePrivate(path.join(base,'plan.json'),plan,own,{compact:true});
  // A private directory mount preserves the reader's parent-custody contract.

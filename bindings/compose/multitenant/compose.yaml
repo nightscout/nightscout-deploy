@@ -72,15 +72,13 @@ services:
       NODE_EXTRA_CA_CERTS: /run/ns-ca/ca.crt
       VAULT_ADDR: https://vault:8200
       NS_COMPOSE_BOOTSTRAP: "1"
-      NS_PGSTREAM: ${NS_PGSTREAM:-0}
+      NS_PGSTREAM: ${NS_PGSTREAM:-1}
       NS_DEPLOY_COMMIT: ${NS_DEPLOY_COMMIT:?Run prepare.js first}
       NS_DEMO_TENANTS: ${NS_DEMO_TENANTS:-2}
       # Fixed service instances; maintenance still addresses every exact instance.
       NS_API_REPLICAS: ${NS_API_REPLICAS:-1}
       NS_OPERATION_LEASE_SESSIONS: ${NS_OPERATION_LEASE_SESSIONS:-4}
       # Off when empty. Healthy feed rotation period for evaluator and realtime (registry-plan.js).
-      NS_FEED_SWEEP_MS: ${NS_FEED_SWEEP_MS:-}
-      NS_FEED_HEARTBEAT_TIMEOUT_MS: ${NS_FEED_HEARTBEAT_TIMEOUT_MS:-}
       # Off when empty. Large tenant counts only: see bootstrap.js input().
       NS_BOOTSTRAP_CONFIG_MAX_BYTES: ${NS_BOOTSTRAP_CONFIG_MAX_BYTES:-}
       NS_BOOTSTRAP_OUTPUT: /state
@@ -89,18 +87,6 @@ services:
       NS_POSTGRES_PASSWORD_FILE: /state/bootstrap/postgres-password
     volumes:
       - ${NS_DEMO_STATE}:/state
-      - ${NS_DEMO_STATE}/tls/ca.crt:/run/ns-ca/ca.crt:ro
-
-  # Dedicated metadata reader; its cgroup protects this process, not PostgreSQL.
-  # Consumer backstops and alerts remain authoritative if the reader is degraded.
-  feed-reader:
-    <<: *app
-    command: [node, deploy/multitenant/entrypoint.js, feed-reader]
-    mem_limit: 384m
-    depends_on:
-      postgres: {condition: service_healthy}
-    volumes:
-      - ${NS_DEMO_STATE}/feed-reader:/run/ns-config:ro
       - ${NS_DEMO_STATE}/tls/ca.crt:/run/ns-ca/ca.crt:ro
 
   # Operator provisioning is a private network service, never published.

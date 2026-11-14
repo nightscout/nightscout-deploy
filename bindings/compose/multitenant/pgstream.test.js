@@ -10,7 +10,8 @@ test('selected pgstream documents, raw-to-wire config and completed-consumer pro
   assert.equal(new URL(wire.source.postgres.url).searchParams.get('sslmode'),'disable');
   assert.equal(new URL(wire.target.webhooks.subscriptions.store.url).searchParams.get('pool_max_conns'),'2');
   assert.equal(wire.target.webhooks.notifier.strict_mode,true);
-  assert.match(wire.source.postgres.replication.plugin.add_tables,/tenant_consumer_checkpoint/);
+  assert(!wire.source.postgres.replication.plugin.add_tables.includes('tenant_consumer_checkpoint'));
+  assert.equal(wire.source.postgres.replication.plugin.add_tables.split(',').length,6);
   const heartbeat=require('../../lib/pgstream/evaluator').routes({...evaluator,namespaces:evaluator.postgres.namespaces}).find(row=>row.kind==='heartbeat');
   assert.equal(heartbeat.schema,evaluator.postgres.namespaces.clock);
   assert.notEqual(heartbeat.schema,'pgstream','upstream drops internal-schema DML before webhook delivery');

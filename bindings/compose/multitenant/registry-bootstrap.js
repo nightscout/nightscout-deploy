@@ -24,7 +24,7 @@ async function finish({ options, request, rootToken, layout, roleURLs, writePriv
   const provisioningToken = await token('provisioner', [rule('keys/tenant-*', ['create','read','update']), rule('encrypt/tenant-data-*', ['update'])]);
   const realtimePlacement = require('./realtime-workers').selection() ? JSON.parse(fs.readFileSync(path.join(output, 'placement/backend.json'), 'utf8')) : null;
   const docs = plan.documents({ layout: l, urls: roleURLs, tokens: [], publicKeys: [], managementKeys: [], vaultAddress: options.vault.origin, registryMode: true, realtimePlacement });
-  if(options.connectionBudgetProfile)for(const env of [...Object.values(docs.environments),docs.admin.environment,docs.feed.environment,docs.uiEnvironment])env.NS_SOURCE_COMMIT=sourceCommit;
+  if(options.connectionBudgetProfile)for(const env of [...Object.values(docs.environments),docs.admin.environment,docs.uiEnvironment])env.NS_SOURCE_COMMIT=sourceCommit;
   for (const role of Object.keys(docs.configs)) {
     const dir = path.join(output, role);
     writePrivate(path.join(dir, 'env.json'), docs.environments[role], own, compact);
@@ -40,8 +40,6 @@ async function finish({ options, request, rootToken, layout, roleURLs, writePriv
   writePrivate(path.join(output, 'admin', 'config.json'), docs.admin.config, own, compact);
   writeToken(path.join(output, 'admin', 'vault-token'), provisioningToken);
   writeToken(path.join(output, 'admin', 'management-vault-token'), managementToken);
-  writePrivate(path.join(output, 'feed-reader', 'env.json'), docs.feed.environment, own, compact);
-  writePrivate(path.join(output, 'feed-reader', 'config.json'), docs.feed.config, own, compact);
   writePrivate(path.join(output, 'ui', 'config.json'), docs.ui, own, compact);
   writePrivate(path.join(output, 'ui', 'env.json'), docs.uiEnvironment, own, compact);
   const source = configMaxBytes === undefined ? docs : { ...docs, environments: Object.fromEntries(Object.entries(docs.environments).map(([role, env]) => [role, { ...env, MULTITENANT_CONFIG_MAX_BYTES: String(configMaxBytes) }])) };

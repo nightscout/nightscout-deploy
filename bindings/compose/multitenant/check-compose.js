@@ -71,7 +71,7 @@ function checkPublisher(config) {
 function check (config) {
   checkNetworks(config);
   checkPublisher(config);
-  const runtime = ['api', 'realtime', 'evaluator', 'tenant-admin', 'ui', 'nginx', 'admin', 'feed-reader', ...Object.keys(config.services).filter(name => /^api-\d+$/.test(name))];
+  const runtime = ['api', 'realtime', 'evaluator', 'tenant-admin', 'ui', 'nginx', 'admin', ...Object.keys(config.services).filter(name => /^api-\d+$/.test(name))];
   for (const name of runtime) {
     const service = config.services[name];
     assert(service, 'Missing service: ' + name);
