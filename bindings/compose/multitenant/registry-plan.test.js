@@ -31,7 +31,7 @@ test('registry role documents have no static roster or per-tenant key lists and 
     assert.equal(docs.admin.environment.ADMIN_HOSTNAME, 'admin');
     assert.equal(docs.admin.environment.ADMIN_INSECURE_BIND_ACKNOWLEDGED, 'true');
     assert.equal(docs.configs.api.postgres.namespaces.settings.endsWith('_settings'), true);
-    assert.equal(docs.admin.config.provisioning.checkpoints.length, 2);
+    assert.equal(docs.admin.config.provisioning.checkpoints.length, 3);
     assert.equal(docs.operations.api.leaseSessions, 4);
     for (const participant of docs.operations.api.participants) assert(!participant.namespaces.includes(docs.operations.api.namespace));
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
@@ -88,15 +88,41 @@ test('bounded lifetime-session selection is explicit and cannot exceed the selec
   for (const raw of ['0','9','2.5','bad']) assert.throws(() => select({ NS_OPERATION_LEASE_SESSIONS: raw }));
 });
 
-test('raw LISTEN transport has a distinct login without any table, function or replication grant',()=>{
-  const {layout,urls,docs}=generated();
-  assert.notEqual(layout.roles.feed_listener,layout.roles.feed_reader);
-  for(const role of ['realtime','evaluator']){
-    assert.equal(docs.configs[role].changeFeed.connectionEnv,'NS_FEED_LISTENER_PG');
-    assert.equal(docs.environments[role].NS_FEED_LISTENER_PG,urls.feed_listener);
-    assert.notEqual(urls.feed_listener,urls[role]);
+test('maintained capture and typed completed delivery replace the retired feed roles and configuration',()=>{
+  const {layout,docs}=generated(),evaluator=docs.configs.evaluator,realtime=docs.configs.realtime;
+  assert.equal(layout.roles.feed_reader,undefined);assert.equal(layout.roles.feed_listener,undefined);
+  assert.equal(evaluator.pgstream.streamRole,layout.roles.pgstream);
+  assert.equal(realtime.completedOutput.namespace,layout.namespaces.eval_checkpoint);
+  assert.equal(realtime.completedOutput.consumer,evaluator.consumer);
+  assert.deepEqual(Object.keys(realtime.postgres.namespaces).sort(),['checkpoint','clock']);
+  for(const role of ['evaluator','realtime']){
+    const config=docs.configs[role];
+    for(const key of ['changeFeed','recoveryIntervalMs','settingsRefreshMs'])assert.equal(Object.hasOwn(config,key),false,role+': '+key);
+    assert.equal(Object.hasOwn(config.postgres.namespaces,'changeStamps'),false);
+    assert.equal(Object.keys(docs.environments[role]).some(key=>key.startsWith('NS_FEED_')),false);
   }
-  assert.ok(!plan.grants(layout).some(sql=>sql.includes('"'+layout.roles.feed_listener+'"')),'LISTEN needs no schema/table/function grants');
+  assert.equal(Object.hasOwn(realtime,'pageSize'),false);assert.equal(Object.hasOwn(realtime,'socketOrderDomains'),false);
+  const routes=require('../../lib/pgstream/evaluator').routes({...evaluator,namespaces:evaluator.postgres.namespaces});
+  assert.deepEqual(routes.map(row=>row.kind).sort(),['activity','clock','heartbeat','lifecycle','policy','settings']);
+  assert.equal(routes.some(row=>row.table==='tenant_consumer_checkpoint'),false,'completed output is handed off after commit rather than recaptured');
+  const typed=docs.admin.config.provisioning.checkpoints.find(row=>row.consumer===evaluator.consumer+'-completed');
+  const receipt=docs.admin.config.provisioning.checkpoints.find(row=>row.consumer===realtime.consumer);
+  assert.equal(typed.namespace,realtime.completedOutput.namespace);
+  assert.equal(receipt.namespace,realtime.postgres.namespaces.checkpoint);
+  assert.equal(receipt.digest,require('../../lib/pgstream/realtime-receipt').contractDigest(receipt.namespace,receipt.consumer));
+});
+
+test('realtime base grants retain narrow metadata reads and revoke raw clinical and immutable cursor privileges',()=>{
+  const {layout}=generated(),role='"'+layout.roles.realtime+'"';
+  const rows=plan.grants(layout).filter(sql=>sql.endsWith(' TO '+role)||sql.endsWith(' FROM '+role));
+  const clinical=['entries','treatments','devicestatus','profile','food','activity'];
+  for(const domain of clinical){
+    const table='"'+layout.namespaces[domain]+'"."'+domain+'"';
+    assert(rows.includes('REVOKE SELECT ON '+table+' FROM '+role));
+    assert.equal(rows.some(sql=>sql.startsWith('GRANT ')&&sql.includes('ON '+table+' ')),false,'raw clinical SELECT is not a realtime capability');
+  }
+  assert(rows.includes('GRANT SELECT ON "'+layout.namespaces.rt_checkpoint+'"."tenant_consumer_checkpoint" TO '+role));
+  assert(rows.includes('REVOKE UPDATE(checkpoint,projection,contract_digest) ON "'+layout.namespaces.rt_checkpoint+'"."tenant_consumer_checkpoint" FROM '+role));
 });
 
 test('placement publication has readonly control metadata and registry enumeration, without maintenance identity',()=>{
@@ -107,35 +133,17 @@ test('placement publication has readonly control metadata and registry enumerati
   for(const sql of grants){assert.ok(!/INSERT|UPDATE|DELETE|REPLICATION|tenant_lifecycle_backend_birth|ALL TABLES/.test(sql),sql);}
 });
 
-test('NS_FEED_SWEEP_MS is off when empty and selects a bounded healthy rotation period for both feed consumers', () => {
-  const { feedSweep } = require('./registry-plan');
-  assert.deepEqual(feedSweep({}), {}); assert.deepEqual(feedSweep({ NS_FEED_SWEEP_MS: '' }), {});
-  assert.deepEqual(feedSweep({ NS_FEED_SWEEP_MS: '30000' }), { sweepMs: 30000 });
-  for (const raw of ['999', '30001', '0', '1e4', '10000.5', 'on']) assert.throws(() => feedSweep({ NS_FEED_SWEEP_MS: raw }), { code: 'FEED_SWEEP_INVALID' });
-  const saved = process.env.NS_FEED_SWEEP_MS;
-  try {
-    delete process.env.NS_FEED_SWEEP_MS;
-    const off = generated().docs.configs;
-    for (const role of ['evaluator', 'realtime']) assert.equal(Object.hasOwn(off[role].changeFeed, 'sweepMs'), false, 'unset leaves the generated configuration as it was');
-    process.env.NS_FEED_SWEEP_MS = '30000';
-    const on = generated().docs.configs;
-    for (const role of ['evaluator', 'realtime']) assert.equal(on[role].changeFeed.sweepMs, 30000);
-    assert.equal(on.evaluator.changeFeed.pageSize, 256); assert.equal(on.evaluator.changeFeed.degradedPages, 4);
-  } finally { if (saved === undefined) delete process.env.NS_FEED_SWEEP_MS; else process.env.NS_FEED_SWEEP_MS = saved; }
+test('maintained capture health bounds are distinct from evaluator due work and realtime delivery retries',()=>{
+  const {docs}=generated(),evaluator=docs.configs.evaluator,realtime=docs.configs.realtime;
+  const bounds=evaluator.pgstream.bounds;
+  assert(bounds.heartbeatMs>0&&bounds.stallMs>=bounds.heartbeatMs);
+  assert(bounds.stepMs>0&&bounds.recoveryMs>=bounds.stepMs&&bounds.pendingMs>0);
+  assert.equal(evaluator.timeIntervalMs,60000);
+  assert.equal(Object.hasOwn(realtime,'pgstream'),false,'one evaluator-owned input capture');
+  assert.equal(Object.hasOwn(realtime,'recoveryIntervalMs'),false,'realtime drains addressed durable work');
+  const directory=files(docs);try{plan.validateFiles(directory,docs);}finally{fs.rmSync(directory,{recursive:true,force:true});}
 });
 
-test('explicit consumer heartbeat horizon preserves default and is parsed by actual product config',()=>{
- const compose=require('js-yaml').load(fs.readFileSync(path.join(__dirname,'compose.yaml'),'utf8'));assert.equal(compose.services.bootstrap.environment.NS_FEED_HEARTBEAT_TIMEOUT_MS,'${NS_FEED_HEARTBEAT_TIMEOUT_MS:-}');
- const {feedHeartbeat}=require('./registry-plan');assert.equal(feedHeartbeat({}),5000);assert.equal(feedHeartbeat({NS_FEED_HEARTBEAT_TIMEOUT_MS:''}),5000);
- for(const raw of ['100','5000','300000'])assert.equal(feedHeartbeat({NS_FEED_HEARTBEAT_TIMEOUT_MS:raw}),Number(raw));
- for(const raw of ['99','300001','0','0100','1e3','100.5','true',false,100,null])assert.throws(()=>feedHeartbeat({NS_FEED_HEARTBEAT_TIMEOUT_MS:raw}),{code:'FEED_HEARTBEAT_INVALID'});
- const saved=process.env.NS_FEED_HEARTBEAT_TIMEOUT_MS;
- try{
-  delete process.env.NS_FEED_HEARTBEAT_TIMEOUT_MS;const off=generated().docs;for(const role of ['evaluator','realtime'])assert.equal(off.configs[role].changeFeed.heartbeatTimeoutMs,5000);
-  process.env.NS_FEED_HEARTBEAT_TIMEOUT_MS='300000';const on=generated().docs,directory=files(on);
-  try{for(const role of ['evaluator','realtime']){assert.equal(on.configs[role].changeFeed.heartbeatTimeoutMs,300000);assert.equal(on.configs[role].changeFeed.intervalMs,1000);assert.equal(on.configs[role].changeFeed.pageSize,256);assert.equal(Object.hasOwn(on.configs[role].changeFeed,'sweepMs'),Object.hasOwn(off.configs[role].changeFeed,'sweepMs'));}plan.validateFiles(directory,on);}finally{fs.rmSync(directory,{recursive:true,force:true});}
- }finally{if(saved===undefined)delete process.env.NS_FEED_HEARTBEAT_TIMEOUT_MS;else process.env.NS_FEED_HEARTBEAT_TIMEOUT_MS=saved;}
-});
 test('trusted workers receive ordinary cross-tenant metadata SELECT; public roles keep tenant policies', () => {
   const { layout, docs } = generated(), ns = layout.namespaces;
   const expected = { activity: ns.control, clock: ns.clock, settings: ns.display_settings, operatorPolicy: ns.operator_policy };

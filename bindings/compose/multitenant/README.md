@@ -50,7 +50,7 @@ build input and that commit for this directory, byte for byte (only `.env`,
 both (`org.opencontainers.image.revision`, `org.nightscout.deploy.revision`).
 
 `bootstrap` prepares infrastructure only: schemas, grants, role configurations,
-the private admin service and the metadata feed. `up` starts the private admin,
+the private admin service and maintained pgstream capture metadata. `up` starts the private admin,
 provisions the seed through its versioned API, explicitly commissions the private
 restore operator for that synthetic cohort, starts the API instances, and runs
 a separate lab-priming API client before starting realtime/evaluator and ingress.
@@ -62,9 +62,11 @@ ownership operations and durable connector-source configuration on separate
 database identities. Connector definitions contain secret references, never
 plaintext endpoint credentials. The private restore operator uses the same exact registry cohort label as the
 serving participants; the synthetic seed list selects demonstration tenants.
-Hint listeners use a separate login with no table, private function or replication
-grants. Clinical truth and recovery reads stay on each role's registered storage
-connection. Partial setup is refused; source
+The evaluator owns the maintained pgstream capture through its registered stream
+login. It commits durable evaluation work and hands completed output to realtime
+over the private service boundary. Clinical reads stay on the evaluator's
+registered storage connection; realtime reads typed completed output and current
+presentation/control metadata. Partial setup is refused; source
 and deployment revision changes require fresh synthetic state.
 
 nginx waits only for the services it routes to, including each API instance.
@@ -248,12 +250,15 @@ lifetimes and restore exclusion remain protected. Unselected application profile
 retain their prior operation path. Four is a synthetic measurement profile, not
 a portable throughput claim; record it alongside the pool sizes.
 
-`NS_FEED_SWEEP_MS` at bootstrap (off when empty; 1000 to 30000) sets the period in which the
-evaluator's and realtime's healthy feed rotation covers every tenant. Unset, each healthy tick
-rechecks one page of 256 tenants, so a deployment of 256 tenants or fewer rechecks every tenant every
-second. A tenant with a change hint (a write, a pause or suspend, a settings change) is still checked
-on the next tick, and a degraded feed still rotates full pages; the value bounds only how long a lost
-hint can go unnoticed. It needs a core that accepts `changeFeed.sweepMs`.
+The maintained evaluator owns input/control capture and durable evaluation work.
+Realtime consumes its typed completed output and durable delivery receipts. The
+same committed registry/settings authority builds both roles' tenant identities.
+Realtime reads current presentation/control metadata on addressed work, and
+retains bounded startup, recovery and failed-delivery work. Warm tenants have no
+periodic discovery sweep. Fixed capture health checks are separate from actual
+clinical due instants and realtime delivery retries. The deployment provisions
+independent realtime receipt, evaluator clinical checkpoint and typed completed
+output rows; restore inventory includes their selected catalogue families.
 
 The opted-in `shipping-sharding.integration.test.js` first proves every fixed API
 instance × synthetic seed tenant through a private, authorized status GET. A bare
@@ -329,15 +334,6 @@ Its private once-only journal refuses a repeated qualification run. It performs
 no container lifecycle, SQL seeding, membership or settings mutation. A skipped
 native test is UNMEASURED, not deployment acceptance.
 
-
-`NS_FEED_HEARTBEAT_TIMEOUT_MS` at bootstrap optionally selects the existing
-consumer heartbeat timeout for both evaluator and realtime, from 100 to 300000
-milliseconds. Absent or empty preserves 5000. It is forwarded explicitly to
-bootstrap and captured in generated role configurations; changing it after
-bootstrap does not change a running consumer. This bounded selector supports
-controlled fault experiments with the same configuration in both comparison
-arms; it is not a production timeout recommendation. It does not change the
-reader heartbeat cadence, sweep selection (OFF remains absent), or any data TTL.
 
 ## Explicit pgstream slot recovery
 

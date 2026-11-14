@@ -8,9 +8,7 @@ project=$(node project.js)
 compose=(docker compose --project-name "$project" --env-file .env -f compose.yaml)
 realtime_services="realtime"
 evaluator_services="evaluator"
-feed_services="feed-reader"
 if [ -f .env ]; then
-  if [[ "$(<.env)" == *NS_PGSTREAM=1* ]]; then feed_services=""; fi
   replica_file=$(node -e 'const fs=require("node:fs"),path=require("node:path");const lines=fs.readFileSync(".env","utf8").split("\n");const line=lines.find(x=>x.startsWith("NS_DEMO_STATE="));if(!line)process.exit(1);process.stdout.write(path.join(line.slice(14),"compose.replicas.yaml"));')
   [ -f "$replica_file" ] && compose+=(-f "$replica_file")
   evaluator_file="$(dirname "$replica_file")/compose.evaluator.yaml"
@@ -58,7 +56,7 @@ case "${1:-}" in
     fi
     node build.js --check-image
     "${compose[@]}" --profile ops run --rm bootstrap
-    "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 90 admin $feed_services
+    "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 90 admin
     "${compose[@]}" --profile ops run --rm primer node deploy/multitenant/prime.js provision
     "${compose[@]}" --profile ops run --rm --no-deps bootstrap node deploy/multitenant/commission-restore.js
     "${compose[@]}" --profile ops run --rm --no-deps primer node deploy/multitenant/evaluator-pool.js initialize
