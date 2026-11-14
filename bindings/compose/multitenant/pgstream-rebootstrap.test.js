@@ -16,13 +16,14 @@ function fixture(action='create-missing'){
  p.containers=rows.map(row=>({cid:row.Id,imageId:row.Image,service:row.Config.Labels['com.docker.compose.service'],startedAt:row.State.StartedAt,configHash:row.Config.Labels['com.docker.compose.config-hash']}));
  const subscriptions=routes.map(row=>({url:'http://127.0.0.1:19913/pgstream',schema_name:row.schema,table_name:row.table,event_types:['D','I','U']}));subscriptions.push({url:subscriptions[0].url,schema_name:'',table_name:'',event_types:['M']});
  const row={database:database.name,databaseOid:database.oid,systemIdentifier:database.systemIdentifier,postmasterStartedAt:database.postmasterStartedAt,otherClients:0,role:{replication:true,super:false,bypass:false,nonowner:true,grants:true},slot:action==='create-missing'?null:{name:p.slot,database:database.name,plugin:'wal2json',active:false,status:'lost',restart:null},subscriptions};
+ fs.writeFileSync(p.composeFiles[0],'{}');p.approvedHistoricalComposeFiles=[{path:p.composeFiles[0],sha256:digest('{}')}];
  const data={hashes:Object.fromEntries(p.containers.map(row=>[row.service,row.configHash])),rows,compose:{services:Object.fromEntries(services.map(service=>[service,{image:service==='postgres'?postgresImageId:imageId}]))},image:[{Id:imageId,Config:{Labels:{'org.opencontainers.image.revision':source.coreCommit,'org.nightscout.deploy.revision':source.deployCommit}}}],row,mutations:0,commands:[]};
  const manifest=path.join(root,'plan.json');fs.writeFileSync(manifest,JSON.stringify(p));return {root,p,data,manifest,cleanup:()=>fs.rmSync(root,{recursive:true,force:true})};
 }
 function fake(args,input){
  const fs=require('node:fs');const file=process.env.REBOOTSTRAP_TEST_PLATFORM;const d=JSON.parse(fs.readFileSync(file));d.commands.push(args);
  let output;
- if(args[0]==='compose')output=args.includes('--hash')?Object.entries(d.hashes).map(([service,hash])=>service+' '+hash).join('\n'):JSON.stringify(d.compose);
+ if(args[0]==='compose'){const files=args.flatMap((arg,index)=>arg==='-f'?[args[index+1]]:[]),hashes=d.hashesByFiles?.[JSON.stringify(files)]||d.hashes;output=args.includes('--hash')?Object.entries(hashes).map(([service,hash])=>service+' '+hash).join('\n'):JSON.stringify(d.compose);}
  else if(args[0]==='ps')output=d.rows.map(row=>row.Id).join('\n');
  else if(args[0]==='inspect')output=JSON.stringify(d.rows);
  else if(args[0]==='image')output=JSON.stringify(d.image);
@@ -41,10 +42,21 @@ function cli(f){
 for(const action of ['create-missing','replace-lost'])test('callable host command '+action+' changes only exact slot and leaves all effects stopped',()=>{
  const f=fixture(action);try{const {q,data}=cli(f);assert.equal(q.status,0,q.stderr);assert.equal(data.mutations,1);assert.match(data.slotSQL,/pg_create_logical_replication_slot\('selected_slot','wal2json'\)/);assert.equal(/\b(?:UPDATE|INSERT|DELETE|CREATE TABLE|ALTER|GRANT|TRUNCATE)\b/.test(data.slotSQL),false);assert.equal(data.commands.some(args=>['start','stop','kill','run','restart'].includes(args[0])||args.includes('up')),false);assert.equal(JSON.parse(fs.readFileSync(f.p.receiptFile)).state,'SLOT_RECREATED_EFFECTS_STOPPED');assert.match(data.slotSQL,/pg_try_advisory_lock/);}finally{f.cleanup();}
 });
-test('callable host command accepts exact mixed override history with matching current effective hashes',()=>{
- const f=fixture();try{const frozen=f.p.composeFiles[0],overlay=path.join(f.p.deploymentDirectory,'observer.compose.json');f.p.composeFiles.push(overlay);f.p.environmentFile=path.join(f.root,'active-env');fs.renameSync(path.join(f.p.deploymentDirectory,'.env'),f.p.environmentFile);
-  for(const row of f.data.rows){const service=row.Config.Labels['com.docker.compose.service'],lineage=['postgres','vault','api'].includes(service)?[frozen]:[frozen,overlay];row.Config.Labels['com.docker.compose.project.config_files']=lineage.join(',');f.p.containers.find(expected=>expected.cid===row.Id).composeFiles=lineage;}
-  fs.writeFileSync(f.manifest,JSON.stringify(f.p));const {q,data}=cli(f);assert.equal(q.status,0,q.stderr);assert.equal(data.mutations,1);
+function mixedHistory(f){
+ const frozen=f.p.composeFiles[0],old=path.join(f.p.deploymentDirectory,'observer01.json'),current=path.join(f.p.deploymentDirectory,'effects.json');fs.writeFileSync(old,'{}');fs.writeFileSync(current,'{}');f.p.composeFiles=[frozen,current];f.p.approvedHistoricalComposeFiles=[frozen,old,current].map(file=>({path:file,sha256:digest(fs.readFileSync(file))}));
+ for(const row of f.data.rows){const service=row.Config.Labels['com.docker.compose.service'],lineage=['postgres','vault','api'].includes(service)?[frozen]:['evaluator','realtime','admin'].includes(service)?[frozen,current]:[frozen,old];row.Config.Labels['com.docker.compose.project.config_files']=lineage.join(',');f.p.containers.find(expected=>expected.cid===row.Id).composeFiles=lineage;}
+ return {frozen,old,current};
+}
+test('callable host command accepts exact mixed non-prefix override history with matching historical and current hashes',()=>{
+ const f=fixture();try{mixedHistory(f);f.p.environmentFile=path.join(f.root,'active-env');fs.renameSync(path.join(f.p.deploymentDirectory,'.env'),f.p.environmentFile);fs.writeFileSync(f.manifest,JSON.stringify(f.p));const {q,data}=cli(f);assert.equal(q.status,0,q.stderr);assert.equal(data.mutations,1);}finally{f.cleanup();}
+});
+for(const control of ['unknown-file','changed-approved-file','reordered-history','wrong-historical-effective-hash'])test('known historical lineage refuses '+control,()=>{
+ const f=fixture();try{const files=mixedHistory(f);
+  if(control==='unknown-file')f.p.containers[6].composeFiles=[files.frozen,path.join(f.root,'unknown.json')];
+  if(control==='changed-approved-file')fs.writeFileSync(files.old,'{"changed":true}');
+  if(control==='reordered-history')f.p.containers[6].composeFiles=[files.old,files.frozen];
+  if(control==='wrong-historical-effective-hash')f.data.hashesByFiles={[JSON.stringify([files.frozen,files.old])]:{...f.data.hashes,nginx:'e'.repeat(64)}};
+  fs.writeFileSync(f.manifest,JSON.stringify(f.p));const {q,data}=cli(f);assert.notEqual(q.status,0);assert.match(q.stderr,/PGSTREAM_REBOOTSTRAP_(?:COMPOSE_LINEAGE|APPROVED_FILE_CHANGED|COMPOSE_CHANGED)/);assert.equal(data.mutations,0);
  }finally{f.cleanup();}
 });
 test('restart policy must be explicitly disabled while stopped, with original policy retained for deliberate restart',()=>{

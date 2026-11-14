@@ -28,6 +28,7 @@ outside version control. Its fields are:
 |---|---|
 | `version`, `action` | `1`; `create-missing` or `replace-lost` |
 | `project`, `deploymentDirectory`, `stateDirectory`, `composeFiles`, `environmentFile` | Existing prepared project, absolute paths, exact current ordered Compose file list and explicit active environment file (default `.env` in deployment directory) |
+| `approvedHistoricalComposeFiles` | Explicit ordered approved historical/current file set, each with absolute `path` and current `sha256`; includes every selected or recorded lineage file |
 | `source` | `coreCommit` and `deployCommit` from prepared bootstrap and immutable application image labels |
 | `imageId`, `postgresImageId` | Actual immutable Docker image IDs, never floating tags |
 | `database` | Exact `name`, `oid`, `systemIdentifier`, `postmasterStartedAt` from the current physical PostgreSQL instance |
@@ -39,7 +40,7 @@ outside version control. Its fields are:
 A plan is an identity expectation, not process-exclusion evidence. The command
 runs actual Docker inspection again and requires the whole current project to
 match the plan. Every non-infrastructure container must be not running, PID zero,
-not paused, and have restart policy `no`. It checks each recorded per-service Compose file lineage exactly (an ordered prefix of the selected current files), and independently recomputes current effective per-service Compose hashes. A service created before a scoped observer override may retain its shorter lineage only when its current effective hash remains identical. Unknown lineage or changed effective config refuses. It also checks Compose configuration labels,
+not paused, and have restart policy `no`. It checks each recorded per-service Compose file lineage exactly against the explicitly approved file set and order. It hashes every approved file and independently computes both that recorded historical lineage's service hash and the selected current global service hash. Both must match the stopped container's recorded/live config hash. A surviving unchanged service can retain an older scoped overlay rather than the latest one. Unknown path, altered file, reversed order or different historical/current effective config refuses. No recreation is required to manufacture one global lineage. It also checks Compose configuration labels,
 source/image bindings, read-only evaluator config mount and absence of application
 source mounts. A missing container, changed incarnation, changed config or an
 unresponsive/live process refuses the operation. No recovery-owner test label is
@@ -146,3 +147,5 @@ subscriptions and policies. Silent supervisor slot recreation is not an
 alternative either: it would skip the explicit stream-coverage/reconciliation
 boundary. This operation preserves those boundaries instead of manufacturing
 completion counters or extending product deadlines.
+
+Plans and receipts contain only identity metadata, file paths/hashes and selected policy metadata. They contain no private environment, config document, URL or credential contents. Receipt container fields are selected explicitly rather than echoing an arbitrary raw Docker inspection.
