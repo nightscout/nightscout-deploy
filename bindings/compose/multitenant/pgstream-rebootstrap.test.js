@@ -41,7 +41,18 @@ function cli(f){
 for(const action of ['create-missing','replace-lost'])test('callable host command '+action+' changes only exact slot and leaves all effects stopped',()=>{
  const f=fixture(action);try{const {q,data}=cli(f);assert.equal(q.status,0,q.stderr);assert.equal(data.mutations,1);assert.match(data.slotSQL,/pg_create_logical_replication_slot\('selected_slot','wal2json'\)/);assert.equal(/\b(?:UPDATE|INSERT|DELETE|CREATE TABLE|ALTER|GRANT|TRUNCATE)\b/.test(data.slotSQL),false);assert.equal(data.commands.some(args=>['start','stop','kill','run','restart'].includes(args[0])||args.includes('up')),false);assert.equal(JSON.parse(fs.readFileSync(f.p.receiptFile)).state,'SLOT_RECREATED_EFFECTS_STOPPED');assert.match(data.slotSQL,/pg_try_advisory_lock/);}finally{f.cleanup();}
 });
+test('callable host command accepts exact mixed override history with matching current effective hashes',()=>{
+ const f=fixture();try{const frozen=f.p.composeFiles[0],overlay=path.join(f.p.deploymentDirectory,'observer.compose.json');f.p.composeFiles.push(overlay);f.p.environmentFile=path.join(f.root,'active-env');fs.renameSync(path.join(f.p.deploymentDirectory,'.env'),f.p.environmentFile);
+  for(const row of f.data.rows){const service=row.Config.Labels['com.docker.compose.service'],lineage=['postgres','vault','api'].includes(service)?[frozen]:[frozen,overlay];row.Config.Labels['com.docker.compose.project.config_files']=lineage.join(',');f.p.containers.find(expected=>expected.cid===row.Id).composeFiles=lineage;}
+  fs.writeFileSync(f.manifest,JSON.stringify(f.p));const {q,data}=cli(f);assert.equal(q.status,0,q.stderr);assert.equal(data.mutations,1);
+ }finally{f.cleanup();}
+});
+test('restart policy must be explicitly disabled while stopped, with original policy retained for deliberate restart',()=>{
+ const f=fixture();try{f.data.rows[2].HostConfig.RestartPolicy={Name:'no',MaximumRetryCount:0};f.p.containers[2].originalRestartPolicy={Name:'on-failure',MaximumRetryCount:3};fs.writeFileSync(f.manifest,JSON.stringify(f.p));const {q}=cli(f);assert.equal(q.status,0,q.stderr);assert.deepEqual(JSON.parse(fs.readFileSync(f.p.receiptFile)).containers[2].originalRestartPolicy,{Name:'on-failure',MaximumRetryCount:3});}finally{f.cleanup();}
+});
 const controls={
+ 'autorestart-not-disabled':f=>{f.data.rows[2].HostConfig.RestartPolicy={Name:'on-failure',MaximumRetryCount:3};},
+ 'unrecorded-compose-lineage':f=>{f.data.rows[2].Config.Labels['com.docker.compose.project.config_files']+=',/unrecorded/observer.json';},
  'stopped-but-PID-present':f=>{f.data.rows[2].State.Pid=99;},
  'live-but-paused':f=>{f.data.rows[2].State.Running=true;f.data.rows[2].State.Paused=true;f.data.rows[2].State.Pid=99;},
  'wrong-image':f=>{f.data.rows[2].Image='sha256:'+'e'.repeat(64);},

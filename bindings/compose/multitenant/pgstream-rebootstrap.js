@@ -16,6 +16,8 @@ function plan(value){
  need(['deploymentDirectory','stateDirectory','evaluatorConfig','receiptFile'].every(key=>path.isAbsolute(value[key]||''))&&Array.isArray(value.composeFiles)&&value.composeFiles.length>0&&value.composeFiles.every(file=>path.isAbsolute(file)),'PGSTREAM_REBOOTSTRAP_PATH');
  need(Array.isArray(value.containers)&&value.containers.length>2&&value.containers.length<=128&&new Set(value.containers.map(row=>row.cid)).size===value.containers.length,'PGSTREAM_REBOOTSTRAP_COHORT');
  for(const row of value.containers)need(SHA.test(row.cid)&&IMAGE.test(row.imageId)&&typeof row.service==='string'&&typeof row.startedAt==='string'&&SHA.test(row.configHash),'PGSTREAM_REBOOTSTRAP_CONTAINER');
+ if(value.environmentFile!==undefined)need(path.isAbsolute(value.environmentFile),'PGSTREAM_REBOOTSTRAP_PATH');
+ for(const row of value.containers){const lineage=row.composeFiles||value.composeFiles;need(Array.isArray(lineage)&&lineage.length>0&&lineage.length<=value.composeFiles.length&&lineage.every((file,index)=>file===value.composeFiles[index]),'PGSTREAM_REBOOTSTRAP_COMPOSE_LINEAGE');}
  return value;
 }
 function platform(){const env=Object.fromEntries(['PATH','HOME','LANG','TZ'].filter(key=>process.env[key]!==undefined).map(key=>[key,process.env[key]]));return (args,input)=>{try{return execFileSync('docker',args,{encoding:'utf8',input,env,timeout:30000,maxBuffer:4194304,stdio:['pipe','pipe','pipe']});}catch{throw fail('PGSTREAM_REBOOTSTRAP_PLATFORM_REFUSED');}};}
@@ -27,7 +29,7 @@ function validateSnapshot(p,rows,compose,image,hashes){
  for(const row of rows){
   const expected=known.get(row.Id),labels=row.Config?.Labels||{},service=labels['com.docker.compose.service'];
   need(expected&&expected.service===service&&labels['com.docker.compose.project']===p.project&&labels['com.docker.compose.project.working_dir']===p.deploymentDirectory&&labels['com.docker.compose.config-hash']===expected.configHash&&row.Image===expected.imageId&&row.State.StartedAt===expected.startedAt,'PGSTREAM_REBOOTSTRAP_CONTAINER_CHANGED');
-  need(declarations[service]&&hashes[service]===expected.configHash&&labels['com.docker.compose.project.config_files']===p.composeFiles.join(','),'PGSTREAM_REBOOTSTRAP_COMPOSE_CHANGED');
+  need(declarations[service]&&hashes[service]===expected.configHash&&labels['com.docker.compose.project.config_files']===(expected.composeFiles||p.composeFiles).join(','),'PGSTREAM_REBOOTSTRAP_COMPOSE_CHANGED');
   if(service==='postgres'){need(!postgres&&row.Image===p.postgresImageId&&row.State.Running&&!row.State.Paused,'PGSTREAM_REBOOTSTRAP_POSTGRES');postgres=row;continue;}
   if(service==='vault'){need(row.State.Running&&!row.State.Paused,'PGSTREAM_REBOOTSTRAP_VAULT');continue;}
   // Every non-infrastructure container, including one-shot operators, is excluded.
@@ -65,7 +67,7 @@ function slotSQL(p){
  return `SELECT pg_try_advisory_lock(hashtext('nightscout-pgstream-rebootstrap'),hashtext(current_database()||'${p.slot}')) AND ${identity} AND NOT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND backend_type IN ('client backend','walsender')) AND ${target} AS admitted\n\\gset\n\\if :admitted\n${p.action==='replace-lost'?`SELECT pg_drop_replication_slot('${p.slot}');\n`:''}SELECT row_to_json(created) FROM pg_create_logical_replication_slot('${p.slot}','wal2json') AS created;\n\\else\n\\quit 3\n\\endif\n`;
 }
 async function run(p,{docker=platform(),routes}={}){
- plan(p);const envFile=path.join(p.deploymentDirectory,'.env'),env=Object.fromEntries(read(envFile).trim().split('\n').map(line=>{const at=line.indexOf('=');return [line.slice(0,at),line.slice(at+1)];}));
+ plan(p);const envFile=p.environmentFile||path.join(p.deploymentDirectory,'.env'),env=Object.fromEntries(read(envFile).trim().split('\n').map(line=>{const at=line.indexOf('=');return [line.slice(0,at),line.slice(at+1)];}));
  need(env.NS_DEMO_PROJECT===p.project&&env.NS_DEMO_STATE===p.stateDirectory&&env.NS_SOURCE_COMMIT===p.source.coreCommit&&env.NS_PGSTREAM==='1','PGSTREAM_REBOOTSTRAP_PREPARATION');
  const complete=JSON.parse(read(path.join(p.stateDirectory,'bootstrap/complete.json')));need(complete.sourceCommit===p.source.coreCommit&&complete.deployCommit===p.source.deployCommit,'PGSTREAM_REBOOTSTRAP_PREPARATION_SOURCE');
  need(path.dirname(p.evaluatorConfig)===path.join(p.stateDirectory,'evaluator'),'PGSTREAM_REBOOTSTRAP_CONFIG_PATH');const c=JSON.parse(read(p.evaluatorConfig));need(c.pgstream?.slot===p.slot&&c.postgres&&SHA.test(p.evaluatorConfigSha256)&&hash(read(p.evaluatorConfig))===p.evaluatorConfigSha256,'PGSTREAM_REBOOTSTRAP_CONFIG');
