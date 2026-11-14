@@ -76,6 +76,10 @@ case "${1:-}" in
     node build.js --check-image
     exec "${compose[@]}" --profile ops run --rm --no-deps demo
     ;;
+  pgstream-rebootstrap)
+    [ "$#" -eq 2 ] || { echo "Usage: demo.sh pgstream-rebootstrap /absolute/private-plan.json" >&2; exit 64; }
+    exec node pgstream-rebootstrap.js "$2"
+    ;;
   status)
     exec "${compose[@]}" ps -a
     ;;
@@ -88,7 +92,7 @@ case "${1:-}" in
     exec "${compose[@]}" down
     ;;
   *)
-    echo 'Usage: demo.sh prepare [--bind 169.254.1.1] | config | build | bootstrap | up | demo | status | stop | down' >&2
+    echo 'Usage: demo.sh prepare [--bind 169.254.1.1] | config | build | bootstrap | up | demo | pgstream-rebootstrap /absolute/private-plan.json | status | stop | down' >&2
     exit 64
     ;;
 esac

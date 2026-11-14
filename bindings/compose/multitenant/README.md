@@ -338,3 +338,12 @@ bootstrap does not change a running consumer. This bounded selector supports
 controlled fault experiments with the same configuration in both comparison
 arms; it is not a production timeout recommendation. It does not change the
 reader heartbeat cadence, sweep selection (OFF remains absent), or any data TTL.
+
+## Explicit pgstream slot recovery
+
+[Populated pgstream rebootstrap](PGSTREAM-REBOOTSTRAP.md) is an explicit host
+operator action after confirmed process exclusion. It replaces only the selected
+missing or lost slot, leaves all effect-serving roles stopped and preserves
+durable clinical/completed/pending/due/notification state. It never reruns initial
+DBA setup or reopens services automatically. Actual populated recovery acceptance
+remains UNMEASURED until the recorded platform/database case runs.
