@@ -25,8 +25,6 @@ const SOURCE = {
   'nightscout-subject-admin': 'lib/subject-admin/postgres.js',
   'nightscout-display-settings': 'lib/tenant-settings/effective-postgres.js',
   'nightscout-api-activity': 'lib/tenant-activity/postgres.js',
-  'nightscout-realtime-activity': 'lib/tenant-activity/postgres.js',
-  'nightscout-evaluator-activity': 'lib/tenant-activity/postgres.js',
   'nightscout-socket-alarm': 'lib/server/realtime/private-api.js',
   'nightscout-realtime-registry': 'lib/server/serve/registry-tenant-set.js',
   'nightscout-evaluator-registry': 'lib/server/serve/registry-tenant-set.js',
@@ -34,7 +32,6 @@ const SOURCE = {
   'nightscout-realtime-preview': 'lib/server/serve/preview-realtime.js',
   'nightscout-realtime-owner': 'lib/server/serve/preview-realtime.js',
   'nightscout-evaluator-preview': 'lib/server/serve/evaluator-preview.js',
-  'nightscout-pool-evaluator': 'lib/pool-membership/postgres.js',
   'nightscout-admin-pool': 'lib/pool-membership/postgres.js',
   'nightscout-evaluator-consumer-preview': 'lib/server/serve/evaluator-consumers.js',
   'nightscout-operation-lifetime': 'lib/server/serve/index.js',
@@ -44,8 +41,6 @@ const SOURCE = {
   'nightscout-admin-provisioning': 'lib/tenant-registry/provision.js',
   'nightscout-connector-definitions': 'lib/tenant-connector/postgres-sources.js',
   'nightscout-ui-registry': 'bindings/compose/multitenant/ui-registry.js',
-  'nightscout-feed-reader': 'lib/change-feed/postgres.js',
-  'nightscout-feed-listener': 'lib/change-feed/consumer.js',
   'migration-direct': 'lib/migrations/postgres.js',
   'settings-readiness': 'lib/tenant-settings/readiness.js',
   'clinical-readiness': 'lib/server/serve/evaluator-readiness.js',
@@ -55,10 +50,10 @@ const SOURCE = {
 };
 
 function expanded(docs) {
-  need(docs && docs.configs && docs.environments && docs.operations && docs.admin && docs.feed && docs.ui, 'CONNECTION_PLAN_REGISTRY_GRAPH_REQUIRED');
+  need(docs && docs.configs && docs.environments && docs.operations && docs.admin && docs.ui, 'CONNECTION_PLAN_REGISTRY_GRAPH_REQUIRED');
+  need(docs.feed === undefined, 'CONNECTION_PLAN_RETIRED_FEED_ROLE');
   const rows = Object.entries(docs.configs).map(([name, config]) => ({ name, role: name.replace(/-\d+$/, ''), config, env: docs.environments[name], operation: docs.operations[name] }));
   rows.push({ name: 'admin', role: 'admin', config: docs.admin.config, env: docs.admin.environment },
-    { name: 'feed-reader', role: 'feed-reader', config: docs.feed.config, env: docs.feed.environment },
     { name: 'ui', role: 'ui', config: docs.ui, env: docs.uiEnvironment });
   if (docs.realtimePlacement) rows.push({ name: 'socket-edge', role: 'socket-edge', config: docs.ui, env: docs.uiEnvironment });
   need(rows.length <= 128 && new Set(rows.map(x => x.name)).size === rows.length && rows.every(x => id(x.name) && x.env && x.config), 'CONNECTION_PLAN_EXPANDED_ROSTER');
@@ -75,25 +70,24 @@ function describe(docs, poolConfig) {
       capabilities[key] = { kind: 'pool', requestedMaximum: maximum, heldWithinPool: held, source: SOURCE[key] };
     };
     const direct = key => { need(SOURCE[key] && !capabilities[key], 'CONNECTION_PLAN_CONSTRUCTOR_UNKNOWN'); capabilities[key] = { kind: 'client', source: SOURCE[key] }; };
-    need(c.registry || role === 'admin' || role === 'feed-reader', 'CONNECTION_PLAN_REGISTRY_GRAPH_REQUIRED');
+    need(c.registry || role === 'admin', 'CONNECTION_PLAN_REGISTRY_GRAPH_REQUIRED');
     if (role === 'api') {
       pool('nightscout-api-registry', 2); pool('nightscout-legacy-authority', 4); pool('nightscout-tenant-authorization', 4); pool('nightscout-secrets', 4);
       pool('nightscout-preview-data', poolConfig.pool('api', env).max);
       for (const [feature, key, maximum] of [['accessTokens', 'nightscout-current-access', 4], ['subjectAdmin', 'nightscout-subject-admin', 4], ['tenantSettings', 'nightscout-display-settings', 4], ['activity', 'nightscout-api-activity', 2], ['socketForwarding', 'nightscout-socket-alarm', 4]]) if (c[feature]) pool(key, maximum);
       direct('api-readiness'); direct('migration-direct'); if (c.tenantSettings) direct('settings-readiness');
     } else if (role === 'realtime') {
+      need(c.completedOutput && c.trustedWorker && c.changeFeed === undefined, 'CONNECTION_PLAN_MAINTAINED_REALTIME_REQUIRED');
       pool('nightscout-realtime-registry', 1); pool('nightscout-realtime-registry-lookup', 2); pool('nightscout-realtime-preview', poolConfig.pool('realtime', env, { connectionTimeoutMillis: c.operationTimeoutMs }).max);
-      if (c.tenantSettings) { pool('nightscout-display-settings', 4); direct('settings-readiness'); }
       if (env.MULTITENANT_REALTIME_PLACEMENT) pool('nightscout-realtime-owner', 1, 1);
-      if (c.activity) pool('nightscout-realtime-activity', 2);
-      if (c.changeFeed) direct('nightscout-feed-listener');
       direct('clinical-readiness'); direct('migration-direct');
     } else if (role === 'evaluator') {
-      pool('nightscout-evaluator-registry', 1); pool('nightscout-evaluator-preview', poolConfig.pool('evaluator', env).max);
-      if (c.tenantSettings) { pool('nightscout-display-settings', 4); direct('settings-readiness'); }
-      if (env.MULTITENANT_POOL_EVALUATOR_PARTITION === 'on') pool('nightscout-pool-evaluator', 2);
-      if (c.activity) pool('nightscout-evaluator-activity', 2);
-      if (c.changeFeed) direct('nightscout-feed-listener');
+      need(c.pgstream && c.trustedWorker && c.changeFeed === undefined, 'CONNECTION_PLAN_MAINTAINED_EVALUATOR_REQUIRED');
+      need(env.MULTITENANT_POOL_EVALUATOR_PARTITION !== 'on', 'CONNECTION_PLAN_EVALUATOR_PARTITION_UNQUALIFIED');
+      const maximum = poolConfig.pool('evaluator', env).max;
+      need(maximum >= 2, 'CONNECTION_PLAN_EVALUATOR_OWNER_BOUND');
+      pool('nightscout-evaluator-registry', 1); pool('nightscout-evaluator-preview', maximum, 1);
+      capabilities['nightscout-evaluator-preview'].minimumPoolMax = 2;
       if (c.consumers) {
         need(exact(c.consumers, ['realtime']), 'CONNECTION_PLAN_CONSUMER_UNKNOWN');
         need(c.consumers.realtime.outbox.maxConnections === c.consumers.realtime.suppression.maxConnections, 'CONNECTION_PLAN_CONSUMER_BINDING_UNKNOWN');
@@ -109,8 +103,7 @@ function describe(docs, poolConfig) {
       for (const [feature, key, maximum] of [['ownership', 'nightscout-ownership-ops', 4], ['pools', 'nightscout-admin-pool', 2], ['managementSessions', 'nightscout-management-sessions', 4], ['provisioning', 'nightscout-admin-provisioning', 4], ['connectorSources', 'nightscout-connector-definitions', 2]]) if (c[feature]) pool(key, maximum);
       if (c.ownership?.registry) pool('nightscout-admin-ownership-registry', 1);
       direct('admin-readiness'); direct('migration-direct');
-    } else if (role === 'feed-reader') direct('nightscout-feed-reader');
-    else if (role === 'ui' || role === 'socket-edge') pool('nightscout-ui-registry', 2);
+    } else if (role === 'ui' || role === 'socket-edge') pool('nightscout-ui-registry', 2);
     else throw fail('CONNECTION_PLAN_ROLE_UNKNOWN');
     if (operation) {
       need(integer(operation.leaseSessions, 1, poolConfig.pool('operation', env).max), 'CONNECTION_PLAN_LIFETIME_UNKNOWN');
@@ -150,11 +143,8 @@ function compile(profile, docs, { source, poolConfig }) {
     for (const [key, described] of Object.entries(description.capabilities)) {
       const selected = given.capabilities[key];
       if (described.kind === 'pool') {
-        need(exact(selected, ['kind', 'poolMax', 'maxInstances']) && selected.kind === 'pool' && integer(selected.poolMax, 1, described.requestedMaximum) && integer(selected.maxInstances, 1, 16), 'CONNECTION_PLAN_POOL_LIMIT');
+        need(exact(selected, ['kind', 'poolMax', 'maxInstances']) && selected.kind === 'pool' && integer(selected.poolMax, described.minimumPoolMax || 1, described.requestedMaximum) && integer(selected.maxInstances, 1, 16), 'CONNECTION_PLAN_POOL_LIMIT');
         need(described.heldWithinPool <= selected.poolMax && selected.maxInstances >= (described.minimumInstances || 1), 'CONNECTION_PLAN_LIFETIME_EXCEEDS_POOL');
-        // Evaluator's retained settings lifecycle admits one pool and4 whole
-        // refresh/read chains. Per-capability size is explicit, never implicit.
-        if (description.roles[0] === 'evaluator' && key === 'nightscout-display-settings') need(selected.maxInstances === 1, 'CONNECTION_PLAN_SETTINGS_OVERLAP');
         capabilities[key] = { ...selected, metadata: { source: described.source, requestedMaximum: described.requestedMaximum, heldWithinPool: described.heldWithinPool, configurationSource: 'explicit-profile' } };
         cost += selected.poolMax * selected.maxInstances;
       } else {
@@ -164,15 +154,6 @@ function compile(profile, docs, { source, poolConfig }) {
     }
     const usedGroups = new Set(Object.values(capabilities).filter(x => x.kind === 'client').map(x => x.directGroup));
     need(equal([...usedGroups].sort(), Object.keys(given.directGroups).sort()), 'CONNECTION_PLAN_DIRECT_UNKNOWN');
-    // A persistent LISTEN/reader may not share a transient admission group:
-    // doing so could pin every direct-check slot forever.
-    for (const key of ['nightscout-feed-listener', 'nightscout-feed-reader']) if (capabilities[key]) {
-      const g = capabilities[key].directGroup;
-      need(Object.entries(capabilities).filter(([, x]) => x.kind === 'client' && x.directGroup === g).length === 1, 'CONNECTION_PLAN_PERSISTENT_DIRECT_GROUP');
-    }
-    if (description.roles[0] === 'evaluator' && capabilities['settings-readiness']) {
-      need(capabilities['settings-readiness'].directGroup === capabilities['migration-direct'].directGroup && given.directGroups[capabilities['settings-readiness'].directGroup] >= 4, 'CONNECTION_PLAN_SETTINGS_DIRECT_BOUND');
-    }
     cost += Object.values(given.directGroups).reduce((a, b) => a + b, 0);
     return { ...given, roles: description.roles, startupConcurrency: description.startupConcurrency, capabilities, declaredMaximum: cost };
   });
