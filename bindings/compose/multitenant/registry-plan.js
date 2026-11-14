@@ -21,7 +21,7 @@ function checkpoints(docs, ns) {
       domains: Object.fromEntries(clinical.map(name => [name, ns[name] + '.' + name])), projectionVersion, pageSize: document.pageSize, maxRows: document.maxRows });
     return { namespace: ns[kind], consumer: document.consumer, digest: replay.digest };
   });
-  if(docs.configs.evaluator.pgstream){const document=docs.configs.evaluator;const output=require('../../lib/pgstream/checkpoint').create({connection:{},namespace:ns.eval_checkpoint,consumer:document.consumer,maxBytes:document.maxBytes*2,timeIntervalMs:document.timeIntervalMs});rows.push({namespace:ns.eval_checkpoint,consumer:output.consumer,digest:output.digest});}
+  if(docs.configs.evaluator.pgstream){const document=docs.configs.evaluator;const output=require('../../lib/pgstream/checkpoint').create({typed:true,connection:{},namespace:ns.eval_checkpoint,consumer:document.consumer,maxBytes:document.maxBytes*2,timeIntervalMs:document.timeIntervalMs});rows.push({namespace:ns.eval_checkpoint,consumer:output.consumer,digest:output.digest});}
   return rows;
 }
 function expand(docs, { layout, urls, vaultAddress }) {

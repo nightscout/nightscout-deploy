@@ -53,8 +53,11 @@ async function init({admin,adminURL,layout,config}){
  await admin.query('GRANT USAGE ON SCHEMA '+q(layout.namespaces.eval_checkpoint)+' TO '+realtime);
  await admin.query('GRANT SELECT ON '+table+' TO '+realtime);
  await admin.query('CREATE POLICY pgstream_realtime_output ON '+table+' FOR SELECT TO '+realtime+" USING (consumer='"+consumer+"')");
- await admin.query('CREATE INDEX pgstream_pending_work ON '+table+" (consumer,((projection->0->>'pendingAt')::bigint)) WHERE (projection->0->>'enabled')::boolean IS TRUE AND (projection->0->>'pendingAt') IS NOT NULL");
- await admin.query('CREATE INDEX pgstream_due_work ON '+table+" (consumer,((projection->0->>'nextDueAt')::bigint)) WHERE (projection->0->>'enabled')::boolean IS TRUE AND (projection->0->>'nextDueAt') IS NOT NULL");
+ await admin.query('GRANT UPDATE('+require('../../lib/pgstream/checkpoint').WORK_COLUMNS.join(',')+') ON '+table+' TO '+evaluator);
+ const realtimeTable=q(layout.namespaces.rt_checkpoint)+'.tenant_consumer_checkpoint';
+ await admin.query('GRANT UPDATE('+require('../../lib/pgstream/realtime-receipt').COLUMNS.join(',')+') ON '+realtimeTable+' TO '+realtime);
+ await admin.query('CREATE POLICY pgstream_realtime_metadata ON '+realtimeTable+' FOR SELECT TO '+realtime+" USING (consumer='realtime-compose-demo')");
+ await admin.query('CREATE POLICY pgstream_realtime_delivery_update ON '+realtimeTable+' FOR UPDATE TO '+realtime+" USING (consumer='realtime-compose-demo') WITH CHECK (consumer='realtime-compose-demo')");
  const routes=require('../../lib/pgstream/evaluator').routes(config);
  for(const route of [...routes,{schema:'',table:'',kind:'schema'}])await admin.query('INSERT INTO pgstream.webhook_subscriptions VALUES($1,$2,$3,$4)',[
    'http://127.0.0.1:'+config.pgstream.receiverPort+'/pgstream',route.schema,route.table,route.kind==='schema'?['M']:['I','U','D']]);
