@@ -7,9 +7,16 @@
 | upstream commit | `d0036890d0623ae79f14bfa71e7226c0fa122a29` (opt-in constructor/cold-start admission with preserved credential option semantics, repaired background context, authenticated peer-close quiescence and retained uncertainty; runtime and qualification of this new pair are UNMEASURED) |
 | upstream tree hash of that path | `fdc9f8dd2644b8789c86abeb030fbc0ad7304780` (core's reduced fixture: `config.js`, `demo.js`, `health.js`, `restore.js`, `ui.js`, `README.md`) |
 | import method | Recorded core fixture plus reviewed deployment-owned bootstrap, placement, edge and preparation changes; the patch is checked by `tools/compose-identity-check.sh`. |
-| local delta | [`SOURCE.delta.patch`](SOURCE.delta.patch), against the recorded core fixture. This binding generates fixed API instances and exact maintenance addresses, supports local health probes for network listeners, removes realtime maxSockets and renders explicit per-IP edge budgets. The reduced core fixture stays test-only. Selected connection-budget support adds explicit source-derived PostgreSQL sizing, finite worker/observer credits, private one-use tickets and actual-close quiescence; default behavior remains unchanged. See [`multitenant/CONNECTION-BUDGET.md`](multitenant/CONNECTION-BUDGET.md). |
-| tree hash here | `c3c961a4560806d8e3ede7da8ab5e96cfbc66581` |
+| local delta | [`SOURCE.delta.patch`](SOURCE.delta.patch), against the recorded core fixture. This binding generates fixed API instances and exact maintenance addresses, supports local health probes for network listeners, removes realtime maxSockets and renders explicit per-IP edge budgets. The reduced core fixture stays test-only. The maintained evaluator owns capture and completed clinical output; realtime reads that output and updates only delivery receipt columns. The custom feed service, raw realtime clinical cursor, and static product roster are retired. Connection-budget support retains finite worker/observer credits, private one-use tickets and actual-close quiescence; the historical external profile is unqualified for this maintained pair. See [`multitenant/CONNECTION-BUDGET.md`](multitenant/CONNECTION-BUDGET.md). |
+| tree hash here | `38156c033844f0a66296bcce0eeb4339401271c8` |
 | imported on | 2026-11-12 |
+
+Current binding selects maintained pgstream capture by default and refuses `NS_PGSTREAM=0`.
+Its six input/control routes exclude the completed-output checkpoint. Realtime reads
+typed completed output with consumer-scoped SELECT and delivery-column UPDATE grants.
+The source connection model counts the evaluator held-owner slot and two separate
+consumer pools. Source and runtime acceptance of this expanded pair remain
+UNMEASURED until the integration coordinator records the joined result.
 
 History: first imported 2026-11-09 from `ed2ced00c80bd0a6a7d75f834d2c6e2af8c71364` (tree
 `8be3d761cbe592428357d6cee29612affafe4122`) by `git subtree`, which keeps the per-file history; the
