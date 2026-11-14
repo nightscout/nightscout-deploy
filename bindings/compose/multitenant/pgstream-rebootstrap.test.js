@@ -56,7 +56,9 @@ for(const control of ['unknown-file','changed-approved-file','reordered-history'
   if(control==='changed-approved-file')fs.writeFileSync(files.old,'{"changed":true}');
   if(control==='reordered-history')f.p.containers[6].composeFiles=[files.old,files.frozen];
   if(control==='wrong-historical-effective-hash')f.data.hashesByFiles={[JSON.stringify([files.frozen,files.old])]:{...f.data.hashes,nginx:'e'.repeat(64)}};
-  fs.writeFileSync(f.manifest,JSON.stringify(f.p));const {q,data}=cli(f);assert.notEqual(q.status,0);assert.match(q.stderr,/PGSTREAM_REBOOTSTRAP_(?:COMPOSE_LINEAGE|APPROVED_FILE_CHANGED|COMPOSE_CHANGED)/);assert.equal(data.mutations,0);
+  fs.writeFileSync(f.manifest,JSON.stringify(f.p));const {q,data}=cli(f);assert.notEqual(q.status,0);assert.equal(q.stderr.trim(),{
+   'unknown-file':'PGSTREAM_REBOOTSTRAP_COMPOSE_LINEAGE','changed-approved-file':'PGSTREAM_REBOOTSTRAP_APPROVED_FILE_CHANGED','reordered-history':'PGSTREAM_REBOOTSTRAP_COMPOSE_LINEAGE','wrong-historical-effective-hash':'PGSTREAM_REBOOTSTRAP_COMPOSE_CHANGED'
+  }[control]);assert.equal(data.mutations,0);
  }finally{f.cleanup();}
 });
 test('restart policy must be explicitly disabled while stopped, with original policy retained for deliberate restart',()=>{
@@ -80,5 +82,8 @@ const controls={
  'valid-slot':f=>{f.data.row.slot.status='reserved';f.data.row.slot.restart='0/123';},
  'wrong-plugin':f=>{f.data.row.slot.plugin='pgoutput';}
 };
-for(const [name,breakIt] of Object.entries(controls))test('callable command refuses '+name+' before mutation',()=>{const f=fixture('replace-lost');try{breakIt(f);const {q,data}=cli(f);assert.notEqual(q.status,0);assert.match(q.stderr,/PGSTREAM_REBOOTSTRAP_/);assert.equal(data.mutations,0);}finally{f.cleanup();}});
+const refusedCodes={
+ 'autorestart-not-disabled':'AUTORESTART','unrecorded-compose-lineage':'COMPOSE_CHANGED','stopped-but-PID-present':'PROCESS_ALIVE','live-but-paused':'PROCESS_ALIVE','wrong-image':'CONTAINER_CHANGED','new-process-incarnation':'CONTAINER_CHANGED','unknown-project-process':'COHORT_CHANGED','changed-compose-hash':'CONTAINER_CHANGED','changed-current-compose-declaration':'COMPOSE_CHANGED','active-old-backend':'OLD_BACKEND_PRESENT','runtime-owner-privilege':'RUNTIME_GRANTS','changed-subscription':'SUBSCRIPTIONS','wrong-physical-database':'BACKEND_CHANGED','active-slot':'SLOT_NOT_LOST','valid-slot':'SLOT_NOT_LOST','wrong-plugin':'SLOT_NOT_LOST'
+};
+for(const [name,breakIt] of Object.entries(controls))test('callable command refuses '+name+' before mutation',()=>{const f=fixture('replace-lost');try{breakIt(f);const {q,data}=cli(f);assert.notEqual(q.status,0);assert.equal(q.stderr.trim(),'PGSTREAM_REBOOTSTRAP_'+refusedCodes[name]);assert.equal(data.mutations,0);}finally{f.cleanup();}});
 test('slot operation repeats no-client, backend, inactive/lost and operator exclusion guards at mutation boundary',()=>{const f=fixture('replace-lost');try{const sql=recovery.slotSQL(f.p);for(const guard of ['pg_try_advisory_lock','pg_stat_activity','system_identifier','NOT active',"plugin='wal2json'","wal_status='lost'",'\\quit 3'])assert.ok(sql.includes(guard),guard);}finally{f.cleanup();}});
