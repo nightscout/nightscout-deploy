@@ -17,7 +17,8 @@ function files(docs) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ns-replica-docs-'));
   for (const role of Object.keys(docs.configs)) {
     const own = path.join(dir, role); fs.mkdirSync(own);
-    for (const [name, value] of Object.entries({ 'config.json': docs.configs[role], 'operation.json': docs.operations[role], 'admission.json': docs.admission, 'evaluator-metadata.json': docs.configs.evaluator })) fs.writeFileSync(path.join(own, name), JSON.stringify(value));
+    const bundle = { 'config.json': docs.configs[role], 'operation.json': docs.operations[role], ...((role === 'api' || role.startsWith('api-')) ? { 'evaluator-metadata.json': docs.configs.evaluator } : {}) };
+    for (const [name, value] of Object.entries(bundle)) fs.writeFileSync(path.join(own, name), JSON.stringify(value));
   }
   return dir;
 }

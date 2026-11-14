@@ -8,9 +8,10 @@ function generated(){
 }
 function files(docs){
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'ns-compose-config-'));
-  for(const role of plan.serviceRoles){
+  for(const role of Object.keys(docs.configs)){
     const own=path.join(directory,role);fs.mkdirSync(own,{mode:0o700});
-    for(const [name,value]of Object.entries({'config.json':docs.configs[role],'operation.json':docs.operations[role],'admission.json':docs.admission,'evaluator-metadata.json':docs.configs.evaluator}))fs.writeFileSync(path.join(own,name),JSON.stringify(value));
+    const bundle={'config.json':docs.configs[role],'operation.json':docs.operations[role],...((role==='api'||role.startsWith('api-'))?{'evaluator-metadata.json':docs.configs.evaluator}:{})};
+    for(const [name,value]of Object.entries(bundle))fs.writeFileSync(path.join(own,name),JSON.stringify(value));
   }
   return directory;
 }
