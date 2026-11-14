@@ -8,7 +8,7 @@
 | upstream tree hash of that path | `fdc9f8dd2644b8789c86abeb030fbc0ad7304780` (core's reduced fixture: `config.js`, `demo.js`, `health.js`, `restore.js`, `ui.js`, `README.md`) |
 | import method | Recorded core fixture plus reviewed deployment-owned bootstrap, placement, edge and preparation changes; the patch is checked by `tools/compose-identity-check.sh`. |
 | local delta | [`SOURCE.delta.patch`](SOURCE.delta.patch), against the recorded core fixture. This binding generates fixed API instances and exact maintenance addresses, supports local health probes for network listeners, removes realtime maxSockets and renders explicit per-IP edge budgets. The reduced core fixture stays test-only. Selected connection-budget support adds explicit source-derived PostgreSQL sizing, finite worker/observer credits, private one-use tickets and actual-close quiescence; default behavior remains unchanged. See [`multitenant/CONNECTION-BUDGET.md`](multitenant/CONNECTION-BUDGET.md). |
-| tree hash here | `1738a3e6a0854e55243c29bc5b4dbf3b3c523b71` |
+| tree hash here | `c3c961a4560806d8e3ede7da8ab5e96cfbc66581` |
 | imported on | 2026-11-12 |
 
 History: first imported 2026-11-09 from `ed2ced00c80bd0a6a7d75f834d2c6e2af8c71364` (tree
@@ -215,3 +215,9 @@ admission uses the actual selected core and exact copied binding; real-provider
 and shipping live-add execution remain UNMEASURED. A new joined image/native
 qualification needs explicit coordinator resource authorization. The running
 accepted baseline and its image are not changed or relabelled by this preparation.
+
+2026-11-14 typed activity batch: selected pgstream deployments provision the typed evaluator
+work and realtime delivery catalogues. Completed-consumer digests use typed admission;
+realtime delivery has consumer-scoped SELECT and UPDATE policies plus column-only
+delivery grants. Clinical serving authority and tenant restore fences remain unchanged.
+Runtime qualification belongs to the paired integration candidate.
