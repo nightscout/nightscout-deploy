@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Places this repository's Compose tree over a core checkout at the recorded commit so it can run.
-#   tools/compose-overlay.sh <path-to-cgm-remote-monitor-checkout> <target-worktree-dir>
-# Creates a detached worktree of core at the recorded commit, replaces deploy/multitenant there with
+#   tools/compose-overlay.sh <core-checkout> <new-target-worktree> <exact-core-commit>
+# Creates a detached worktree of core at the explicit commit, places deploy/multitenant there with
 # bindings/compose/multitenant at this repository's HEAD (git archive: committed files only), writes
 # the overlay marker deploy/multitenant/.overlay.json (this checkout's path and HEAD), and prints the
 # directory. It runs nothing. With the marker, prepare.js and build.js check core HEAD for every

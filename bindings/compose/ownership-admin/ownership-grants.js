@@ -1,12 +1,10 @@
 #!/usr/bin/env node
 'use strict';
 
-// One-shot step after the imported deploy/multitenant/bootstrap.js, in the application image, on
-// the private network. It adds the `<prefix>_ownership_operator` database identity the `admin`
-// role connects as, with exactly the grants core's deployment plan carries at the commit
-// ../SOURCE.md records (cgm-remote-monitor deploy/multitenant/config.js: one role name in layout(),
-// six GRANT statements in grants() plus the tenant-phase read). This repository's config.js leaves
-// the role out, so its per-role control-namespace loop never reaches it.
+// Deployment-owned one-shot after bootstrap in the application image, on the
+// private network. It adds the narrow ownership administrator identity used by
+// this binding. Core validates the resulting admin document through its published
+// loader/plan contract; no duplicate core deployment plan supplies these grants.
 //
 // It never prints a credential. The identity's connection string is written to
 // /state/ownership-admin/env.json (0600); the admin configuration to admin.json (0600).
@@ -31,7 +29,7 @@ function input (env = process.env) {
   return { pg, output: path.resolve(env.NS_BOOTSTRAP_OUTPUT), uid, gid };
 }
 
-// The identity's grants, in the order core's plan emits them.
+// The deployment identity's explicit grants.
 function grants (l) {
   const q = plan().quote, who = q(l.prefix + '_' + ROLE), ns = name => q(l.namespaces[name]);
   const table = name => ns('authorization') + '.' + q(name);

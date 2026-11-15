@@ -13,7 +13,7 @@ const validName = value => typeof value === 'string' && NAME.test(value) && valu
 const exact = (v, keys) => v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).every(k => keys.includes(k)) && keys.every(k => Object.hasOwn(v, k));
 
 function validateConfig (value, env = process.env, requireTokens = true) {
-  if (!exact(value, ['version', 'tenants', 'apiOrigin', 'control', 'namespaces', 'catalogues', 'drainTimeoutMs']) || value.version !== 1 ||
+  if (!exact(value, ['version', 'tenants', 'apiOrigin', 'control', 'namespaces', 'catalogues', 'drainTimeoutMs', ...(Object.hasOwn(value || {}, 'intakeProfile') ? ['intakeProfile'] : [])]) || value.version !== 1 ||
       !Number.isSafeInteger(value.drainTimeoutMs) || value.drainTimeoutMs < 1 || value.drainTimeoutMs > 2147483647 ||
       !Array.isArray(value.tenants) || value.tenants.length !== 2 ||
       !value.tenants.every(t => exact(t, ['id', 'host', 'tokenEnv']) && UUID.test(t.id) && /^[a-z0-9.-]+$/.test(t.host) &&
@@ -41,7 +41,11 @@ function validateConfig (value, env = process.env, requireTokens = true) {
   if (origin.origin !== value.apiOrigin || !['api', 'api-internal'].includes(origin.hostname) || origin.protocol !== 'http:' || origin.username || origin.password ||
       !['postgres:', 'postgresql:'].includes(pg.protocol) || !pg.username || !pg.password || !pg.pathname.slice(1) || pg.hash ||
       [...pg.searchParams.keys()].some(k => k !== 'sslmode')) throw fail('COMPOSE_OPERATOR_CONFIG_REFUSED');
-  return structuredClone(value);
+  let intakeProfile;
+  try { intakeProfile = require('../../lib/tenant-lifecycle/generation-domain').bind(value.intakeProfile, value.control.namespace, value.tenants.map(row => row.id)); }
+  catch { throw fail('COMPOSE_OPERATOR_CONFIG_REFUSED'); }
+  const plain = { ...value }; delete plain.intakeProfile;
+  return { ...structuredClone(plain), ...(intakeProfile ? { intakeProfile } : {}) };
 }
 
 function loadConfig (file = process.env.NS_OPERATOR_CONFIG || '/run/ns-config/config.json', env = process.env) {
@@ -88,7 +92,7 @@ function cohortTenants(config) { return config.control.registry ? ['registry:' +
 async function ready (config) {
   const placement = operationPlacement();
   const cohort = await require('../../lib/server/serve/operation-cohort').createRemote({namespace: config.control.namespace,
-    tenants: cohortTenants(config), participants: config.control.participants, placement});
+    tenants: cohortTenants(config), participants: config.control.participants, placement, ...(config.intakeProfile ? { intakeProfile: config.intakeProfile } : {})});
   await cohort.close();
 }
 
@@ -97,13 +101,13 @@ async function restore (config, artifact, env = process.env, hooks = {}) {
   const lifecycle = lifecycleFor(config);
   // createRemote reads actual participants. Missing peers fail before suspension.
   const cohort = await require('../../lib/server/serve/operation-cohort').createRemote({ namespace: config.control.namespace,
-    tenants: cohortTenants(config), participants: config.control.participants, placement: operationPlacement(env) });
+    tenants: cohortTenants(config), participants: config.control.participants, placement: operationPlacement(env), ...(config.intakeProfile ? { intakeProfile: config.intakeProfile } : {}) });
   const { Pool } = require('pg');
   const pool = new Pool({ connectionString: env.NS_OPERATOR_PG, max: 1, connectionTimeoutMillis: 5000,
     statement_timeout: 10000, options: '-c search_path=pg_catalog' });
   try {
     const controller = require('../../lib/tenant-lifecycle/maintenance-window').create({ namespace: config.control.namespace,
-      locks: config.control.locks, pool, cohort, drainTimeoutMs: config.drainTimeoutMs });
+      locks: config.control.locks, pool, cohort, drainTimeoutMs: config.drainTimeoutMs, intakeProfile: config.intakeProfile });
     let committed = false;
     const result = await controller.withRestore(tenant, { artifactDigest: artifact.digest }, async ({ connection, maintenanceClaim }) => {
       // The lifecycle control namespace holds the key-retention ledger (BF-230).
@@ -118,7 +122,7 @@ async function restore (config, artifact, env = process.env, hooks = {}) {
 // The admitted entry owns construction; this adapter accepts only its branded
 // context. Preserve registry scope and the selected private placement manifest.
 function validateRecoveryConfig(value,env){return validateConfig(value,env,false);}
-async function recoveryCohort(config,env){return require('../../lib/server/serve/operation-cohort').createRemote({namespace:config.control.namespace,tenants:cohortTenants(config),participants:config.control.participants,placement:operationPlacement(env)});}
+async function recoveryCohort(config,env){return require('../../lib/server/serve/operation-cohort').createRemote({namespace:config.control.namespace,tenants:cohortTenants(config),participants:config.control.participants,placement:operationPlacement(env),...(config.intakeProfile?{intakeProfile:config.intakeProfile}:{})});}
 function recoveryController(config,cohort,context){
  if(!require('./lifecycle-operator-entry').isContext(context))throw fail('LIFECYCLE_OPERATOR_CONTEXT');
  context.check();return require('../../lib/tenant-lifecycle/restore-resume').create({namespace:config.control.namespace,locks:config.control.locks,pool:context.pool,cohort,statementTimeoutMs:10000,lockWaitMs:2000});
@@ -143,7 +147,7 @@ async function admittedRestore(config, artifact, context, env = process.env, hoo
   try {
     cohort = await recoveryCohort(config, env); context.check();
     controller = require('../../lib/tenant-lifecycle/maintenance-window').create({ namespace: config.control.namespace,
-      locks: config.control.locks, pool: context.pool, cohort, drainTimeoutMs: config.drainTimeoutMs });
+      locks: config.control.locks, pool: context.pool, cohort, drainTimeoutMs: config.drainTimeoutMs, intakeProfile: config.intakeProfile });
     let committed = false;
     const result = await controller.withRestore(tenant, { artifactDigest: artifact.digest }, async ({ connection, maintenanceClaim }) => {
       context.check();
