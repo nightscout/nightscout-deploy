@@ -25,6 +25,10 @@ test('registry role documents have no static roster or per-tenant key lists and 
       assert(!Object.hasOwn(docs.operations[role], 'locks'), role);
       assert(!Object.keys(docs.environments[role]).some(name => /^NS_VAULT_\d+$/.test(name)), role);
     }
+    assert.equal(docs.configs['tenant-admin'].ownerCredentials.connectionEnv,'NS_OWNER_CREDENTIALS_PG');
+    assert.equal(docs.configs.api.localDataAuthentication, 'node');
+    assert.equal(docs.configs.api.accessTokens.issuer, 'nightscout-compose-demo');
+    assert.equal(docs.configs.api.accessTokens.audience, 'nightscout-data');
     assert.equal(docs.configs.api.tenantSettings.namespaces.settings.endsWith('_display_settings'), true);
     assert.deepEqual(docs.configs.realtime.tenantSettings, docs.configs.api.tenantSettings);
     assert.equal(docs.environments.realtime.NS_DISPLAY_PG, docs.environments.api.NS_DISPLAY_PG);
@@ -69,6 +73,7 @@ test('restore inventory admits the independent evaluator checkpoint and all curr
   const kinds = inventory.catalogues.map(row => row.kind);
   assert(kinds.includes('checkpoint') && kinds.includes('evaluator_checkpoint'));
   assert.deepEqual(inventory.catalogues.find(row => row.kind === 'checkpoint').tables, inventory.catalogues.find(row => row.kind === 'evaluator_checkpoint').tables);
+  assert(inventory.catalogues.find(row => row.kind === 'legacy').tables.includes('legacy_data_keys'));
   assert(inventory.catalogues.find(row => row.kind === 'access').tables.includes('management_session_requests'));
   assert(inventory.catalogues.find(row => row.kind === 'tenant_settings').tables.includes('tenant_connector_sources'));
   for (const kind of ['registry', 'feed', 'control', 'change_stamps']) assert(!kinds.includes(kind));
@@ -156,4 +161,15 @@ test('trusted workers receive ordinary cross-tenant metadata SELECT; public role
     assert.match(sql, /FOR SELECT .* USING \(true\)$/);
     assert.ok(!sql.includes('PUBLIC') && !sql.includes(layout.roles.api) && !sql.includes(layout.roles.display_reader));
   }
+});
+
+test('owner credential preparation accounts for its two actual private pools',()=>{
+ const {docs}=generated(),budget=require('./connection-budget'),pools=require('../../lib/server/serve/pool-config');
+ const selected=budget.describe(docs,pools).find(row=>row.roles[0]==='tenant-admin');
+ assert.equal(selected.capabilities['nightscout-secrets'].requestedMaximum,4);
+ assert.equal(selected.capabilities['nightscout-legacy-authority'].requestedMaximum,4);
+ delete docs.configs['tenant-admin'].ownerCredentials;
+ const baseline=budget.describe(docs,pools).find(row=>row.roles[0]==='tenant-admin');
+ const max=row=>Object.values(row.capabilities).reduce((n,c)=>n+(c.requestedMaximum||0),0);
+ assert.equal(max(selected)-max(baseline),8);
 });

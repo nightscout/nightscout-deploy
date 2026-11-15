@@ -54,7 +54,7 @@ function catalogues() {
 function layout(prefix = 'nsdemo') {
   quote(prefix);
   if (prefix.length > 24) throw new TypeError('Deployment prefix too long');
-  const names = ['pgstream','api','readiness','realtime','evaluator','alarm','suppression','outbox','owner_writer','owner_reader','root_writer','operator','provisioner','display_reader','activity_reader','placement_publisher','ownership_operator','connector_writer','management_issuer','ui_registry',
+  const names = ['pgstream','api','readiness','realtime','evaluator','alarm','suppression','outbox','owner_writer','owner_reader','owner_credentials','root_writer','operator','provisioner','display_reader','activity_reader','placement_publisher','ownership_operator','connector_writer','management_issuer','ui_registry',
     ...(require('./evaluator-workers').selection() ? ['pool_member','pool_operator'] : []),
     ...serviceRoles.map(name=>'lifetime_'+name.replace('-','_'))];
   return {prefix,owner:prefix+'_owner',managementAuthorityOwner:prefix+'_management_authority',namespaces:Object.fromEntries(Object.keys(catalogues()).map(name=>[name,prefix+'_'+name])),
@@ -95,6 +95,9 @@ function grants(l) {
     sql.push('REVOKE USAGE ON SCHEMA '+quote(ns[domain])+' FROM '+quote(r.realtime));
   }
   sql.push('REVOKE UPDATE(checkpoint,projection,contract_digest) ON '+table('rt_checkpoint','tenant_consumer_checkpoint')+' FROM '+quote(r.realtime));
+  schema('secrets','owner_credentials');
+  grant('SELECT,INSERT',table('secrets','secret_records'),'owner_credentials');
+  grant('INSERT',table('secrets','secret_audit'),'owner_credentials');
   schema('alarm','suppression');for(const name of ['tenant_alarm_suppression','schema_migrations'])grant('SELECT',table('alarm',name),'suppression');
   schema('outbox','outbox');grant('SELECT',table('outbox','schema_migrations'),'outbox');
   grant('SELECT,INSERT,UPDATE(request_id,blocked_until)',table('outbox','tenant_notification_heads'),'outbox');
@@ -153,6 +156,10 @@ function grants(l) {
     if([...clinical,'settings'].includes(name))sql.push(...insertionGrants({namespace:ns[name],domain:name,role:r.operator,mode:'restore'}));
   }
   grant('UPDATE(last_stamp)',table('clock','tenant_write_clock'),'operator');
+  // Existing-tenant authentication preparation is confined to exclusive maintenance.
+  grant('UPDATE(root_version,root_verifiers,verifier_root_reference_id)',table('legacy','legacy_credential_config'),'operator');
+  grant('UPDATE(verifiers,verifier_token_prefix)',table('legacy','legacy_credential_subjects'),'operator');
+  grant('INSERT,UPDATE',table('legacy','legacy_data_keys'),'operator');
   // The D15 CHECK validator is an invoker function. Its default PUBLIC EXECUTE
   // would violate the private issuer/lifetime identities' exact function surface.
   sql.push('REVOKE ALL ON FUNCTION '+quote(ns.display_settings)+'.tenant_settings_values_valid(jsonb) FROM PUBLIC');

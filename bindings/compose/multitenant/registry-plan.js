@@ -31,12 +31,16 @@ function expand(docs, { layout, urls, vaultAddress }) {
     if (role === 'api' || role === 'evaluator') config.activity = activity;
     if(role==='realtime')config.activity={namespace:ns.control};
     if (role === 'api') {
+      config.localDataAuthentication = 'node';
       config.vault = { address: vaultAddress, mount: layout.mount, timeoutMs: 5000, tokenFile: '/run/ns-config/vault-token' };
       delete config.accessTokens.keys;
       delete config.socketForwarding.admissionFileEnv;
       config.socketForwarding.maxTenants = 10000;
     }
-    if (role === 'tenant-admin') delete config.management.keys;
+    if (role === 'tenant-admin') {
+      delete config.management.keys;
+      config.ownerCredentials={connectionEnv:'NS_OWNER_CREDENTIALS_PG',namespace:ns.secrets,vault:{address:vaultAddress,mount:layout.mount,timeoutMs:5000,tokenFile:'/run/ns-config/vault-token'}};
+    }
     if (role === 'evaluator' || role === 'realtime') {
       config.maxTenants = 10000;
       config.trustedWorker = { activity: ns.control, clock: ns.clock, settings: ns.display_settings, operatorPolicy: ns.operator_policy };
@@ -46,6 +50,7 @@ function expand(docs, { layout, urls, vaultAddress }) {
     for (const name of Object.keys(env)) if (/^NS_VAULT_\d+$/.test(name) || name === 'NS_ADMISSION_FILE') delete env[name];
     if (role === 'api' || role === 'evaluator' || role === 'realtime') env.NS_DISPLAY_PG = urls.display_reader;
     if (role === 'api' || role === 'evaluator') env.NS_ACTIVITY_PG = urls.activity_reader;
+    if(role==='tenant-admin')env.NS_OWNER_CREDENTIALS_PG=urls.owner_credentials;
     delete docs.operations[role].locks; docs.operations[role].leaseSessions = leaseSessions(); docs.operations[role].registry = { namespace: ns.registry };
   }
   require('./pgstream').configure(docs,layout);

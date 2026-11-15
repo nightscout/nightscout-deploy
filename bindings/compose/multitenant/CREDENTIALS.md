@@ -129,3 +129,45 @@ intent, database scope, HTTPS and separated capability bundles.
 Native bootstrap, effective PostgreSQL grants, Vault HTTPS, actual component
 startup, browser presentation and tenant-local restore require the joined Compose
 acceptance run. No source-only check promotes those boundaries.
+
+## Local data-token activation
+
+The canonical registry API selects `localDataAuthentication: "node"` with its
+explicit existing issuer and audience. Fresh provisioning installs one-way root
+verifiers and a dedicated Node data-signing key. The primer creates subjects
+through root administration, which prepares their verifiers. The API has SELECT
+on the legacy key table; it has no key mutation grant. Owner subject management
+uses a separate `owner_credentials` SQL identity and a decrypt-only Vault token.
+Its existing secret and legacy-authority pools each have maximum four connections;
+the connection-budget graph includes both (eight additional possible connections
+per tenant-admin process, independent of tenant count).
+
+Existing tenants need exclusive preparation before this selection can serve them.
+The private consumer uses the current committed `prepare-local-auth.withMaintenance`
+application port. It audits/decrypts the immutable root reference and closes its
+reader pools before maintenance admission. A changed reference refuses under the
+exclusive lock. The controller owns drain, branded authority, COMMIT, invalidation
+and reactivation. A failed or uncertain operation does not reopen the tenant here.
+The root buffer is erased on completion or failure. No credential material is
+printed. An old HS256 token renews only through explicit exchange; ordinary data,
+socket, status and root authentication use the selected local verifier.
+
+For a canonical, already provisioned synthetic fixture, use the existing ops
+service and the explicit tenant UUID from its private configuration:
+
+```bash
+docker compose --profile ops run --rm --no-deps demo \
+  node -r ./deploy/multitenant/load-env.js \
+  deploy/multitenant/prepare-local-auth.js "$tenant"
+```
+
+Append `--rotate` to install a new signing key. The previous public key stays
+active for overlap while its private bytes are removed. Deactivation of an old
+public key remains an explicit current-authority operation. Process restart reads
+the durable keyring. Direct SQL fixture subject insertion must prepare verifiers
+through this consumer or the real management API before use.
+
+This ordinary ops consumer is not admitted by the optional connection-budget
+operator-ticket protocol. Such a deployment must use an explicitly accounted
+operator entry; it cannot run this command as a bypass. Native activation,
+rotation, restart and restore evidence belongs to the joined application campaign.

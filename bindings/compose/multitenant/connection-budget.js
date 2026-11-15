@@ -97,7 +97,8 @@ function describe(docs, poolConfig) {
       direct('clinical-readiness'); direct('migration-direct');
     } else if (role === 'tenant-admin') {
       pool('nightscout-tenant-admin-registry', 2); pool('nightscout-current-access', 4); pool('nightscout-subject-admin', 4);
-      need(!c.ownerSettings && !c.ownerActivity && !c.ownerCredentials, 'CONNECTION_PLAN_OWNER_EXTENSION_UNKNOWN');
+      need(!c.ownerSettings && !c.ownerActivity, 'CONNECTION_PLAN_OWNER_EXTENSION_UNKNOWN');
+      if(c.ownerCredentials){pool('nightscout-secrets',4);pool('nightscout-legacy-authority',4);}
       direct('owner-readiness'); direct('migration-direct');
     } else if (role === 'admin') {
       for (const [feature, key, maximum] of [['ownership', 'nightscout-ownership-ops', 4], ['pools', 'nightscout-admin-pool', 2], ['managementSessions', 'nightscout-management-sessions', 4], ['provisioning', 'nightscout-admin-provisioning', 4], ['connectorSources', 'nightscout-connector-definitions', 2]]) if (c[feature]) pool(key, maximum);
