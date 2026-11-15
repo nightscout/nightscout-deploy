@@ -10,7 +10,9 @@
 set -euo pipefail
 core=${1:?core checkout}; target=${2:?target worktree dir}
 here=$(cd "$(dirname "$0")/.." && pwd)
-commit=$(sed -n 's/^| upstream commit | `\([0-9a-f]\{40\}\)`.*/\1/p' "$here/bindings/compose/SOURCE.md")
+commit=${3:?exact core commit}
+[[ "$commit" =~ ^[a-f0-9]{40}$ ]] || { echo "exact core commit required" >&2; exit 64; }
+[ "$(git -C "$core" cat-file -t "$commit")" = commit ]
 [ -e "$target" ] && { echo "target exists: $target" >&2; exit 1; }
 # The overlay is a committed tree: uncommitted edits here would run without being the recorded commit.
 [ -z "$(git -C "$here" status --porcelain -- bindings/compose/multitenant)" ] || {

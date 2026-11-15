@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Opt-in prospective source check. Does not select/repin a pair or replace ANY
-# existing SOURCE/tree/five-helper identity check. No Docker, PG, HTTP or install.
+# Source contract check against exact committed core and deployment inputs.
+# No Docker, PG, HTTP or install; no core helper byte comparison.
 # tools/plan-contract-check.sh --prospective CORE_CHECKOUT CORE_COMMIT NEW_PRIVATE_OUTPUT
 set -euo pipefail
 [ "$#" -eq 4 ] && [ "$1" = --prospective ] || { echo 'usage: plan-contract-check.sh --prospective CORE_CHECKOUT CORE_COMMIT NEW_PRIVATE_OUTPUT'; exit 64; }
@@ -15,10 +15,7 @@ git -C "$core" cat-file -e "$commit:lib/server/serve/plan-contract/index.js" || 
 [ "$(git -C "$core" rev-parse "$commit:package-lock.json")" = "$(git -C "$core" hash-object "$core/package-lock.json")" ] || { echo 'FAIL: dependency lock mismatch'; exit 1; }
 umask 077
 mkdir -m 700 "$output"
-identity=0
-if bash "$here/tools/compose-identity-check.sh" "$core" > "$output/identity.stdout" 2> "$output/identity.stderr"; then :; else identity=$?; fi
-# Explicit stale/unselected custody failure remains sticky; semantic evidence is
-# still useful and is recorded separately, never promoted into an overall PASS.
+bash "$here/tools/compose-identity-check.sh" > "$output/identity.stdout" 2> "$output/identity.stderr"
 scratch=$(mktemp -d); trap 'rm -rf "$scratch"' EXIT
 mkdir -p "$scratch/core/deploy/multitenant" "$scratch/core/tools"
 git -C "$core" archive "$commit" bin lib migrations package.json > "$output/core-source.tar"
@@ -40,6 +37,6 @@ for topology in default api2 evaluator2; do
   limit=$remaining; [ "$limit" -le 30 ] || limit=30
   if (ulimit -f 2048; timeout --kill-after=2 "$limit" env -i PATH="$PATH" HOME="${HOME:-/tmp}" node "$scratch/core/bin/nightscout.js" plan check "$output/$topology.input.json") > "$output/$topology.report.json" 2> "$output/$topology.check.stderr"; then echo "ok   [$topology] prospective core document conformance"; else contract=1; echo "FAIL: [$topology] prospective core document conformance"; fi
 done
-printf '{"scope":"PROSPECTIVE_SOURCE_ONLY_NOT_SELECTED_RUNTIME","coreCommit":"%s","deployCommit":"%s","bindingTree":"%s","identityExitCode":%s,"contractFailure":%s,"runtimeAcceptance":"UNMEASURED"}\n' "$commit" "$(git -C "$here" rev-parse HEAD)" "$(git -C "$here" rev-parse HEAD:bindings/compose/multitenant)" "$identity" "$contract" > "$output/result.json"
-echo "Existing identity exit: $identity; prospective document failures: $contract; runtime unmeasured"
-[ "$identity" -eq 0 ] && [ "$contract" -eq 0 ]
+printf '{"scope":"DEPLOYMENT_CONTRACT_SOURCE_ONLY","coreCommit":"%s","deployCommit":"%s","bindingTree":"%s","contractFailure":%s,"runtimeAcceptance":"UNMEASURED"}\n' "$commit" "$(git -C "$here" rev-parse HEAD)" "$(git -C "$here" rev-parse HEAD:bindings/compose/multitenant)" "$contract" > "$output/result.json"
+echo "Contract failures: $contract; runtime UNMEASURED"
+[ "$contract" -eq 0 ]
