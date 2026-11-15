@@ -174,3 +174,10 @@ test('owner credential preparation accounts for its two actual private pools',()
  const max=row=>Object.values(row.capabilities).reduce((n,c)=>n+(c.requestedMaximum||0),0);
  assert.equal(max(selected)-max(baseline),8);
 });
+
+test('ordinary deployment delegates its SQL and provisioning namespace composition to the product', () => {
+  const shared = require('../../lib/server/ordinary-deployment-grants');
+  assert.equal(plan.grants, shared.grants);
+  assert.equal(plan.insertionGrants, shared.insertionGrants);
+  assert.equal(require('./registry-plan').provisioningNamespaces, shared.provisioningNamespaces);
+});

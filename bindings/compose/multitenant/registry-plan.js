@@ -9,10 +9,7 @@ function leaseSessions(source = process.env) {
   if (typeof raw !== 'string' || !/^[1-9][0-9]*$/.test(raw) || Number(raw) > maximum) throw new TypeError('NS_OPERATION_LEASE_SESSIONS must fit the selected operation pool');
   return Number(raw);
 }
-function provisioningNamespaces(ns) {
-  return { registry: ns.registry, legacy: ns.legacy, secrets: ns.secrets, authorization: ns.authorization,
-    access: ns.access, clock: ns.clock, control: ns.control, settings: ns.display_settings, operatorPolicy: ns.operator_policy };
-}
+const { provisioningNamespaces } = require('../../lib/server/ordinary-deployment-grants');
 function checkpoints(docs, ns) {
   const document=docs.configs.evaluator;
   const replay=require('../../lib/storage/postgres-durable-replay')({connection:{query(){throw new Error('CONSTRUCTOR_ONLY');},snapshotTransaction(){throw new Error('CONSTRUCTOR_ONLY');}},checkpointTable:ns.eval_checkpoint+'.tenant_consumer_checkpoint',clockTable:ns.clock+'.tenant_write_clock',consumer:document.consumer,domains:Object.fromEntries(clinical.map(name=>[name,ns[name]+'.'+name])),projectionVersion:'clinical-current-rows-v1',pageSize:document.pageSize,maxRows:document.maxRows});
