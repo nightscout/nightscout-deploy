@@ -11,8 +11,10 @@ No installation or service starts. The actual deployment generator produces
 synthetic registry-mode role documents; core's `nightscout plan check` validates
 them using its published loaders and schema. The archival packaging overlay
 supplies core libraries without changing core code. The check covers the ordinary
-plan and independent API/evaluator configuration selections. Selected realtime
-placement remains explicitly refused until actual placement maps are supplied.
+plan and API replicas. Selected evaluator partition is explicitly refused by the
+actual maintained plan (PGSTREAM_EVALUATOR_PARTITION_UNQUALIFIED); the producer
+tests retain that refusal. Selected realtime placement is also refused until its
+actual placement maps are supplied.
 
 The retained result records exact core/deploy commits, binding tree, generated
 inputs and CLI reports. A wrong source, generator failure or rejected document

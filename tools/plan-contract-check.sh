@@ -27,11 +27,11 @@ git -C "$here" show HEAD:tools/prospective-plan-documents.test.js > "$scratch/co
 ln -s "$(cd "$core" && pwd)/node_modules" "$scratch/core/node_modules"
 started=$SECONDS
 contract=0
-for topology in default api2 evaluator2; do
+for topology in default api2; do
   remaining=$((120 - (SECONDS-started)))
   [ "$remaining" -gt 0 ] || { contract=1; echo 'FAIL: prospective wall bound'; break; }
   limit=$remaining; [ "$limit" -le 30 ] || limit=30
-  vars=(); case "$topology" in api2) vars=(NS_API_REPLICAS=2);; evaluator2) vars=(NS_EVALUATOR_WORKERS=2);; esac
+  vars=(); case "$topology" in api2) vars=(NS_API_REPLICAS=2);; esac
   if (ulimit -f 2048; timeout --kill-after=2 "$limit" env -i PATH="$PATH" HOME="${HOME:-/tmp}" "${vars[@]}" node "$scratch/core/tools/prospective-plan-documents.js") > "$output/$topology.input.json" 2> "$output/$topology.producer.stderr"; then :; else contract=1; echo "FAIL: [$topology] document producer"; continue; fi
   remaining=$((120 - (SECONDS-started))); [ "$remaining" -gt 0 ] || { contract=1; break; }
   limit=$remaining; [ "$limit" -le 30 ] || limit=30

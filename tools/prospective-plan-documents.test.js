@@ -28,13 +28,18 @@ test('one entry per role process, with the files its environment names and no cr
   assert.equal(api.environment.MULTITENANT_EVALUATOR_CONFIG, '/run/ns-config/evaluator-metadata.json');
 });
 
-test('replicas and evaluator workers are their own entries under the product role', () => {
-  const set = withEnv({ NS_API_REPLICAS: '2', NS_EVALUATOR_WORKERS: '2' }, () => documentSet(generated()));
+test('API replicas are their own entries under the product role', () => {
+  const set = withEnv({ NS_API_REPLICAS: '2' }, () => documentSet(generated()));
   assert.deepEqual(set.processes.map(entry => entry.name + ':' + entry.roles.join(',')),
-    ['api:api', 'realtime:realtime', 'evaluator:evaluator', 'tenant-admin:tenant-admin', 'api-2:api', 'evaluator-2:evaluator', 'admin:admin']);
+    ['api:api', 'realtime:realtime', 'evaluator:evaluator', 'tenant-admin:tenant-admin', 'api-2:api', 'admin:admin']);
 });
 
 test('control: a selected realtime placement is refused, not silently left out', () => {
   assert.throws(() => withEnv({ NS_REALTIME_WORKERS: '2', NS_REALTIME_SHARDS: '8' }, () => generated()), /PLAN_DOCUMENTS_PLACEMENT_UNSUPPORTED/);
   assert.throws(() => documentSet({ ...generated(), realtimePlacement: { workers: [] } }), /PLAN_DOCUMENTS_PLACEMENT_UNSUPPORTED/);
+});
+
+
+test('selected evaluator partition remains explicitly unqualified by the actual plan', () => {
+  assert.throws(() => withEnv({ NS_EVALUATOR_WORKERS: '2' }, () => generated()), /PGSTREAM_EVALUATOR_PARTITION_UNQUALIFIED/);
 });
