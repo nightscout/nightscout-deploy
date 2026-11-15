@@ -27,7 +27,9 @@ function request(origin, route, { method = 'GET', body, headers = {}, timeoutMs 
 // Fixed diagnostic classes only; never retain response text, route parameters,
 // host names, credentials or request bodies.
 function refusal(response, requestClass) {
-  const safeErrors = new Set(['TENANT_WARMING', 'TENANT_WARM_FAILED', 'TENANT_UNAVAILABLE', 'AUTHENTICATION_REQUIRED', 'UNAUTHORIZED', 'FORBIDDEN']);
+  const safeErrors = new Set(['TENANT_WARMING', 'TENANT_WARM_FAILED', 'TENANT_UNAVAILABLE', 'STORAGE_UNAVAILABLE', 'AUTHORITY_UNAVAILABLE',
+    'TENANT_ACTIVITY_UNAVAILABLE', 'HUMAN_SESSION_UNAVAILABLE', 'ACCESS_AUTHORITY_UNAVAILABLE', 'ACCESS_AUTHORITY_INVALID',
+    'TENANT_SNAPSHOT_UNAVAILABLE', 'SUBJECT_ADMIN_STORE_UNAVAILABLE', 'SUBJECT_ADMIN_STORE_UNSAFE', 'AUTHENTICATION_REQUIRED', 'UNAUTHORIZED', 'FORBIDDEN']);
   return Object.assign(fail('PRIMER_DATA_API_REFUSED_' + response.status), {
     status: response.status, requestClass,
     responseError: safeErrors.has(response.body?.error) ? response.body.error : 'UNCLASSIFIED'

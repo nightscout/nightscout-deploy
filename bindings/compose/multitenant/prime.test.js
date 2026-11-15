@@ -44,3 +44,15 @@ test('refusal diagnostics retain fixed class and safe code without echoing priva
   assert.equal(opaque.responseError, 'UNCLASSIFIED');
   assert.equal(JSON.stringify(opaque).includes('CANARY'), false);
 });
+
+
+test('fixed published storage and authority refusals preserve class without body details', () => {
+  const { refusal, requestClass } = require('./prime');
+  for (const code of ['STORAGE_UNAVAILABLE', 'AUTHORITY_UNAVAILABLE', 'SUBJECT_ADMIN_STORE_UNAVAILABLE', 'SUBJECT_ADMIN_STORE_UNSAFE']) {
+    const result = refusal({ status: 503, body: { error: code, message: 'private-canary', token: 'private-token' } }, requestClass('/api/v1/entries', 'POST'));
+    assert.equal(result.responseError, code);
+    assert.equal(result.requestClass, 'entries-create');
+    assert.equal(JSON.stringify(result).includes('private-'), false);
+  }
+  assert.equal(refusal({ status: 503, body: { error: 'STORAGE_UNAVAILABLE private-canary' } }, 'entries-create').responseError, 'UNCLASSIFIED');
+});
