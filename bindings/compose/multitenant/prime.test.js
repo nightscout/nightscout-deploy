@@ -31,3 +31,16 @@ test('persistent warming reaches its deadline without a later role-list request'
     assert.equal(at, 4000); assert.equal(count(), 4);
   });
 });
+
+
+test('refusal diagnostics retain fixed class and safe code without echoing private values', () => {
+  const { refusal, requestClass } = require('./prime');
+  const error = refusal({ status: 503, body: { error: 'TENANT_WARM_FAILED', token: 'private-canary' } }, requestClass('/api/v2/authorization/subjects', 'POST'));
+  assert.equal(error.requestClass, 'subjects-create');
+  assert.equal(error.responseError, 'TENANT_WARM_FAILED');
+  assert.equal(JSON.stringify(error).includes('private-canary'), false);
+  const opaque = refusal({ status: 503, body: { error: 'PRIVATE_CANARY' } }, requestClass('/private-canary/path', 'POST'));
+  assert.equal(opaque.requestClass, 'other-data-create');
+  assert.equal(opaque.responseError, 'UNCLASSIFIED');
+  assert.equal(JSON.stringify(opaque).includes('CANARY'), false);
+});

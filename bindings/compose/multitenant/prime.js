@@ -24,12 +24,25 @@ function request(origin, route, { method = 'GET', body, headers = {}, timeoutMs 
     req.on('timeout', () => req.destroy(fail('PRIMER_TIMEOUT'))); req.on('error', () => reject(fail('PRIMER_CONNECTION_FAILED'))); req.end(bytes);
   });
 }
+// Fixed diagnostic classes only; never retain response text, route parameters,
+// host names, credentials or request bodies.
+function refusal(response, requestClass) {
+  const safeErrors = new Set(['TENANT_WARMING', 'TENANT_WARM_FAILED', 'TENANT_UNAVAILABLE', 'AUTHENTICATION_REQUIRED', 'UNAUTHORIZED', 'FORBIDDEN']);
+  return Object.assign(fail('PRIMER_DATA_API_REFUSED_' + response.status), {
+    status: response.status, requestClass,
+    responseError: safeErrors.has(response.body?.error) ? response.body.error : 'UNCLASSIFIED'
+  });
+}
+function requestClass(route, method = 'GET') {
+  const names = { '/api/v2/authorization/roles': 'roles', '/api/v2/authorization/subjects': 'subjects', '/api/v1/entries': 'entries' };
+  return (names[route] || 'other-data') + '-' + (method === 'POST' ? 'create' : method === 'GET' ? 'read' : 'other');
+}
 async function waitForTenant(origin, headers, { timeoutMs = 60000, pollMs = 200, now = Date.now, delay = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
   const deadline = now() + timeoutMs;
   while (now() < deadline) {
     const response = await request(origin, '/api/v2/authorization/roles', { headers, timeoutMs: Math.min(5000, deadline - now()) });
     if (response.status === 200 && Array.isArray(response.body)) return response.body;
-    if (response.status !== 503 || response.body.error !== 'TENANT_WARMING') throw fail('PRIMER_DATA_API_REFUSED_' + response.status);
+    if (response.status !== 503 || response.body.error !== 'TENANT_WARMING') throw refusal(response, 'roles-ready');
     await delay(Math.min(pollMs, Math.max(0, deadline - now())));
   }
   throw fail('PRIMER_TENANT_WARM_TIMEOUT');
@@ -123,7 +136,7 @@ async function primeOwned(config, directory, { concurrency, maxTenants, signal }
     const headers = { host: row.hosts[0], 'api-secret': crypto.createHash('sha1').update(row.rootSecret).digest('hex') };
     const call = async (route, options = {}) => {
       const response = await request(config.apiOrigin, route, { ...options, headers: { ...headers, ...options.headers } });
-      if (response.status < 200 || response.status >= 300) throw Object.assign(fail('PRIMER_DATA_API_REFUSED_' + response.status), { status: response.status });
+      if (response.status < 200 || response.status >= 300) throw refusal(response, requestClass(route, options.method));
       return response.body;
     };
     const roles = await waitForTenant(config.apiOrigin, headers);
@@ -215,5 +228,5 @@ async function main() {
     if (stopped || result.state === 'synthetic-data-prime-partial') process.exitCode = stopped || 2;
   } finally { process.removeListener('SIGINT', interrupt); process.removeListener('SIGTERM', terminate); }
 }
-if (require.main === module) main().catch(error => { console.error(JSON.stringify({ error: /^[A-Z0-9_]{1,100}$/.test(error.code || '') ? error.code : 'PRIMER_FAILED' })); process.exitCode = 1; });
-module.exports = { load, request, waitForTenant, provision, prime, add, privateWrite, primeOptions, parsePrimeOptions };
+if (require.main === module) main().catch(error => { console.error(JSON.stringify({ error: /^[A-Z0-9_]{1,100}$/.test(error.code || '') ? error.code : 'PRIMER_FAILED', ...(error.requestClass ? { requestClass: error.requestClass, responseError: error.responseError } : {}) })); process.exitCode = 1; });
+module.exports = { refusal, requestClass, load, request, waitForTenant, provision, prime, add, privateWrite, primeOptions, parsePrimeOptions };
