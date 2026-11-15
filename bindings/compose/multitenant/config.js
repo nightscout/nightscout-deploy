@@ -96,6 +96,7 @@ function grants(l) {
   }
   sql.push('REVOKE UPDATE(checkpoint,projection,contract_digest) ON '+table('rt_checkpoint','tenant_consumer_checkpoint')+' FROM '+quote(r.realtime));
   schema('secrets','owner_credentials');
+  grant('SELECT',table('secrets','schema_migrations'),'owner_credentials');
   grant('SELECT,INSERT',table('secrets','secret_records'),'owner_credentials');
   grant('INSERT',table('secrets','secret_audit'),'owner_credentials');
   schema('alarm','suppression');for(const name of ['tenant_alarm_suppression','schema_migrations'])grant('SELECT',table('alarm',name),'suppression');
