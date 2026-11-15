@@ -118,6 +118,60 @@ Every other service joins only the backend. Container loopback is
 private to that container; other services communicate over the internal Docker
 network or the fixed private Unix socket paths.
 
+## Bounded lab priming
+
+The primer keeps each tenant's existing authorized API sequence serial. Its
+optional worker count overlaps independent tenants; the default remains one.
+It receives no PostgreSQL or Vault credentials and does not bypass public DATA
+or private ownership/session authorization.
+
+Within the existing primer environment, a bounded chunk is:
+
+```bash
+node deploy/multitenant/prime.js prime --concurrency 4 --max-tenants 100
+```
+
+`prime` and `add` accept these options. `--concurrency` is an integer from 1 to
+32; `--max-tenants` is an integer from 1 to 10000 and limits new commissioning in
+this invocation. The values are operational bounds, not measured capacity.
+A partial chunk returns `synthetic-data-prime-partial` with completed and
+remaining counts and exits 2. An explicit next invocation skips completed
+tenants without API traffic, credential renewal or another entry upload.
+Existing `primed.json` describes its prior completed seed until all newly
+provisioned tenants finish.
+
+One process owns the directory through `prime.lock` across `provision`, `prime`
+and `add`. Shared custody updates are synchronous, atomically renamed and
+flushed, including the parent directory. Parallel workers cannot overwrite a
+peer's completed tenant or management request identity. On a tenant failure or
+SIGINT/SIGTERM, dispatch stops and already-started tenants drain under their
+existing request and warming timeouts. Hard process termination can interrupt
+that drain. A retained lock is never silently stolen: first confirm its process
+is absent and review pending outcomes before removing it.
+
+Before an entry POST, `entry-requests.json` records an `outcome-uncertain` phase.
+The record is cleared only after a definite client refusal or after the tenant's
+completed custody is flushed. Transport loss, server errors or failed local
+completion writes retain the phase. Resume then refuses with
+`PRIMER_ENTRY_OUTCOME_UNCERTAIN` before any API traffic. Reconcile through the
+authorized API and retained request evidence; do not clear the phase to force a
+retry. The primer recomputes entry time on retry and does not establish identical
+replay or read-back semantics; the entry label alone does not resolve an
+uncertain completion. Completed tenants are reusable, but ambiguous entry outcomes
+are not automatically replayed.
+
+The existing `add` operation remains limited to 100 explicit tenant specs per
+addition. It provisions through the private tenant API and commissions only
+unfinished tenants. Reusing a cohort does not authorize resetting its stream,
+changing source/image pins, replacing credentials or changing its observation
+window. Higher worker counts can increase database contention and custody I/O;
+measure their effects before choosing later scale points.
+
+This primer change needs a new deployment pin and canonical image qualification
+before adoption. Focused loopback tests establish scheduling and custody
+behavior; they do not establish live throughput, power-loss behavior of the
+filesystem or clinical correctness.
+
 ## Credentials and initialization
 
 Each runtime service mounts only its own generated read-only configuration

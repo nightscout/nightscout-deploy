@@ -36,9 +36,16 @@ async function waitForTenant(origin, headers, { timeoutMs = 60000, pollMs = 200,
 }
 function privateWrite(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  const temporary = file + '.new'; fs.writeFileSync(temporary, JSON.stringify(value) + '\n', { flag: 'wx', mode: 0o600 }); fs.renameSync(temporary, file);
+  const temporary = file + '.new', fd = fs.openSync(temporary, 'wx', 0o600);
+  try { fs.writeFileSync(fd, JSON.stringify(value) + '\n'); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+  fs.renameSync(temporary, file);
+  const parent = fs.openSync(path.dirname(file), 'r');
+  try { fs.fsyncSync(parent); } finally { fs.closeSync(parent); }
 }
 async function provision(config, directory) {
+  return withPrimerLock(directory, () => provisionOwned(config, directory));
+}
+async function provisionOwned(config, directory) {
   const file = path.join(directory, 'provisioned.json');
   let known = [];
   if (fs.existsSync(file)) known = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -61,28 +68,62 @@ async function provision(config, directory) {
   }
   return { state: 'synthetic-tenants-provisioned', tenants: saved.size };
 }
-async function prime(config, directory) {
+function primeOptions(options = {}) {
+  if (!options || typeof options !== 'object' || Array.isArray(options) || Object.keys(options).some(key => !['concurrency','maxTenants','signal'].includes(key))) throw fail('PRIMER_OPTIONS_INVALID');
+  const concurrency = options.concurrency === undefined ? 1 : options.concurrency;
+  const maxTenants = options.maxTenants === undefined ? 10000 : options.maxTenants;
+  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 32 || !Number.isInteger(maxTenants) || maxTenants < 1 || maxTenants > 10000 ||
+      (options.signal !== undefined && typeof options.signal?.aborted !== 'boolean')) throw fail('PRIMER_OPTIONS_INVALID');
+  return { concurrency, maxTenants, signal: options.signal };
+}
+async function withPrimerLock(directory, work) {
+  const lock = path.join(directory, 'prime.lock'), nonce = crypto.randomUUID();
+  let fd;
+  try { fd = fs.openSync(lock, 'wx', 0o600); }
+  catch (error) { if (error.code === 'EEXIST') throw fail('PRIMER_STATE_IN_USE'); throw error; }
+  fs.writeFileSync(fd, JSON.stringify({ version: 1, pid: process.pid, nonce }) + '\n'); fs.closeSync(fd);
+  try { return await work(); }
+  finally {
+    const owner = JSON.parse(fs.readFileSync(lock, 'utf8'));
+    if (owner.nonce !== nonce || owner.pid !== process.pid) throw fail('PRIMER_STATE_LOCK_CHANGED');
+    fs.unlinkSync(lock);
+  }
+}
+async function prime(config, directory, options) {
+  const settings = primeOptions(options);
+  return withPrimerLock(directory, () => primeOwned(config, directory, settings));
+}
+async function primeOwned(config, directory, { concurrency, maxTenants, signal }) {
   const saved = JSON.parse(fs.readFileSync(path.join(directory, 'provisioned.json'), 'utf8'));
   const completed = path.join(directory, 'primed.json');
   const tenantsFile = path.join(directory, 'tenants.json');
   if (fs.existsSync(completed) && !fs.existsSync(tenantsFile)) throw fail('PRIMER_CUSTODY_INVALID');
   const prior = fs.existsSync(tenantsFile) ? JSON.parse(fs.readFileSync(tenantsFile, 'utf8')) : { version: 1, tenants: [] };
+  if (!Array.isArray(saved) || saved.some(row => !row || typeof row.id !== 'string' || !row.id || !Array.isArray(row.hosts) || typeof row.hosts[0] !== 'string' || typeof row.rootSecret !== 'string' || !row.rootSecret)) throw fail('PRIMER_CUSTODY_INVALID');
   const savedIds = new Set(saved.map(row => row.id));
+  if (savedIds.size !== saved.length) throw fail('PRIMER_CUSTODY_INVALID');
   if (prior.version !== 1 || !Array.isArray(prior.tenants) || new Set(prior.tenants.map(row => row.id)).size !== prior.tenants.length ||
       prior.tenants.some(row => !savedIds.has(row.id) || typeof row.dataToken !== 'string' || !row.dataToken || typeof row.managementToken !== 'string' || !row.managementToken)) throw fail('PRIMER_CUSTODY_INVALID');
-  const results = prior.tenants.slice(), commissioned = new Set(results.map(row => row.id));
+  const results = new Map(prior.tenants.map(row => [row.id, row]));
+  const entryFile = path.join(directory, 'entry-requests.json');
+  const entryState = fs.existsSync(entryFile) ? JSON.parse(fs.readFileSync(entryFile, 'utf8')) : { version: 1, tenants: {} };
+  if (entryState.version !== 1 || !entryState.tenants || typeof entryState.tenants !== 'object' || Array.isArray(entryState.tenants) ||
+      Object.entries(entryState.tenants).some(([id, value]) => !savedIds.has(id) || value?.state !== 'outcome-uncertain')) throw fail('PRIMER_CUSTODY_INVALID');
+  // A prior process may have sent the entry before losing its response or local
+  // completion write. Do not guess whether the DATA API committed that request.
+  if (Object.keys(entryState.tenants).some(id => !results.has(id))) throw fail('PRIMER_ENTRY_OUTCOME_UNCERTAIN');
+  const pending = saved.map((row, index) => ({ row, index })).filter(({ row }) => !results.has(row.id)).slice(0, maxTenants);
   const ownership = require('../../lib/server/internal-api/clients').ownershipOperations({ url: config.adminOrigin, trust: 'network', maxBytes: 1048576, timeoutMs: 60000 });
   const requestFile = path.join(directory, 'management-requests.json');
   const managementRequests = fs.existsSync(requestFile) ? JSON.parse(fs.readFileSync(requestFile, 'utf8')) : {};
-  for (const [index, row] of saved.entries()) {
+  const commission = async ({ row, index }) => {
     // A global completion marker describes the previous seed, not future
     // additions. Preserve existing client custody and do not reissue or write
     // existing tenants while explicitly commissioning new ones.
-    if (commissioned.has(row.id)) continue;
     const headers = { host: row.hosts[0], 'api-secret': crypto.createHash('sha1').update(row.rootSecret).digest('hex') };
     const call = async (route, options = {}) => {
       const response = await request(config.apiOrigin, route, { ...options, headers: { ...headers, ...options.headers } });
-      if (response.status < 200 || response.status >= 300) throw fail('PRIMER_DATA_API_REFUSED_' + response.status);
+      if (response.status < 200 || response.status >= 300) throw Object.assign(fail('PRIMER_DATA_API_REFUSED_' + response.status), { status: response.status });
       return response.body;
     };
     const roles = await waitForTenant(config.apiOrigin, headers);
@@ -112,26 +153,67 @@ async function prime(config, directory) {
       method: 'POST', body: { subjectId: ownerSubject._id, requestId }, headers: { 'idempotency-key': requestId } });
     if (![200, 201].includes(management.status) || typeof management.body.token !== 'string' || !Number.isSafeInteger(management.body.expiresAt)) throw fail('PRIMER_MANAGEMENT_SESSION_REFUSED');
     const now = Date.now();
-    await call('/api/v1/entries', { method: 'POST', body: { _id: 'synthetic-reading-' + index, type: 'sgv', sgv: index ? 177 : 123, date: now - 1000, dateString: new Date(now - 1000).toISOString(), direction: 'Flat', device: 'synthetic-compose-demo' }, headers: { 'api-secret': subject.accessToken } });
-    results.push({ id: row.id, host: row.hosts[0], subject: subject._id, dataToken: subject.accessToken, ownerSubject: ownerSubject._id, managementToken: management.body.token, managementExpiresAt: management.body.expiresAt });
-    privateWrite(path.join(directory, 'tenants.json'), { version: 1, tenants: results });
-  }
-  const state = { state: 'synthetic-data-primed', tenants: results.length };
+    entryState.tenants[row.id] = { state: 'outcome-uncertain' }; privateWrite(entryFile, entryState);
+    try {
+      await call('/api/v1/entries', { method: 'POST', body: { _id: 'synthetic-reading-' + index, type: 'sgv', sgv: index ? 177 : 123, date: now - 1000, dateString: new Date(now - 1000).toISOString(), direction: 'Flat', device: 'synthetic-compose-demo' }, headers: { 'api-secret': subject.accessToken } });
+    } catch (error) {
+      // A definite client refusal permits an explicit later retry. Transport
+      // loss or a server error keeps the uncertainty fence for reconciliation.
+      if (error.status >= 400 && error.status < 500) { delete entryState.tenants[row.id]; privateWrite(entryFile, entryState); }
+      throw error;
+    }
+    results.set(row.id, { id: row.id, host: row.hosts[0], subject: subject._id, dataToken: subject.accessToken, ownerSubject: ownerSubject._id, managementToken: management.body.token, managementExpiresAt: management.body.expiresAt });
+    privateWrite(tenantsFile, { version: 1, tenants: saved.filter(value => results.has(value.id)).map(value => results.get(value.id)) });
+    delete entryState.tenants[row.id]; privateWrite(entryFile, entryState);
+  };
+  let cursor = 0, failure;
+  const worker = async () => {
+    while (!failure && !signal?.aborted && cursor < pending.length) {
+      const item = pending[cursor++];
+      try { await commission(item); } catch (error) { failure ||= error; }
+    }
+  };
+  // Each tenant keeps its existing serial API sequence. Stop dispatching on
+  // failure/cancellation, then drain every already-started tenant and save it.
+  await Promise.all(Array.from({ length: Math.min(concurrency, pending.length) }, worker));
+  if (failure) throw failure;
+  if (results.size !== saved.length) return { state: 'synthetic-data-prime-partial', tenants: results.size, remaining: saved.length - results.size };
+  const state = { state: 'synthetic-data-primed', tenants: results.size };
   privateWrite(completed, state); return state;
 }
-async function add(config, directory) {
+async function add(config, directory, options) {
+  const settings = primeOptions(options);
+  return withPrimerLock(directory, () => addOwned(config, directory, settings));
+}
+async function addOwned(config, directory, options) {
   const value = JSON.parse(fs.readFileSync(path.join(directory, 'add.json'), 'utf8'));
   if (!value || Object.keys(value).sort().join(',') !== 'tenants,version' || value.version !== 1 ||
       !Array.isArray(value.tenants) || !value.tenants.length || value.tenants.length > 100) throw fail('PRIMER_ADDITION_INVALID');
   for (const spec of value.tenants) require('../../lib/tenant-registry/provision').parseSpec(spec);
-  await provision({ ...config, seed: value.tenants }, directory);
-  return prime(config, directory);
+  await provisionOwned({ ...config, seed: value.tenants }, directory);
+  return primeOwned(config, directory, options);
+}
+function parsePrimeOptions(values) {
+  const options = {};
+  for (let index = 0; index < values.length; index += 2) {
+    const key = { '--concurrency': 'concurrency', '--max-tenants': 'maxTenants' }[values[index]];
+    if (!key || Object.hasOwn(options, key) || !/^[1-9][0-9]*$/.test(values[index + 1] || '')) throw fail('PRIMER_OPTIONS_INVALID');
+    options[key] = Number(values[index + 1]);
+  }
+  primeOptions(options); return options;
 }
 async function main() {
-  const [operation] = process.argv.slice(2), directory = process.env.NS_PRIMER_STATE || '/run/ns-primer';
-  const config = load(path.join(directory, 'config.json'));
-  if (!['provision','prime','add'].includes(operation)) throw fail('PRIMER_OPERATION_INVALID');
-  console.log(JSON.stringify(await ({ provision, prime, add }[operation](config, directory))));
+  const [operation, ...values] = process.argv.slice(2), directory = process.env.NS_PRIMER_STATE || '/run/ns-primer';
+  if (!['provision','prime','add'].includes(operation) || (operation === 'provision' && values.length)) throw fail('PRIMER_OPERATION_INVALID');
+  const options = parsePrimeOptions(values), controller = new AbortController(); let stopped;
+  const interrupt = () => { stopped = 130; controller.abort(); }, terminate = () => { stopped = 143; controller.abort(); };
+  process.once('SIGINT', interrupt); process.once('SIGTERM', terminate);
+  try {
+    const config = load(path.join(directory, 'config.json'));
+    const result = await ({ provision, prime, add }[operation](config, directory, { ...options, signal: controller.signal }));
+    console.log(JSON.stringify(result));
+    if (stopped || result.state === 'synthetic-data-prime-partial') process.exitCode = stopped || 2;
+  } finally { process.removeListener('SIGINT', interrupt); process.removeListener('SIGTERM', terminate); }
 }
 if (require.main === module) main().catch(error => { console.error(JSON.stringify({ error: /^[A-Z0-9_]{1,100}$/.test(error.code || '') ? error.code : 'PRIMER_FAILED' })); process.exitCode = 1; });
-module.exports = { load, request, waitForTenant, provision, prime, add, privateWrite };
+module.exports = { load, request, waitForTenant, provision, prime, add, privateWrite, primeOptions, parsePrimeOptions };
