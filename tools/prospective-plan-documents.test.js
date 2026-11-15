@@ -16,7 +16,7 @@ function withEnv (values, run) {
 test('one entry per role process, with the files its environment names and no credential outside the environment', () => {
   const set = documentSet(generated());
   assert.equal(set.contract, 1);
-  assert.deepEqual(set.processes.map(entry => entry.name), ['api', 'realtime', 'evaluator', 'tenant-admin', 'admin', 'feed-reader']);
+  assert.deepEqual(set.processes.map(entry => entry.name), ['api', 'realtime', 'evaluator', 'tenant-admin', 'admin']);
   for (const entry of set.processes) {
     const named = Object.values(entry.environment).filter(value => Object.hasOwn(entry.files, value));
     assert(named.length >= 1, entry.name);
@@ -31,7 +31,7 @@ test('one entry per role process, with the files its environment names and no cr
 test('replicas and evaluator workers are their own entries under the product role', () => {
   const set = withEnv({ NS_API_REPLICAS: '2', NS_EVALUATOR_WORKERS: '2' }, () => documentSet(generated()));
   assert.deepEqual(set.processes.map(entry => entry.name + ':' + entry.roles.join(',')),
-    ['api:api', 'realtime:realtime', 'evaluator:evaluator', 'tenant-admin:tenant-admin', 'api-2:api', 'evaluator-2:evaluator', 'admin:admin', 'feed-reader:feed-reader']);
+    ['api:api', 'realtime:realtime', 'evaluator:evaluator', 'tenant-admin:tenant-admin', 'api-2:api', 'evaluator-2:evaluator', 'admin:admin']);
 });
 
 test('control: a selected realtime placement is refused, not silently left out', () => {

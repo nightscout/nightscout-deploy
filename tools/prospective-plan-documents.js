@@ -27,7 +27,6 @@ function documentSet (docs) {
     files: { [CONFIG + 'config.json']: docs.configs[service], [CONFIG + 'operation.json']: docs.operations[service],
       ...(product(service) === 'api' ? { [CONFIG + 'evaluator-metadata.json']: docs.configs.evaluator } : {}) } }));
   processes.push({ name: 'admin', roles: ['admin'], environment: docs.admin.environment, files: { [CONFIG + 'config.json']: docs.admin.config } });
-  processes.push({ name: 'feed-reader', roles: ['feed-reader'], environment: docs.feed.environment, files: { [CONFIG + 'config.json']: docs.feed.config } });
   return { contract: 1, processes };
 }
 
