@@ -234,6 +234,9 @@ def prepare_arguments(spec,dependencies=None):
     if spec.get('diagnosticResourceProfile') is not None:
         need(isinstance(dependencies,dict) and set(dependencies)=={'root','receipt','sha256'} and re.fullmatch('[a-f0-9]{64}',dependencies.get('sha256','')),'PGCAL_DIAGNOSTIC_DEPENDENCIES_REQUIRED')
         args+=['--generator-dependencies',dependencies['root'],'--generator-dependency-receipt',dependencies['receipt'],'--generator-dependency-receipt-sha256',dependencies['sha256']]
+    jwt=spec.get('jwtSetupConcurrency',1)
+    need(type(jwt) is int and 1<=jwt<=64,'PGCAL_JWT_SETUP_CONCURRENCY')
+    args+=['--jwt-setup-concurrency',str(jwt)]
     args+=['--primer-concurrency',str(spec.get('primerConcurrency',1))]
     return args
 

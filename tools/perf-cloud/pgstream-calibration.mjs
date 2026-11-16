@@ -32,6 +32,8 @@ export function topologyBinding(spec){
 export function workloadBinding(spec){
   const discovery=discoveryMode(spec);
   const concurrency=spec.primerConcurrency??1;
+  const jwt=spec.jwtSetupConcurrency===undefined?1:spec.jwtSetupConcurrency;
+  need(Number.isInteger(jwt)&&jwt>=1&&jwt<=64,'PGCAL_JWT_SETUP_CONCURRENCY');
   need(Number.isInteger(concurrency)&&concurrency>=1&&concurrency<=32,'PGCAL_PRIMER_CONCURRENCY');
   need(discovery||equal(spec.pins,PRIMER_PINS)||(equal(spec.pins,REPAIRED_PINS)||equal(spec.pins,MINIMUM_PINS))||concurrency===1,'PGCAL_PRIMER_CONCURRENCY_UNSUPPORTED_SOURCE');
   const cadence=spec.cadence;
@@ -46,7 +48,7 @@ export function workloadBinding(spec){
   need(offeredRps===undefined||(Number.isFinite(offeredRps)&&offeredRps>=1&&offeredRps<=10000),'PGCAL_EXPLICIT_CADENCE');
   if(spec.resourcePlan===undefined){
     need(!discovery,'PGCAL_RESOURCE_PLAN_REQUIRED');
-    need([10,1000].includes(spec.tenants)&&equal(cadence,CADENCE)&&concurrency===1,'PGCAL_RESOURCE_PLAN_REQUIRED');
+    need([10,1000].includes(spec.tenants)&&equal(cadence,CADENCE)&&concurrency===1&&jwt===1,'PGCAL_RESOURCE_PLAN_REQUIRED');
     return null;
   }
   const plan=spec.resourcePlan;
@@ -56,7 +58,7 @@ export function workloadBinding(spec){
     need(host&&actual&&equal(Object.keys(host).sort(),['providerId','cpuCores','ramBytes'].sort())&&typeof host.providerId==='string'&&host.providerId.length>0&&host.providerId.length<=160&&Number.isFinite(host.cpuCores)&&host.cpuCores>0&&Number.isSafeInteger(host.ramBytes)&&host.ramBytes>0&&equal(host,{providerId:actual.providerId,cpuCores:actual.cpuCores,ramBytes:actual.ramBytes}),'PGCAL_RESOURCE_PLAN_HOST');
   }
   need(plan.hosts.sut.providerId!==plan.hosts.driver.providerId,'PGCAL_RESOURCE_PLAN_HOST');
-  return {cadence,primerConcurrency:concurrency,resourcePlan:plan};
+  return {cadence,primerConcurrency:concurrency,resourcePlan:plan,...(spec.jwtSetupConcurrency===undefined?{}:{jwtSetupConcurrency:jwt})};
 }
 export const HELPER_FILES=['host_binding.py','component_cases.py','component_sut.py','component_sessions.py','app.py','cell.py','clinical.py','generator.py','producer.py','protocol.py','recovery.cjs','traffic_probe.py','transport.py'];
 export const TRAFFIC_FILES=['probe-accounting.cjs','package.json','package-lock.json','tenants.private.json','probe.js','workload.js','recovery.cjs'];

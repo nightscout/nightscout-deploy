@@ -202,3 +202,17 @@ test('actual bound discovery sessions spend remaining original work after cold a
  for(const kind of ['client-complete','server-recovery-complete','cell-complete'])assert.equal(seen.find(r=>r[1]===kind)[2],460000);
  now=9460000;await assert.rejects(coordinateCalibration(app,async()=>gen,async()=>{},()=>{},60,()=>123,'discovery'),/PGCAL_DEADLINE/);
 });
+
+test('JWT setup concurrency is optional, exact receipt-bound, and forwarded through the worker',async()=>{
+ const {runtimeBinding}=await import('./pgstream-caller.mjs'),{spawnSync}=await import('node:child_process');
+ const s=parameterized({primer:true,concurrency:2,tenants:5000,rate:240,seconds:600});Object.assign(s,{runId:'synthetic-jwt',cloudId:'synthetic-jwt-'+'a'.repeat(12),nonce:'b'.repeat(32),expiresAt:Date.now()/1000+3600,k6Image:'grafana/k6@sha256:'+'f'.repeat(64)});
+ validate(s);assert(!Object.hasOwn(runtimeBinding(s).workload,'jwtSetupConcurrency'));
+ const code="import importlib.util,json,sys; s=importlib.util.spec_from_file_location('worker',sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(json.dumps(list(map(str,m.prepare_arguments(json.load(sys.stdin))))))";
+ function args(spec){const r=spawnSync('python3',['-B','-c',code,new URL('./pgstream-worker.py',import.meta.url).pathname],{input:JSON.stringify(spec),encoding:'utf8',timeout:10000});assert.equal(r.error,undefined);assert.equal(r.status,0,r.stderr);return JSON.parse(r.stdout);}
+ let argv=args(s);assert.equal(argv[argv.indexOf('--jwt-setup-concurrency')+1],'1');
+ s.jwtSetupConcurrency=16;s.receipt.remoteWorkload=clone(workloadBinding(s));validate(s);
+ assert.equal(runtimeBinding(s).workload.jwtSetupConcurrency,16);argv=args(s);assert.equal(argv[argv.indexOf('--jwt-setup-concurrency')+1],'16');
+ for(const value of [0,65,true,null,16.5,'16']){const bad=clone(s);bad.jwtSetupConcurrency=value;assert.throws(()=>validate(bad),/JWT_SETUP_CONCURRENCY/);}
+ for(const edit of [v=>delete v.jwtSetupConcurrency,v=>v.jwtSetupConcurrency=1,v=>delete v.receipt.remoteWorkload.jwtSetupConcurrency,v=>v.receipt.remoteWorkload.jwtSetupConcurrency=1]){const bad=clone(s);edit(bad);assert.throws(()=>validate(bad),/WORKLOAD_RECEIPT_BINDING/);}
+ validate(s);
+});
