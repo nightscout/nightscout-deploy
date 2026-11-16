@@ -107,13 +107,29 @@ export function proposal(extensionSha256,helperCommit){
   return {version:1,profile:PROFILE,status:'SOURCE_PREPARED_ALLOCATION_AND_EXPORT_PENDING',tenants:1000,logicalPollingClients:2000,pins:PINS,cadence:CADENCE,extensionSha256,helperCommit,capacityAcceptance:'NOT_GRANTED',liveQualification:'UNMEASURED',authorization:'GENUINE_AUTHORIZED_DIAGNOSTIC_RECEIPT_PENDING',allocation:'ROOT_AND_HUMAN_REVIEW_PENDING',artifacts:Object.fromEntries([['app','app-8956.tar'],['postgres','postgres-21e.tar']].map(([name,file])=>[name,{imageId:PINS[name],status:'PENDING_EXPORT',sha256:null,path:'/mnt/data/nightscout-workspace/artifacts/pgstream-remote1k-transport-36be-262-20261114/'+file}])),executionRefusedUntil:['actual export bytes/checksums reviewed','actual provider inventory and approved NIC/MAC/privateIP','generator-only exact-port provider firewall and SUT pre-DNAT admission','genuine diagnostic receipt bound to base and extension identities','paid allocation approval'],driverLimits:{k6PreallocatedVUsFormula:'min(400,ceil(rate/300)*2+5)',k6MaxVUsPerScenario:800,scenarioCount:7,fdSoft:'UNMEASURED',fdHard:'UNMEASURED',headroom:'UNMEASURED'}};
 }
 export async function hashFile(file){const h=createHash('sha256');for await(const block of createReadStream(file))h.update(block);return h.digest('hex');}
+// Existing canonical rebootstrap producer records complete image/source bytes,
+// rather than the older build-returncode envelope. Preserve that actual evidence
+// shape; no synthetic returncode or runtime/capacity qualification is inferred.
+export async function rebootstrapQualification(spec,qualification){
+  const read=async ref=>{need(path.isAbsolute(ref?.path??'')&&/^[a-f0-9]{64}$/.test(ref.sha256??'')&&await hashFile(ref.path)===ref.sha256,'PGCAL_REBOOTSTRAP_PROOF_HASH');return fs.readFile(ref.path,'utf8');};
+  const receipt=JSON.parse(await read(qualification));
+  need(discoveryMode(spec)&&topologyBinding(spec)&&receipt.status==='PASS'&&receipt.basis==='reproduced'&&receipt.core===spec.pins.core&&receipt.deploy===spec.pins.deploy&&receipt.imageId===spec.pins.app&&receipt.qualifierAbsent===true&&Array.isArray(receipt.builderReferencesAbsent)&&receipt.builderReferencesAbsent.length>0&&new Set(receipt.builderReferencesAbsent).size===receipt.builderReferencesAbsent.length&&receipt.builderReferencesAbsent.every(x=>/^[a-f0-9]{12}$/.test(x)),'PGCAL_REBOOTSTRAP_BINDING');
+  const manifestText=await read(qualification.manifest),manifest=JSON.parse(manifestText),buildLog=await read(qualification.buildLog),byteCheck=JSON.parse(await read(qualification.byteCheck)),inspection=JSON.parse(await read(qualification.inspection));
+  need(qualification.manifest.sha256===receipt.manifestSha256&&qualification.buildLog.sha256===receipt.buildLogSha256&&manifest.core===spec.pins.core&&manifest.deploy===spec.pins.deploy&&manifest.files&&Object.keys(manifest.files).length>0&&Object.values(manifest.files).every(x=>/^[a-f0-9]{64}$/.test(x)),'PGCAL_REBOOTSTRAP_MANIFEST');
+  need(equal(byteCheck,receipt.sourceByteCheck)&&equal(byteCheck.mismatches,[])&&byteCheck.sourceFiles===Object.keys(manifest.files).length&&byteCheck.binding?.coreCommit===spec.pins.core&&byteCheck.binding?.deployCommit===spec.pins.deploy&&byteCheck.node==='v24.22.1','PGCAL_REBOOTSTRAP_SOURCE_BYTES');
+  need(inspection.imageId===spec.pins.app&&inspection.sourceLabel===spec.pins.core&&inspection.deployLabel===spec.pins.deploy,'PGCAL_REBOOTSTRAP_IMAGE_LABELS');
+  need(typeof receipt.tag==='string'&&buildLog.split('\n').includes('Successfully built '+spec.pins.app.slice(7,19))&&buildLog.split('\n').includes('Successfully tagged '+receipt.tag),'PGCAL_REBOOTSTRAP_BUILD_MARKER');
+  return {status:'SOURCE_BYTE_IMAGE_PROOF_PASS',buildReturncode:'UNMEASURED',runtime:'NOT_RUN',capacityAcceptance:'NOT_GRANTED'};
+}
 export async function packet(spec,helperRoot,archives){
   validate(spec);
   if(discoveryMode(spec)||equal(spec.pins,PRIMER_PINS)||(equal(spec.pins,REPAIRED_PINS)||equal(spec.pins,MINIMUM_PINS))||equal(spec.pins,PERFORMANCE_PINS)){
     const qualification=spec.sourceQualification;
     need(await hashFile(qualification.path)===qualification.sha256,'PGCAL_PRIMER_QUALIFICATION_HASH');
     const receipt=JSON.parse(await fs.readFile(qualification.path));
-    if(receipt.status==='CANONICAL_INTERMEDIATE_BUILD_LABEL_CHECK_AND_BUILDER_ABSENCE_PASS'){
+    if(receipt.status==='PASS'){
+      await rebootstrapQualification(spec,qualification);
+    }else if(receipt.status==='CANONICAL_INTERMEDIATE_BUILD_LABEL_CHECK_AND_BUILDER_ABSENCE_PASS'){
       need(discoveryMode(spec)&&topologyBinding(spec)&&receipt.source===spec.pins.core&&receipt.deploy===spec.pins.deploy&&receipt.imageId===spec.pins.app&&receipt.buildReturncode===0&&equal(receipt.imageLabelMismatches,[])&&receipt.sourceProcessSameBirthPresent===false&&receipt.runtime==='NOT_RUN'&&receipt.capacityAcceptance==='NOT_GRANTED'&&Array.isArray(receipt.builderReferencesAbsent)&&receipt.builderReferencesAbsent.length>0,'PGCAL_INTERMEDIATE_IMAGE_QUALIFICATION');
       const check=qualification.check;need(path.isAbsolute(check?.path??'')&&/^[a-f0-9]{64}$/.test(check.sha256??'')&&await hashFile(check.path)===check.sha256,'PGCAL_INTERMEDIATE_CHECK_HASH');
       const result=JSON.parse(await fs.readFile(check.path));need(result.returncode===0&&result.source===spec.pins.core&&result.deploy===spec.pins.deploy&&result.image===spec.pins.app&&result.runtime==='NOT_RUN','PGCAL_INTERMEDIATE_CHECK_BINDING');
