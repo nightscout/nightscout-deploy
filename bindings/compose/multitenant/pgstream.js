@@ -23,13 +23,13 @@ function receiverURL(config){
  if(!receiver.url)throw new TypeError('Explicit network intake receiver required');
  return new URL('pgstream',receiver.url).href;
 }
-function descriptor(layout){return {consumer:'evaluator-compose-demo',namespaces:{clock:layout.namespaces.clock,checkpoint:layout.namespaces.eval_checkpoint},trustedWorker:{settings:layout.namespaces.display_settings,operatorPolicy:layout.namespaces.operator_policy,activity:layout.namespaces.control},pgstream:configuration(layout)};}
+function descriptor(layout){return {consumer:'evaluator-compose-demo',namespaces:{...Object.fromEntries(['entries','treatments','devicestatus','profile','food','activity'].map(domain=>[domain,layout.namespaces[domain]])),clock:layout.namespaces.clock,checkpoint:layout.namespaces.eval_checkpoint},trustedWorker:{settings:layout.namespaces.display_settings,operatorPolicy:layout.namespaces.operator_policy,activity:layout.namespaces.control},pgstream:configuration(layout)};}
 function wire(config,runtimeURL,{subscriptionsPort=19914,routes}={}){
  if(!Number.isSafeInteger(subscriptionsPort)||subscriptionsPort<1024||subscriptionsPort>65535)throw new TypeError('Explicit subscriptions port required');
  const selected=routes||require('../../lib/pgstream/evaluator').routes({...config,namespaces:config.postgres?.namespaces||config.namespaces});
  const streamURL=new URL(runtimeURL);streamURL.searchParams.set('sslmode','disable');runtimeURL=streamURL.href;
  const storeURL=new URL(runtimeURL);storeURL.searchParams.set('pool_max_conns','2');
- return {source:{postgres:{url:runtimeURL,mode:'replication',replication:{replication_slot:config.pgstream.slot,plugin:{add_tables:selected.map(row=>row.schema+'.'+row.table).join(',')}}}},
+ return {source:{postgres:{url:runtimeURL,mode:'replication',replication:{replication_slot:config.pgstream.slot,plugin:{include_xids:true,add_tables:selected.map(row=>row.schema+'.'+row.table).join(',')}}}},
    target:{webhooks:{subscriptions:{store:{url:storeURL.href,cache:{enabled:false}},server:{address:'127.0.0.1:'+subscriptionsPort}},notifier:{worker_count:1,strict_mode:true,client_timeout:2000,backoff:{constant:{max_retries:1,interval:50}}}}}};
 }
 async function init({admin,adminURL,layout,config,binary='/usr/local/bin/pgstream',binarySha256,routes,workColumns,realtimeColumns,realtimeConsumers=['realtime-compose-demo']}){
@@ -61,7 +61,7 @@ async function init({admin,adminURL,layout,config,binary='/usr/local/bin/pgstrea
  await admin.query('GRANT SELECT ON pgstream.webhook_subscriptions TO '+role);
  await admin.query('GRANT USAGE ON SCHEMA pgstream TO '+evaluator);
  await admin.query('GRANT SELECT ON pgstream.webhook_subscriptions TO '+evaluator);
- await admin.query('CREATE POLICY pgstream_evaluator_metadata ON '+table+' TO '+evaluator+" USING (consumer='"+consumer+"') WITH CHECK (consumer='"+consumer+"')");
+ await admin.query('CREATE POLICY pgstream_evaluator_metadata ON '+table+' TO '+evaluator+" USING (consumer IN ('"+config.consumer+"','"+consumer+"')) WITH CHECK (consumer IN ('"+config.consumer+"','"+consumer+"'))");
  await admin.query('GRANT UPDATE('+columns.join(',')+') ON '+table+' TO '+evaluator);
  if(hasRealtime){
   const realtime=q(layout.roles.realtime),realtimeTable=q(layout.namespaces.rt_checkpoint)+'.tenant_consumer_checkpoint';
