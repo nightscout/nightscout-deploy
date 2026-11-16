@@ -82,6 +82,34 @@ test('a cell deadline leaves later eligible pairs runnable; shared deadline ente
 
 test('a large queued cell does not block a smaller independent pair that fits',async()=>{
  const {b,root}=await fixture(b=>{b.envelope.heapMiB=3072;b.cells[0].resources.heapMiB=b.cells[1].resources.heapMiB=2048;});const entered=[];
- try{await runBatch(b,root,{now:()=>1000,hooks:rootHooks(),executeCell:async c=>{entered.push(c.id);await new Promise(r=>setTimeout(r,10));return deleted(c);}});assert.deepEqual(entered,['cell-0','cell-2','cell-1']);}
+ let smallerEntered,firstEntered;const smaller=new Promise(resolve=>{smallerEntered=resolve;}),first=new Promise(resolve=>{firstEntered=resolve;});
+ try{await runBatch(b,root,{now:()=>1000,hooks:rootHooks(),executeCell:async c=>{
+  entered.push(c.id);
+  if(c.id==='cell-0')firstEntered();
+  if(c.id==='cell-2')smallerEntered();
+  if(c.id!=='cell-1'){let timer;try{await Promise.race([c.id==='cell-0'?smaller:first,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('INDEPENDENT_PAIR_BLOCKED')),2000);})]);}finally{clearTimeout(timer);}}
+  return deleted(c);
+ }});assert.deepEqual([...entered].sort(),['cell-0','cell-1','cell-2']);assert.equal(entered[2],'cell-1');}
  finally{await fs.rm(root,{recursive:true,force:true});}
+});
+
+
+test('truthy refusal and malformed reservation responses stop admission without releasing possible custody',async()=>{
+ for(const response of [{status:'REFUSED'}, {status:'REFUSED',token:'untrusted'}, {}, {status:'RESERVED'}, {status:'RESERVED',token:''}, {status:'RESERVED',token:7}, null, undefined]){
+  const {b,root}=await fixture(),events=[],executed=[];const hooks=rootHooks(events),reserve=hooks.reserveCell;
+  let responseReturned;const returned=new Promise(resolve=>{responseReturned=resolve;});
+  hooks.reserveCell=async request=>{if(request.cell.id==='cell-1'){events.push('refused:cell-1');responseReturned();return response;}return reserve(request);};
+  try{
+   const result=await runBatch(b,root,{now:()=>1000,hooks,executeCell:async c=>{executed.push(c.id);await returned;await new Promise(r=>setTimeout(r,5));return deleted(c);}});
+   assert.deepEqual(executed,['cell-0'],JSON.stringify(response));
+   assert.equal(result.cells.find(c=>c.id==='cell-0').cleanup,'ABSENT');
+   const refused=result.cells.find(c=>c.id==='cell-1');
+   assert.equal(refused.error,'PGCAL_BATCH_RESERVATION_REFUSED');
+   assert.equal(refused.cleanup,'UNCONFIRMED');
+   assert.equal(refused.cleanupError,'PGCAL_BATCH_RESERVATION_UNCONFIRMED');
+   assert.equal(result.cells.find(c=>c.id==='cell-2').status,'NOT_STARTED');
+   assert.deepEqual(events.filter(e=>e.startsWith('release:')),['release:cell-0']);
+   assert(!events.includes('reserve:cell-2'));
+  }finally{await fs.rm(root,{recursive:true,force:true});}
+ }
 });

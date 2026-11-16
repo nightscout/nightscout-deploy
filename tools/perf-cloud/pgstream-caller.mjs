@@ -253,8 +253,12 @@ export async function runBatch(batch,root,{hooks,executeCell,signal,now=()=>Date
             await verifyBatchPayload(frozen,root);
             executionScope(cell.config,now());
             row.reservationAttempted=true;
-            reservation=await hooks.reserveCell({batchId:frozen.id,planSha256:plan.sha256,cell});
-            need(reservation?.status==='RESERVED'&&typeof reservation.token==='string'&&reservation.token.length>0,'PGCAL_BATCH_RESERVATION_REFUSED');
+            const response=await hooks.reserveCell({batchId:frozen.id,planSha256:plan.sha256,cell});
+            need(response?.status==='RESERVED'&&typeof response.token==='string'&&response.token.length>0,'PGCAL_BATCH_RESERVATION_REFUSED');
+            // Only validated custody can take the per-cell cleanup path. A
+            // refusal/invalid response leaves possible accounting reserved and
+            // stops new admission through RESERVATION_UNCONFIRMED below.
+            reservation=response;
             row.result=await executeCell(cell,path.join(root,cell.id));row.status=row.result.status;
           }catch(error){row.error=error.message;if(error.result)row.result=error.result;}
           finally{
