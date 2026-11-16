@@ -123,13 +123,15 @@ DB backends before any new attempt. Do not retry a timed-out physical operation
 while its backend could still be active. An existing valid slot is not evidence
 that reconciliation completed.
 
-Next, use the same prepared Compose arguments and canonical image to start **only
-the evaluator**, with `--no-deps --no-build --pull never`. Do not use `demo.sh up`:
-that command starts other effects and performs demonstration setup. The existing
-evaluator first establishes received heartbeat/stream coverage, then verifies and
-scans current tenant metadata and commits bootstrap reconciliation. Its indexed
-pending/due work reconstructs clinical progress without resetting persisted ages,
-versions, output revision, notification identity or due clocks.
+Next, use the same prepared Compose arguments and canonical image to explicitly
+start **the evaluator and separate pgstream service**, with
+`--no-deps --no-build --pull never`. Keep all other effect-serving roles stopped.
+Do not use `demo.sh up`: that command starts other effects and performs
+demonstration setup. The evaluator first establishes received heartbeat/stream
+coverage, then verifies and scans current tenant metadata and commits bootstrap
+reconciliation. Its indexed pending/due work reconstructs clinical progress
+without resetting persisted ages, versions, output revision, notification identity
+or due clocks.
 
 Before explicitly reopening other services, independently compare current physical
 clinical/control clocks with observed/completed/input checkpoints and current
