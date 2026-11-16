@@ -1,0 +1,61 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+import {createHash} from 'node:crypto';
+import {planBatch,verifyBatchPayload,runBatch,sourceFiles,runtimeBinding,batchDigest} from './pgstream-caller.mjs';
+import {PINS,CADENCE,PROFILE,hashFile} from './pgstream-calibration.mjs';
+const sha=text=>createHash('sha256').update(text).digest('hex');
+function spec(){const t={interface:'ens7',mac:'02:00:00:00:00:01',approvedAddress:'10.8.0.2',approvalReference:'synthetic-root-approved'};const host=(id,ip,pub,key)=>({providerId:id,privateIPv4:ip,publicIPv4:pub,sshHostKeySha256:sha(key),cpuCores:4,ramBytes:8000000000,networkBitsPerSecond:1000000000,allocationSource:'provider-inventory',headroom:{measurement:'UNMEASURED'}});return {profile:PROFILE,completionContract:'evaluator-work-v2',diagnostics:'on',tenants:1000,logicalPollingClients:2000,pins:PINS,cadence:CADENCE,extensionSha256:'a'.repeat(64),helperCommit:'b'.repeat(40),transport:t,port:18080,controllerIPv4:'192.0.2.1',runId:'remote-test',cloudId:'remote-test-'+'a'.repeat(12),nonce:'b'.repeat(32),paidT0:1000,lastNewPointAt:2800,expiresAt:4600,k6Image:'grafana/k6@sha256:'+'f'.repeat(64),budget:{rootOwned:true,totalUsd:6},hosts:{sut:host('synthetic-sut','10.8.0.2','192.0.2.2','sut-key'),driver:host('synthetic-driver','10.8.0.3','192.0.2.3','driver-key')},receipt:{completionContract:'evaluator-work-v2',kind:'joined-diagnostic',status:'AUTHORIZED_DIAGNOSTIC',functionalAcceptanceAtAuthorization:'PENDING',imageId:PINS.app,pair:{core:PINS.core,deploy:PINS.deploy},instrument:'c'.repeat(64),limits:{tenants:1000,apiReplicas:1,trafficSeconds:310},remoteProfile:PROFILE,remoteExtensionSha256:'a'.repeat(64),remoteTransport:t},sutInbound:[{protocol:'tcp',port:22,sourceIPv4:'192.0.2.1'},{protocol:'tcp',port:18080,sourceIPv4:'10.8.0.3',sourceProviderId:'synthetic-driver'}],driverLimits:{fdSoft:65536,fdHard:65536,k6PreallocatedVUsFormula:'min(400,ceil(rate/300)*2+5)',k6MaxVUsPerScenario:800,measurement:'UNMEASURED'},pgstreamProducer:'canonical-262-with-pool-initialize',providerTokenOnHosts:false};}
+
+function batch(){
+ const cells=[0,1,2].map(i=>{
+  const s=spec();s.cloudId=s.runId+'-'+String(i+1).repeat(12);s.nonce=String(i+1).repeat(32);s.cadence={...s.cadence,offeredRps:50};s.driverLimits.k6PreallocatedVUsFormula='min(400,ceil(rate*1000/arrivalCycleMs)*2+5)';
+  // Strict cadence accepts an explicit rate. Every pair has exact destination metadata.
+  for(const [role,h]of Object.entries(s.hosts)){h.providerId+='-'+i;Object.assign(h,{provider:'synthetic',region:'test1',size:'test4',name:'batch-'+i+'-'+role,hourlyMicrousd:100000});}
+  s.port=18080+i;s.hosts.sut.privateIPv4='10.20.'+i+'.2';s.hosts.driver.privateIPv4='10.20.'+i+'.3';s.hosts.sut.publicIPv4='192.0.2.'+(10+i*2);s.hosts.driver.publicIPv4='192.0.2.'+(11+i*2);s.transport.approvedAddress=s.hosts.sut.privateIPv4;s.receipt.remoteTransport=s.transport;s.sutInbound[1]={protocol:'tcp',port:s.port,sourceIPv4:s.hosts.driver.privateIPv4,sourceProviderId:s.hosts.driver.providerId};
+  s.reportMode='discovery';s.sourceQualification={path:'/synthetic/image.json',sha256:'e'.repeat(64)};s.receipt.remoteReportMode='discovery';s.primerConcurrency=1;s.resourcePlan={reference:'synthetic-batch',tenants:s.tenants,logicalPollingClients:s.logicalPollingClients,hosts:Object.fromEntries(Object.entries(s.hosts).map(([k,h])=>[k,{providerId:h.providerId,cpuCores:h.cpuCores,ramBytes:h.ramBytes}]))};s.receipt.remoteWorkload={cadence:s.cadence,primerConcurrency:1,resourcePlan:s.resourcePlan};
+  return {id:'cell-'+i,namespace:'batch-cell-'+i,ports:[18080+i],subnets:['10.20.'+i+'.0/24'],target:{kind:'remote',provider:'synthetic',region:'test1',size:'test4',namePrefix:'batch-'+i,maxResources:2},workSeconds:1800,cleanupSeconds:1800,offeredRps:50,resources:{millicpus:8000,memoryBytes:16000000000,heapMiB:1024,hourlyMicrousd:200000,totalMicrousd:6000000,liveResources:2},config:s};
+ });
+ return {version:1,id:'synthetic-batch',payload:{source:{core:PINS.core,deploy:PINS.deploy},image:PINS.app,helper:'a'.repeat(64),files:cells.flatMap(c=>sourceFiles('sut').map(n=>({path:c.id+'/'+n,sha256:'a'.repeat(64)})))},envelope:{maxConcurrent:2,maxLiveResources:6,maxOfferedRps:100,millicpus:24000,memoryBytes:48000000000,heapMiB:2048,hourlyMicrousd:600000,totalMicrousd:18000000,cleanupAt:4600,workload:{tenants:[1,1000],offeredRps:[1,100],durationSeconds:[1,310],probeEveryMs:[1,300000],hotFactor:[1,1],faultCases:[]}},cells};
+}
+async function fixture(){const b=batch(),root=await fs.mkdtemp(path.join(os.tmpdir(),'pgcal-batch-'));
+ for(const c of b.cells){const dir=path.join(root,c.id);await fs.mkdir(dir);const files={};
+  for(const n of sourceFiles('sut').filter(n=>n!=='manifest.json')){const value=n==='spec.json'?JSON.stringify(c.config):n==='receipt.json'?JSON.stringify(c.config.receipt):n==='binding.json'?JSON.stringify(runtimeBinding(c.config)):'synthetic '+n;await fs.writeFile(path.join(dir,n),value);files[n]=await hashFile(path.join(dir,n));}
+  await fs.writeFile(path.join(dir,'manifest.json'),JSON.stringify({files}));
+ }
+ for(const f of b.payload.files)f.sha256=await hashFile(path.join(root,f.path));return {b,root};
+}
+const deleted=cell=>({status:'PASS',providerDeletion:{status:'DELETED',providerIds:Object.values(cell.config.hosts).map(h=>h.providerId)}});
+function rootHooks(events=[]){const tokens=new Map();return {admitBatch:async p=>({status:'ADMITTED',planSha256:p.sha256,cleanupGuard:{status:'ARMED',cleanupAt:p.envelope.cleanupAt,authoritySha256:'f'.repeat(64),providerIds:p.cells.flatMap(c=>Object.values(c.hosts).map(h=>h.providerId))}}),reserveCell:async({cell})=>{const token='exact-'+cell.id;tokens.set(cell.id,token);events.push('reserve:'+cell.id);return {status:'RESERVED',token};},releaseCell:async({cellId,token})=>{assert.equal(token,tokens.get(cellId));tokens.delete(cellId);events.push('release:'+cellId);return {status:'RELEASED'};}};}
+test('deterministic plan refuses source, money, envelope, destination and custody changes',()=>{
+ const b=batch();assert.equal(planBatch(b,1000).cells[0].cellSha256,batchDigest(b.cells[0]));assert.deepEqual(planBatch(b,1000),planBatch(b,1000));const reordered=Object.fromEntries(Object.entries(b).reverse());assert.equal(planBatch(b,1000).specSha256,planBatch(reordered,1000).specSha256);
+ for(const change of [b=>b.payload.image='sha256:'+'0'.repeat(64),b=>b.envelope.totalMicrousd--,b=>b.envelope.maxLiveResources=4,b=>b.envelope.hourlyMicrousd=400000,b=>b.cells[0].resources.hourlyMicrousd=1,b=>b.cells[0].resources.millicpus=1,b=>b.cells[1].ports=b.cells[0].ports,b=>b.cells[1].config.hosts=b.cells[0].config.hosts,b=>b.cells[0].target.region='elsewhere',b=>b.cells[0].offeredRps=101,b=>b.envelope.cleanupAt=4599,b=>b.envelope.maxConcurrent=257,b=>b.cells[0].subnets=['999.1.1.0/24'],b=>b.cells[0].subnets=['192.0.2.0/24']]){const broken=structuredClone(b);change(broken);assert.throws(()=>planBatch(broken,1000));}
+});
+test('whole cell reservation is synchronous under racing completions; exact cleanup precedes reuse',async()=>{const {b,root}=await fixture();let live=0,max=0;const events=[];
+ try{const result=await runBatch(b,root,{now:()=>1000,hooks:rootHooks(events),executeCell:async c=>{live++;max=Math.max(max,live);assert(live<=2);await new Promise(r=>setTimeout(r,10));live--;return deleted(c);}});assert.equal(result.status,'PASS');assert.equal(max,2);assert(events.indexOf('release:cell-0')<events.indexOf('reserve:cell-2'));await assert.rejects(runBatch(b,root,{now:()=>1000,hooks:rootHooks(),executeCell:async c=>deleted(c)}),/EEXIST/);}finally{await fs.rm(root,{recursive:true,force:true});}
+});
+test('cancel stops new cells while both entered cells retain exact cleanup',async()=>{const {b,root}=await fixture(),controller=new AbortController(),events=[];
+ try{const result=await runBatch(b,root,{now:()=>1000,hooks:rootHooks(events),signal:controller.signal,executeCell:async c=>{await new Promise(r=>setTimeout(r,5));controller.abort();return deleted(c);}});assert.equal(result.cells.filter(c=>c.cleanup==='ABSENT').length,2);assert.equal(result.cells.find(c=>c.id==='cell-2').status,'NOT_STARTED');assert.equal(events.filter(e=>e.startsWith('release:')).length,2);}finally{await fs.rm(root,{recursive:true,force:true});}
+});
+test('one failed cell preserves peer measurement; foreign cleanup retains reservation and stops admission',async()=>{for(const foreign of [false,true]){const {b,root}=await fixture(),events=[];
+ try{const result=await runBatch(b,root,{now:()=>1000,hooks:rootHooks(events),executeCell:async c=>{if(c.id==='cell-0'){const result=deleted(c);result.status='FAIL';if(foreign)result.providerDeletion.providerIds=['foreign'];throw Object.assign(Error('SYNTHETIC_FAILURE'),{result});}await new Promise(r=>setTimeout(r,5));return deleted(c);}});assert.equal(result.status,'PARTIAL');assert.equal(result.cells.find(c=>c.id==='cell-1').status,'PASS');assert.equal(events.includes('release:cell-0'),!foreign);assert.equal(result.cells.find(c=>c.id==='cell-2').status,foreign?'NOT_STARTED':'PASS');}finally{await fs.rm(root,{recursive:true,force:true});}}
+});
+test('changed payload and rewritten transport source refuse before root effects',async()=>{const {b,root}=await fixture();let effects=0;
+ try{await verifyBatchPayload(b,root);const file=path.join(root,b.cells[0].id,'app.tar'),original=await fs.readFile(file);await fs.appendFile(file,'corruption');await assert.rejects(runBatch(b,root,{now:()=>1000,hooks:{...rootHooks(),admitBatch:async p=>{effects++;return rootHooks().admitBatch(p);}},executeCell:async c=>deleted(c)}),/PAYLOAD_CHANGED/);assert.equal(effects,0);await fs.writeFile(file,original);await verifyBatchPayload(b,root);
+ const specFile=path.join(root,b.payload.files[0].path),changed=JSON.parse(await fs.readFile(specFile));changed.pins.core='0'.repeat(40);await fs.writeFile(specFile,JSON.stringify(changed));b.payload.files[0].sha256=await hashFile(specFile);await assert.rejects(verifyBatchPayload(b,root),/TRANSPORT_BINDING/);
+ }finally{await fs.rm(root,{recursive:true,force:true});}
+});
+
+test('pending pairs require root guard coverage before first cell',async()=>{const {b,root}=await fixture();let entered=false;try{const hooks=rootHooks();hooks.admitBatch=async p=>({status:'ADMITTED',planSha256:p.sha256});await assert.rejects(runBatch(b,root,{now:()=>1000,hooks,executeCell:async c=>{entered=true;return deleted(c);}}),/ROOT_CLEANUP_GUARD/);assert.equal(entered,false);}finally{await fs.rm(root,{recursive:true,force:true});}});
+
+test('supported typed component kinds bind the declared case and rate envelope',()=>{const b=batch(),s=b.cells[0].config;s.reportMode='strict';s.receipt.remoteReportMode='strict';s.componentCases={version:1,cases:[{id:'rest-small',kind:'rest',rate:40,seconds:310,sampleTenants:16,viewers:2,probeEveryMs:300000,maxWrites:2},{id:'evrt-small',kind:'evrt',rate:0,seconds:32,sampleTenants:16,viewers:2,probeEveryMs:1000,maxWrites:32}]};s.receipt.remoteComponentCases=s.componentCases;b.envelope.workload.faultCases=['rest','evrt'];planBatch(b,1000);const missing=structuredClone(b);missing.envelope.workload.faultCases=['rest'];assert.throws(()=>planBatch(missing,1000),/FAULT_BOUND/);const over=structuredClone(b);over.cells[0].config.componentCases.cases[0].rate=51;assert.throws(()=>planBatch(over,1000),/COMPONENT_ENVELOPE/);});
+
+test('canonical digest admits identical numeric meaning and refuses ambiguous number domain',()=>{assert.equal(batchDigest(1),batchDigest(1.0));assert.equal(batchDigest(-0),batchDigest(0));for(const value of [NaN,Infinity,-Infinity,Number.MAX_SAFE_INTEGER+1,-Number.MAX_SAFE_INTEGER-1,1e20])assert.throws(()=>batchDigest({value}),/BATCH_NUMBER_DOMAIN/);});
+
+test('shared Python and JavaScript canonical digest vectors agree',async t=>{
+ const file=process.env.PGCAL_BATCH_DIGEST_VECTORS;if(!file)return t.skip('set PGCAL_BATCH_DIGEST_VECTORS to the shared versioned corpus');
+ const corpus=JSON.parse(await fs.readFile(file));assert.equal(corpus.version,1);assert(Array.isArray(corpus.vectors)&&corpus.vectors.length>0);
+ for(const vector of corpus.vectors)assert.equal(batchDigest(vector.value),createHash('sha256').update(vector.canonical).digest('hex'),vector.canonical);
+});

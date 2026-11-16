@@ -1,0 +1,17 @@
+import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs/promises';import path from 'node:path';import os from 'node:os';import{spawnSync}from'node:child_process';import{fileURLToPath}from'node:url';import{remoteIO}from'./pgstream-caller.mjs';
+const here=path.dirname(fileURLToPath(import.meta.url));const spec={sshIdentityFile:'/synthetic/key',knownHostsFile:'/synthetic/known',expiresAt:Date.now()/1000+3600,hosts:{sut:{publicIPv4:'192.0.2.2'},driver:{publicIPv4:'192.0.2.3'}}};
+function admitted(action,role){const code="import importlib.util,json,sys;s=importlib.util.spec_from_file_location('w',sys.argv[1]);w=importlib.util.module_from_spec(s);s.loader.exec_module(w);w.expected_host({'hosts':{'sut':{'providerId':'101'},'driver':{'providerId':'102'}}},json.loads(sys.argv[2]),sys.argv[3])";return spawnSync('python3',['-B','-c',code,path.join(here,'pgstream-worker.py'),JSON.stringify(role),action],{encoding:'utf8'});}
+async function capture(factory){const dir=await fs.mkdtemp(path.join(os.tmpdir(),'actual-session-role-'));const rows=[],handles=[];const originalOpen=fs.open;fs.open=async(...args)=>{const h=await originalOpen(...args);handles.push(h);return h;};try{const io=factory(spec,dir,()=>{throw Error('UNEXPECTED_RUN')},(program,args)=>{rows.push({program,args});throw Error('AUDIT_NO_SSH')});for(const role of['sut','driver'])await assert.rejects(io.session(role,{}),/AUDIT_NO_SSH/);return rows;}finally{fs.open=originalOpen;await Promise.all(handles.map(h=>h.close()));await fs.rm(dir,{recursive:true,force:true});}}
+test('actual remoteIO spawned commands pass explicit role to actual worker before any SSH',async()=>{const rows=await capture(remoteIO);for(const[row,role,action]of[[rows[0],'sut','session'],[rows[1],'driver','generator-session']]){assert.equal(row.program,'ssh');assert(row.args.at(-1).endsWith(' '+action+' '+role));assert.equal(admitted(action,role).status,0);}});
+test('authored omission of current remoteIO role is RED at the actual worker boundary, restored source passes',async()=>{
+ const source=remoteIO.toString(),selector="+(role==='sut'?'session':'generator-session')+' '+role";
+ assert.equal(source.split(selector).length-1,1,'control must mutate the actual session role argument exactly once');
+ const mutant=source.replace(selector,"+(role==='sut'?'session':'generator-session')");
+ const factory=new Function('fs','path','execute','spawn','need','Session','runtimeBinding','worker','return ('+mutant+')');
+ const missingRole=factory(fs,path,null,null,(v,c)=>{if(!v)throw Error(c)},null,()=>({}),'/opt/nsperf/input/pgstream-worker.py');
+ const rows=await capture(missingRole);
+ for(const[row,action]of[[rows[0],'session'],[rows[1],'generator-session']]){assert(row.args.at(-1).endsWith(' '+action));const result=admitted(action,null);assert.notEqual(result.status,0);assert.match(result.stderr,/PGCAL_HOST_ROLE_REQUIRED/);}
+ const restored=await capture(remoteIO);
+ for(const[row,role,action]of[[restored[0],'sut','session'],[restored[1],'driver','generator-session']]){assert(row.args.at(-1).endsWith(' '+action+' '+role));assert.equal(admitted(action,role).status,0);}
+});
+test('absent and swapped actual worker roles remain RED',()=>{for(const[action,role,code]of[['session',null,'PGCAL_HOST_ROLE_REQUIRED'],['session','driver','PGCAL_ACTION_ROLE'],['generator-session','sut','PGCAL_ACTION_ROLE']]){const result=admitted(action,role);assert.notEqual(result.status,0);assert(result.stderr.includes(code));}});
