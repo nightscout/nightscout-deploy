@@ -64,7 +64,7 @@ case "${1:-}" in
     "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 900 $replicas
     "${compose[@]}" --profile ops run --rm --no-deps primer node deploy/multitenant/prime.js prime
     node publish-primer.js "$(dirname "$replica_file")"
-    exec "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 900 $realtime_services $evaluator_services tenant-admin ui nginx
+    exec "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 900 $realtime_services $evaluator_services pgstream tenant-admin ui nginx
     ;;
   demo)
     if [[ "$(<.env)" == *NS_CONNECTION_BUDGET=1* ]]; then

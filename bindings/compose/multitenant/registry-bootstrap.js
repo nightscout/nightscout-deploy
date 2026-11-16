@@ -31,7 +31,7 @@ async function finish({ options, request, rootToken, layout, roleURLs, writePriv
     writePrivate(path.join(dir, 'env.json'), docs.environments[role], own, compact);
     writePrivate(path.join(dir, 'config.json'), docs.configs[role], own, compact);
     if(role==='tenant-admin')writeToken(path.join(dir,'vault-token'),ownerCredentialToken);
-    if(role==='evaluator'&&docs.configs[role].pgstream)writePrivate(path.join(dir,'pgstream.yaml'),require('./pgstream').wire(docs.configs[role],roleURLs.pgstream),own,compact);
+    if(role==='evaluator'&&docs.configs[role].pgstream)writePrivate(path.join(output,'pgstream','pgstream.yaml'),require('./pgstream').wire(docs.configs[role],roleURLs.pgstream),own,compact);
     writePrivate(path.join(dir, 'operation.json'), docs.operations[role], own, compact);
     if (role === 'api' || role.startsWith('api-')) {
       writeToken(path.join(dir, 'vault-token'), servingToken);

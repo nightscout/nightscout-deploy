@@ -1,6 +1,6 @@
 # Single-host multitenant Compose demonstration
 
-This explicit synthetic deployment runs API, realtime, evaluator, tenant-admin
+This explicit synthetic deployment runs API, realtime, evaluator, pgstream, tenant-admin
 and the shipped web pages in separate containers. nginx presents one browser
 origin. PostgreSQL and TLS-enabled Vault stay on the private network. It does
 not change `nightscout single` or the existing Mongo Compose deployment.
@@ -62,8 +62,10 @@ ownership operations and durable connector-source configuration on separate
 database identities. Connector definitions contain secret references, never
 plaintext endpoint credentials. The private restore operator uses the same exact registry cohort label as the
 serving participants; the synthetic seed list selects demonstration tenants.
-The evaluator owns the maintained pgstream capture through its registered stream
-login. It commits durable evaluation work and hands completed output to realtime
+The separate pgstream service owns capture through its registered stream login.
+The platform restarts that worker independently; its wire credentials are mounted
+only in the pgstream container. The evaluator accepts the private stream at the
+sole admitted intake endpoint and commits durable evaluation work and hands completed output to realtime
 over the private service boundary. Clinical reads stay on the evaluator's
 registered storage connection; realtime reads typed completed output and current
 presentation/control metadata. Partial setup is refused; source

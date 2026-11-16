@@ -50,7 +50,7 @@ function prepare (args) {
   if(connectionBudget?.version===2&&options['lifecycle-operator']!=='enabled')throw new Error('LIFECYCLE_OPERATOR_SELECTION');
   fs.mkdirSync(state, {mode: 0o700});
   const write = (file, value) => fs.writeFileSync(file, value, {mode: 0o600, flag: 'wx'});
-  for (const name of ['bootstrap', 'tls', 'vault', 'ipc', 'artifacts', 'api', 'realtime', 'evaluator', 'tenant-admin', 'ui', 'ops', 'edge', 'admin', 'primer', 'placement-operator']) {
+  for (const name of ['bootstrap', 'tls', 'vault', 'ipc', 'artifacts', 'api', 'realtime', 'evaluator', 'pgstream', 'tenant-admin', 'ui', 'ops', 'edge', 'admin', 'primer', 'placement-operator']) {
     fs.mkdirSync(path.join(state, name), {mode: 0o700});
   }
   if(connectionBudget){

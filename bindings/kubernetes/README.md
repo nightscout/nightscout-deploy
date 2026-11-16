@@ -1,5 +1,22 @@
 # Kubernetes binding
 
+The external-stream update separates pgstream into one `Deployment` and keeps the
+existing one-Pod cohort. The private `evaluator` Service selects only `cohort-0`
+and publishes its address before pod-wide clinical readiness; the application
+receiver still checks its durable intake ownership before accepting work.
+Platform restart of pgstream does not restart the evaluator.
+
+This update is source-checked only; Kubernetes runtime is **UNMEASURED**. The
+November 10 smoke and `check/golden/preview.yaml` retain their original source
+attribution. That historical render does not qualify the external-stream target
+and must not be used to apply this candidate. No distributable maintained
+PostgreSQL/wal2json image digest is supplied here. Rendering requires explicit
+`NS_SOURCE_COMMIT`, `NS_DEMO_IMAGE` and `NS_PGSTREAM_POSTGRES_IMAGE` inputs; the
+application image must contain the matching external-receiver implementation.
+The PostgreSQL image must contain wal2json; the old stock PostgreSQL default cannot
+satisfy the canonical streaming settings. Render the supplied inputs with Tanka's
+`--ext-str` flags, then inspect the generated manifests before applying them.
+
 *Contributor- and operator-facing. State 2026-11-10: rendered, checked offline, and smoked on a kind
 cluster (Kubernetes v1.32.2). The smoke record is in the alignment workspace,
 `reports/tenancy/k8s-binding-2026-11-10/README.md`. Every row of the equivalence table below says
@@ -20,7 +37,7 @@ are in the alignment workspace's `releases/cgm-remote-monitor-16.0.0/decisions.m
 | `scripts/secrets.sh` | creates every Secret the render references, at apply time; nothing is committed |
 | `check/invariants.js` | the rendered-YAML invariants (offline, `tk eval`) |
 | `check/controls.js` | one or more break-it controls per invariant, in a scratch copy |
-| `check/golden/preview.yaml` | the committed render; `check/golden.sh` requires it to equal `tk show` |
+| `check/golden/preview.yaml` | retained November 10 render at its original source; not the external-stream apply target |
 | `check/vault-kubernetes-auth.test.js` | the provisioning step against a recorded fake Vault |
 
 ## Shape
@@ -77,27 +94,44 @@ Three things the YAML does on purpose:
 
 Kubernetes 1.29 or newer (native sidecars; the pod-index label needs 1.28), a network plugin
 that enforces NetworkPolicy, a default StorageClass, and a `kubectl` within one minor version
-of the server. **The apply path is `kubectl apply -f check/golden/preview.yaml`**, the committed
-render that `check/golden.sh` holds equal to `tk show`. `tk` v0.20.0 renders and checks, but cannot
+of the server. The historical apply path used `check/golden/preview.yaml`. The external-stream
+target requires a fresh render with the explicit qualified image inputs above. `tk` v0.20.0 renders and checks, but cannot
 apply against `kubectl` v1.32: `tk apply` panics (`splitRow: slice bounds out of range` while
-reading `kubectl api-resources`). The image is the Compose image built from core `0392acf9` with this repository's
+reading `kubectl api-resources`). The original November 10 smoke used the Compose image built from core `0392acf9` with that source's
 Compose tree in place (`tools/compose-overlay.sh`, then the tree's `build.js`); its base
 `config.js` must leave out the ownership identity, which the ownership overlay adds.
 
-## Run (smoked on kind v0.27.0, Kubernetes v1.32.2)
+## Render the external-stream target
+
+Supply the selected image references and matching core commit through the existing
+artifact inputs. A source-only synthetic render is not image qualification.
+
+```bash
+: "${NS_SOURCE_COMMIT:?Supply the selected core commit}"
+: "${NS_DEMO_IMAGE:?Supply the matching qualified application image}"
+: "${NS_PGSTREAM_POSTGRES_IMAGE:?Supply the maintained PostgreSQL/wal2json digest}"
+tk show --dangerous-allow-redirect environments/preview \
+  --ext-str "NS_SOURCE_COMMIT=$NS_SOURCE_COMMIT" \
+  --ext-str "NS_DEMO_IMAGE=$NS_DEMO_IMAGE" \
+  --ext-str "NS_PGSTREAM_POSTGRES_IMAGE=$NS_PGSTREAM_POSTGRES_IMAGE" > current-manifests.yaml
+node check/invariants.js
+node check/controls.js
+```
+
+## Retained November 10 smoke (historical commands, not the external-stream target)
 
 ```bash
 commit=0392acf97c720a7e121eea47a9d42a0c8dbe9e73
 docker tag nightscout-multitenant-demo:local nightscout-multitenant-demo:$commit
 kind load docker-image nightscout-multitenant-demo:$commit            # or the cluster's equivalent
 
-kubectl apply -f check/golden/preview.yaml          # the apply path; Pods wait for the Secrets
+# Apply only a fresh inspected render bound to the explicit image inputs above.
 scripts/secrets.sh seed nightscout-preview ../compose
 kubectl -n nightscout-preview wait --for=condition=complete job/provision --timeout=10m
 scripts/secrets.sh publish nightscout-preview nightscout-multitenant-demo:$commit
 kubectl -n nightscout-preview rollout status statefulset/cohort
 kubectl -n nightscout-preview port-forward svc/edge 18080:8080
-kubectl delete -f check/golden/preview.yaml         # PVCs from volumeClaimTemplates stay until deleted
+# Delete that same applied render; StatefulSet PVCs remain until explicitly deleted.
 ```
 
 `spec.json` names `https://127.0.0.1:6443` as the API server for Tanka's own commands.
@@ -121,11 +155,11 @@ names, whose ClusterIP does not change when a Pod restarts.
 cd bindings/kubernetes
 node check/invariants.js --compose <bindings/compose of the tree this binds>
 node check/controls.js   --compose <same>
-check/golden.sh
+# The golden.sh comparison belongs to the retained November 10 source capture.
 node --test check/vault-kubernetes-auth.test.js
 ```
 
-`invariants.js` reads `../compose` by default. The preview renders core `0392acf9`, the commit
+`invariants.js` reads `../compose` by default. The historical preview rendered core `0392acf9`, the commit
 `../compose/SOURCE.md` records; `postgres-identities-match-compose` is red whenever the two differ.
 
 | check | asserts | control (mutation -> message) |
@@ -140,7 +174,7 @@ node --test check/vault-kubernetes-auth.test.js
 | `no-overlap-update` | StatefulSets `OrderedReady`, default one-at-a-time update, replicas 1; Deployments `Recreate` | `Parallel` -> `podManagementPolicy must be OrderedReady` |
 | `startup-budget` | api, realtime and evaluator each carry a `startupProbe` running `node deploy/multitenant/health.js <role>` with `periodSeconds` × `failureThreshold` ≥ 900 s | `failureThreshold: 30` -> `container api startupProbe allows 150 s; it must allow at least 900 s (Compose start_period)`; probe left off the evaluator -> `container evaluator has no startupProbe` |
 | `service-links-off` | every Pod sets `enableServiceLinks: false` | `true` on the cohort -> `StatefulSet/cohort must set enableServiceLinks: false` |
-| `postgres-identities-match-compose` | the per-workload PostgreSQL identities equal the Compose plan's per-role connection documents plus the ownership overlay's role, and the rendered core commit equals `../compose/SOURCE.md` | `root_writer` dropped from api -> `api: binding names alarm,api,lifetime_api,readiness, Compose names ...,root_writer` |
+| `postgres-identities-match-compose` | the per-workload PostgreSQL identities equal the Compose plan's per-role connection documents plus the ownership overlay's role, ; current core/deploy compatibility is measured by `tools/plan-contract-check.sh --prospective` | `root_writer` dropped from api -> `api: binding names alarm,api,lifetime_api,readiness, Compose names ...,root_writer` |
 
 ## Equivalence with the Compose binding
 

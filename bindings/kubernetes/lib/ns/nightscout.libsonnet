@@ -27,7 +27,7 @@
       // commit before it is loaded into the cluster: an exact tag, never :local or :latest.
       app: null,  // required
       // Same digests as ../../compose/multitenant/compose.yaml.
-      postgres: 'postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea',
+      postgres: null,  // required: supplied maintained PostgreSQL/wal2json image digest
       vault: 'hashicorp/vault@sha256:962a92876e168d68eaaa24b0b8b49bbce1cb63024060a67bba95cd158a366fc2',
       nginx: 'nginx@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10',
     },
@@ -73,6 +73,7 @@
     local ns = c.namespace,
     assert std.isString(c.sourceCommit) && std.length(c.sourceCommit) == 40 : 'sourceCommit must be the full 40-hex commit',
     assert std.isString(c.images.app) : 'images.app is required',
+    assert std.isString(c.images.postgres) && std.length(std.split(c.images.postgres, '@')) == 2 && std.startsWith(std.split(c.images.postgres, '@')[1], 'sha256:') && std.length(std.split(c.images.postgres, '@')[1]) == 71 : 'images.postgres requires an explicit maintained PostgreSQL/wal2json image digest',
     assert c.cohort.replicas == 1 : 'the preview renders exactly one cohort Pod',
     assert std.member(['off', 'on'], c.evaluatorPool.partition) : 'evaluatorPool.partition is off or on',
 
@@ -222,6 +223,7 @@
               containers: [{
                 name: 'postgres',
                 image: c.images.postgres,
+                command: ['postgres', '-c', 'wal_level=logical', '-c', 'max_replication_slots=4', '-c', 'max_wal_senders=4', '-c', 'max_slot_wal_keep_size=256MB', '-c', 'output_plugin_libraries=wal2json'],
                 env: [
                   { name: 'POSTGRES_DB', value: 'nightscout_compose_test' },
                   { name: 'POSTGRES_PASSWORD_FILE', value: '/run/secrets/postgres-password' },
@@ -327,6 +329,12 @@
         metadata: meta('realtime', 'cohort'),
         spec: { selector: labels('cohort'), ports: [{ name: 'http', port: 1339, targetPort: 'http-realtime' }] },
       },
+      intakeService: {
+        apiVersion: 'v1',
+        kind: 'Service',
+        metadata: meta('evaluator', 'cohort'),
+        spec: { type: 'ClusterIP', publishNotReadyAddresses: true, selector: labels('cohort') + { 'statefulset.kubernetes.io/pod-name': 'cohort-0' }, ports: [{ name: 'stream-intake', port: 19913, targetPort: 'stream-intake' }] },
+      },
       statefulset: {
         apiVersion: 'apps/v1',
         kind: 'StatefulSet',
@@ -377,7 +385,7 @@
               containers: [
                 roleContainer('api', [{ name: 'http-api', containerPort: 1337 }]),
                 roleContainer('realtime', [{ name: 'http-realtime', containerPort: 1339 }]),
-                roleContainer('evaluator', [], if c.evaluatorPool.partition == 'on' then [
+                roleContainer('evaluator', [{ name: 'stream-intake', containerPort: 19913 }], if c.evaluatorPool.partition == 'on' then [
                   { name: c.evaluatorPool.partitionEnv, value: 'on' },
                   { name: c.evaluatorPool.ordinalEnv, valueFrom: { fieldRef: { fieldPath: "metadata.labels['apps.kubernetes.io/pod-index']" } } },
                   // The member count: the pool table, via the coming operator command; not here.
@@ -398,6 +406,36 @@
                 ca,
                 tmp,
               ],
+            },
+          },
+        },
+      },
+    },
+
+    // One independently managed consumer of the precreated database slot.
+    pgstream: {
+      deployment: {
+        apiVersion: 'apps/v1',
+        kind: 'Deployment',
+        metadata: meta('pgstream', 'pgstream'),
+        spec: {
+          replicas: 1,
+          strategy: { type: 'Recreate' },
+          selector: { matchLabels: labels('pgstream') },
+          template: {
+            metadata: { labels: labels('pgstream') },
+            spec: {
+              enableServiceLinks: false,
+              automountServiceAccountToken: false,
+              securityContext: podSecurity,
+              terminationGracePeriodSeconds: c.cohort.terminationGraceSeconds,
+              containers: [{
+                name: 'pgstream', image: c.images.app, imagePullPolicy: 'IfNotPresent',
+                command: ['/usr/local/bin/pgstream', 'run', '-c', '/run/ns-stream/pgstream.yaml', '--log-level', 'info'],
+                securityContext: hardened,
+                volumeMounts: [{ name: 'secret-pgstream', mountPath: '/run/ns-stream', readOnly: true }, tmpMount],
+              }],
+              volumes: [{ name: 'secret-pgstream', secret: { secretName: 'ns-config-pgstream', defaultMode: 288 } }, tmp],
             },
           },
         },
@@ -660,7 +698,8 @@
       cohortFromEdge: np('cohort-from-edge', { matchLabels: labels('cohort') }, [sel('edge')], [{ port: 1337, protocol: 'TCP' }, { port: 1339, protocol: 'TCP' }]),
       uiFromEdge: np('ui-from-edge', { matchLabels: labels('ui') }, [sel('edge')], [{ port: 1340, protocol: 'TCP' }]),
       adminFromOperator: np('admin-from-operator', { matchLabels: labels('admin') }, [sel('operator')], [{ port: 1342, protocol: 'TCP' }]),
-      postgresFromApp: np('postgres-from-app', { matchLabels: labels('postgres') }, [sel('cohort'), sel('admin'), sel('provision'), sel('operator')], [{ port: 5432, protocol: 'TCP' }]),
+      cohortFromPgstream: np('cohort-from-pgstream', { matchLabels: labels('cohort') }, [sel('pgstream')], [{ port: 19913, protocol: 'TCP' }]),
+      postgresFromApp: np('postgres-from-app', { matchLabels: labels('postgres') }, [sel('cohort'), sel('pgstream'), sel('admin'), sel('provision'), sel('operator')], [{ port: 5432, protocol: 'TCP' }]),
       vaultFromApp: np('vault-from-app', { matchLabels: labels('vault') }, [sel('cohort'), sel('provision'), sel('vault')], [{ port: 8200, protocol: 'TCP' }]),
     },
 
@@ -676,6 +715,7 @@
         api: ['alarm', 'api', 'lifetime_api', 'readiness', 'root_writer'],
         realtime: ['lifetime_realtime', 'realtime'],
         evaluator: ['evaluator', 'lifetime_evaluator', 'outbox', 'suppression'],
+        pgstream: ['pgstream'],
         'tenant-admin': ['lifetime_tenant_admin', 'owner_reader', 'owner_writer'],
         admin: ['ownership_operator'],
       },

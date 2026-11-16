@@ -27,7 +27,7 @@ function normalized(rows){return rows.map(row=>JSON.stringify([row.url,row.schem
 function validateSnapshot(p,rows,compose,image,hashes,historicalHashes){
  need(image.Id===p.imageId&&image.Config?.Labels?.['org.opencontainers.image.revision']===p.source.coreCommit&&image.Config.Labels['org.nightscout.deploy.revision']===p.source.deployCommit,'PGSTREAM_REBOOTSTRAP_IMAGE');
  need(rows.length===p.containers.length,'PGSTREAM_REBOOTSTRAP_COHORT_CHANGED');
- const declarations=compose.services,known=new Map(p.containers.map(row=>[row.cid,row]));let postgres,evaluator;
+ const declarations=compose.services,known=new Map(p.containers.map(row=>[row.cid,row]));let postgres,evaluator,stream;
  for(const row of rows){
   const expected=known.get(row.Id),labels=row.Config?.Labels||{},service=labels['com.docker.compose.service'];
   need(expected&&expected.service===service&&labels['com.docker.compose.project']===p.project&&labels['com.docker.compose.project.working_dir']===p.deploymentDirectory&&labels['com.docker.compose.config-hash']===expected.configHash&&row.Image===expected.imageId&&row.State.StartedAt===expected.startedAt,'PGSTREAM_REBOOTSTRAP_CONTAINER_CHANGED');
@@ -40,10 +40,13 @@ function validateSnapshot(p,rows,compose,image,hashes,historicalHashes){
   need(service==='nginx'?/^(?:sha256:|[^@]+@sha256:)[a-f0-9]{64}$/.test(declarations[service].image):row.Image===p.imageId&&declarations[service].image===p.imageId,'PGSTREAM_REBOOTSTRAP_APPLICATION_IMAGE');
   for(const mount of row.Mounts||[])need(!mount.Destination.startsWith('/opt/app')&&mount.Destination!=='/usr/local/bin/pgstream','PGSTREAM_REBOOTSTRAP_SOURCE_MOUNT');
   if(service==='evaluator'){need(!evaluator,'PGSTREAM_REBOOTSTRAP_EVALUATOR');evaluator=row;}
+  if(service==='pgstream'){need(!stream,'PGSTREAM_REBOOTSTRAP_STREAM');stream=row;}
  }
- need(postgres&&evaluator,'PGSTREAM_REBOOTSTRAP_REQUIRED_ROLES');
+ need(postgres&&evaluator&&stream,'PGSTREAM_REBOOTSTRAP_REQUIRED_ROLES');
  need((evaluator.Mounts||[]).some(mount=>mount.Source===path.dirname(p.evaluatorConfig)&&mount.Destination==='/run/ns-config'&&mount.RW===false),'PGSTREAM_REBOOTSTRAP_CONFIG_MOUNT');
- return {postgres,evaluator};
+ need((stream.Mounts||[]).some(mount=>mount.Source===path.join(p.stateDirectory,'pgstream')&&mount.Destination==='/run/ns-stream'&&mount.RW===false),'PGSTREAM_REBOOTSTRAP_STREAM_CONFIG_MOUNT');
+ need(!(evaluator.Mounts||[]).some(mount=>mount.Source===path.join(p.stateDirectory,'pgstream')),'PGSTREAM_REBOOTSTRAP_WIRE_EXPOSED_TO_EVALUATOR');
+ return {postgres,evaluator,stream};
 }
 function sqlInspection(p,c){
  const role=c.pgstream.streamRole,slot=p.slot;need(NAME.test(role)&&Object.values(c.postgres.namespaces).every(value=>NAME.test(value)),'PGSTREAM_REBOOTSTRAP_CONFIG');
@@ -58,7 +61,7 @@ function validateDatabase(p,c,row,routes){
  need(row.database===p.database.name&&row.databaseOid===p.database.oid&&row.systemIdentifier===p.database.systemIdentifier&&row.postmasterStartedAt===p.database.postmasterStartedAt,'PGSTREAM_REBOOTSTRAP_BACKEND_CHANGED');
  need(row.otherClients===0,'PGSTREAM_REBOOTSTRAP_OLD_BACKEND_PRESENT');
  need(row.role?.replication===true&&row.role.super===false&&row.role.bypass===false&&row.role.nonowner===true&&row.role.grants===true,'PGSTREAM_REBOOTSTRAP_RUNTIME_GRANTS');
- const expected=routes.map(route=>({url:'http://127.0.0.1:'+c.pgstream.receiverPort+'/pgstream',schema_name:route.schema,table_name:route.table,event_types:['D','I','U']}));expected.push({url:expected[0].url,schema_name:'',table_name:'',event_types:['M']});
+ const expected=routes.map(route=>({url:new URL('pgstream',c.pgstream.receiver.url).href,schema_name:route.schema,table_name:route.table,event_types:['D','I','U']}));expected.push({url:expected[0].url,schema_name:'',table_name:'',event_types:['M']});
  need(equal(normalized(row.subscriptions),normalized(expected)),'PGSTREAM_REBOOTSTRAP_SUBSCRIPTIONS');
  if(p.action==='create-missing')need(row.slot===null,'PGSTREAM_REBOOTSTRAP_SLOT_NOT_MISSING');
  else need(row.slot&&row.slot.name===p.slot&&row.slot.database===p.database.name&&row.slot.plugin==='wal2json'&&row.slot.active===false&&(row.slot.status==='lost'||row.slot.restart===null),'PGSTREAM_REBOOTSTRAP_SLOT_NOT_LOST');
@@ -74,7 +77,7 @@ async function run(p,{docker=platform(),routes}={}){
  const complete=JSON.parse(read(path.join(p.stateDirectory,'bootstrap/complete.json')));need(complete.sourceCommit===p.source.coreCommit&&complete.deployCommit===p.source.deployCommit,'PGSTREAM_REBOOTSTRAP_PREPARATION_SOURCE');
  need(path.dirname(p.evaluatorConfig)===path.join(p.stateDirectory,'evaluator'),'PGSTREAM_REBOOTSTRAP_CONFIG_PATH');const c=JSON.parse(read(p.evaluatorConfig));need(c.pgstream?.slot===p.slot&&c.postgres&&SHA.test(p.evaluatorConfigSha256)&&hash(read(p.evaluatorConfig))===p.evaluatorConfigSha256,'PGSTREAM_REBOOTSTRAP_CONFIG');
  routes=routes||require('../../lib/pgstream/evaluator').routes({...c,namespaces:c.postgres.namespaces});
- const wireFile=path.join(path.dirname(p.evaluatorConfig),'pgstream.yaml'),wireText=read(wireFile);need(SHA.test(p.wireConfigSha256)&&hash(wireText)===p.wireConfigSha256,'PGSTREAM_REBOOTSTRAP_WIRE_CONFIG');
+ const wireFile=path.join(p.stateDirectory,'pgstream','pgstream.yaml'),wireText=read(wireFile);need(SHA.test(p.wireConfigSha256)&&hash(wireText)===p.wireConfigSha256,'PGSTREAM_REBOOTSTRAP_WIRE_CONFIG');
  const wire=JSON.parse(wireText),source=wire.source?.postgres,target=wire.target?.webhooks;
  need(source?.mode==='replication'&&source.replication?.replication_slot===p.slot&&new URL(source.url).username===c.pgstream.streamRole&&decodeURIComponent(new URL(source.url).pathname)==='/'+p.database.name&&source.replication.plugin.add_tables.split(',').sort().join(',')===routes.map(row=>row.schema+'.'+row.table).sort().join(',')&&target?.notifier?.strict_mode===true&&target.subscriptions?.store?.cache?.enabled!==true,'PGSTREAM_REBOOTSTRAP_WIRE_CONFIG');
  const composeArgs=files=>['compose','--project-name',p.project,'--project-directory',p.deploymentDirectory,'--env-file',envFile,...files.flatMap(file=>['-f',file])];
@@ -86,7 +89,7 @@ async function run(p,{docker=platform(),routes}={}){
  };
  let current=snapshot();const query=sql=>docker(['exec','-i',current.postgres.Id,'psql','-X','-qAt','-v','ON_ERROR_STOP=1','-U',p.operatorRole,'-d',p.database.name],sql);
  const inspect=()=>{const row=JSON.parse(query(sqlInspection(p,c)));validateDatabase(p,c,row,routes);return row;};
- const before=inspect();const receipt={version:1,operation:'pgstream-rebootstrap',state:'INSPECTED_STOPPED',source:{coreCommit:p.source.coreCommit,deployCommit:p.source.deployCommit},slot:p.slot,action:p.action,receiptFile:p.receiptFile,evaluatorConfigSha256:p.evaluatorConfigSha256,wireConfigSha256:p.wireConfigSha256,imageId:p.imageId,project:p.project,database:Object.fromEntries(['name','oid','systemIdentifier','postmasterStartedAt'].map(key=>[key,p.database[key]])),containers:p.containers.map(row=>Object.fromEntries(['cid','service','imageId','startedAt','configHash','composeFiles','originalRestartPolicy'].filter(key=>row[key]!==undefined).map(key=>[key,key==='originalRestartPolicy'?{Name:row[key].Name,MaximumRetryCount:row[key].MaximumRetryCount}:row[key]]))),helperSha256:hash(read(__filename)),next:'Keep all effect-serving roles stopped. Explicit evaluator-only restart establishes stream coverage, then existing reconciliation/pending/due recovery. Independently verify current physical clocks/output and due progress before reopening effects.'};
+ const before=inspect();const receipt={version:1,operation:'pgstream-rebootstrap',state:'INSPECTED_STOPPED',source:{coreCommit:p.source.coreCommit,deployCommit:p.source.deployCommit},slot:p.slot,action:p.action,receiptFile:p.receiptFile,evaluatorConfigSha256:p.evaluatorConfigSha256,wireConfigSha256:p.wireConfigSha256,imageId:p.imageId,project:p.project,database:Object.fromEntries(['name','oid','systemIdentifier','postmasterStartedAt'].map(key=>[key,p.database[key]])),containers:p.containers.map(row=>Object.fromEntries(['cid','service','imageId','startedAt','configHash','composeFiles','originalRestartPolicy'].filter(key=>row[key]!==undefined).map(key=>[key,key==='originalRestartPolicy'?{Name:row[key].Name,MaximumRetryCount:row[key].MaximumRetryCount}:row[key]]))),helperSha256:hash(read(__filename)),next:'Keep all effect-serving roles stopped. Start the evaluator and separate pgstream service explicitly to establish stream coverage, then existing reconciliation/pending/due recovery. Independently verify current physical clocks/output and due progress before reopening effects.'};
  fs.writeFileSync(p.receiptFile,JSON.stringify(receipt)+'\n',{mode:0o600,flag:'wx'});
  try{
   current=snapshot();inspect();receipt.state='SLOT_OPERATION_STARTED';fs.writeFileSync(p.receiptFile,JSON.stringify(receipt)+'\n',{mode:0o600});

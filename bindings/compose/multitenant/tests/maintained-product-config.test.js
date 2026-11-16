@@ -17,7 +17,7 @@ test('generated maintained role files pass actual product parsers without constr
   assert.throws(()=>plan.documents({layout,urls,registryMode:false}),/STATIC_PRODUCT_CONFIGURATION_RETIRED/);
   const writePrivate=(file,value)=>{fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,JSON.stringify(value));};
   await require('../registry-bootstrap').finish({options:{output:root,uid:process.getuid(),gid:process.getgid(),sourceCommit:'a'.repeat(40),deployCommit:'b'.repeat(40),vault:{origin:'https://vault:8200'}},request:async()=>({auth:{client_token:'synthetic'}}),rootToken:'synthetic',layout,roleURLs:urls,writePrivate});
-  assert.equal(constructed,0);assert(fs.existsSync(path.join(root,'bootstrap/complete.json')));assert(!fs.existsSync(path.join(root,'feed-reader')));
+  assert.equal(constructed,0);assert(fs.existsSync(path.join(root,'bootstrap/complete.json')));assert(!fs.existsSync(path.join(root,'feed-reader')));assert(fs.existsSync(path.join(root,'pgstream/pgstream.yaml')));assert(!fs.existsSync(path.join(root,'evaluator/pgstream.yaml')));assert(!('NS_PGSTREAM_BINARY' in JSON.parse(fs.readFileSync(path.join(root,'evaluator/env.json')))));assert(!('NS_PGSTREAM_CONFIG' in JSON.parse(fs.readFileSync(path.join(root,'evaluator/env.json')))));
  }finally{Module._load=load;fs.rmSync(root,{recursive:true,force:true});}
 });
 test('legacy capture disable refuses before product preparation',()=>{

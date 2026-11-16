@@ -33,15 +33,15 @@ outside version control. Its fields are:
 | `imageId`, `postgresImageId` | Actual immutable Docker image IDs, never floating tags |
 | `database` | Exact `name`, `oid`, `systemIdentifier`, `postmasterStartedAt` from the current physical PostgreSQL instance |
 | `slot`, `operatorRole` | Existing configured selected slot and explicit DBA principal used through local `psql` in that PostgreSQL container |
-| `evaluatorConfig`, `evaluatorConfigSha256`, `wireConfigSha256` | Existing evaluator private `config.json` and independently recorded SHA256 of it and sibling `pgstream.yaml` |
+| `evaluatorConfig`, `evaluatorConfigSha256`, `wireConfigSha256` | Existing evaluator private `config.json` and independently recorded SHA256 of it and the separate `pgstream/pgstream.yaml` |
 | `containers` | Every existing project container: exact `cid`, `service`, `imageId`, `startedAt`, `configHash` from actual Docker inspection; optional exact per-container ordered `composeFiles` lineage and `originalRestartPolicy` |
 | `receiptFile` | New absolute private output path; existing files are refused |
 
 A plan is an identity expectation, not process-exclusion evidence. The command
 runs actual Docker inspection again and requires the whole current project to
-match the plan. Every non-infrastructure container must be not running, PID zero,
+match the plan. Every non-infrastructure container, including the independent pgstream worker, must be not running, PID zero,
 not paused, and have restart policy `no`. It checks each recorded per-service Compose file lineage exactly against the explicitly approved file set and order. It hashes every approved file and independently computes both that recorded historical lineage's service hash and the selected current global service hash. Both must match the stopped container's recorded/live config hash. A surviving unchanged service can retain an older scoped overlay rather than the latest one. Unknown path, altered file, reversed order or different historical/current effective config refuses. No recreation is required to manufacture one global lineage. It also checks Compose configuration labels,
-source/image bindings, read-only evaluator config mount and absence of application
+source/image bindings, read-only evaluator and separate pgstream config mounts and absence of application
 source mounts. A missing container, changed incarnation, changed config or an
 unresponsive/live process refuses the operation. No recovery-owner test label is
 part of this contract. Runtime application images must be the canonical immutable
@@ -93,7 +93,7 @@ evaluator alone. For a recorded `on-failure`/`MaximumRetryCount=3`:
 
 ```bash
 docker update --restart=on-failure:3 "$EVALUATOR_CID"
-# Reinspect exact identity/state/policy, then deliberate evaluator-only start.
+# Reinspect exact identity/state/policy, then deliberate evaluator and pgstream start.
 ```
 
 Do not restore other effect-serving policies or start their containers yet. If a
@@ -138,7 +138,7 @@ clinical write. Require no pending or named clinical refusal, current owner and
 restore generation, and complete tenant coverage for this deployment. Future due
 work remains scheduled at its real declared instant; it need not fire early.
 Health alone is insufficient. Keep effects stopped on an incomplete oracle or
-any refusal. Record the exact evaluator-only start command and all old/new OS
+any refusal. Record the exact evaluator and pgstream start command and all old/new OS
 incarnations in the operator evidence. Reopen the remaining cohort only through
 its existing admission/restore protocols, with explicit operator disposition.
 

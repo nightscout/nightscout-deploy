@@ -15,6 +15,7 @@ test('selected pgstream documents, raw-to-wire config and completed-consumer pro
   const heartbeat=require('../../lib/pgstream/evaluator').routes({...evaluator,namespaces:evaluator.postgres.namespaces}).find(row=>row.kind==='heartbeat');
   assert.equal(heartbeat.schema,evaluator.postgres.namespaces.clock);
   assert.notEqual(heartbeat.schema,'pgstream','upstream drops internal-schema DML before webhook delivery');
+  assert.equal(evaluator.pgstream.receiver.url,'http://evaluator:19913/');assert.equal(evaluator.pgstream.receiver.trust,'network');assert.equal(evaluator.pgstream.binaryEnv,undefined);assert.equal(evaluator.pgstream.configFileEnv,undefined);assert.equal(evaluator.pgstream.bounds.maxRestarts,undefined);assert.equal(evaluator.pgstream.bounds.stopMs,undefined);assert.equal(docs.environments.evaluator.NS_PGSTREAM_BINARY,undefined);assert.equal(docs.environments.evaluator.NS_PGSTREAM_CONFIG,undefined);
   assert.equal(evaluator.changeFeed,undefined);assert.equal(realtime.changeFeed,undefined);assert.equal(evaluator.timeIntervalMs,60000);
   assert.equal(realtime.completedOutput.namespace,evaluator.postgres.namespaces.checkpoint);
   const checkpoint=docs.admin.config.provisioning.checkpoints.find(row=>row.consumer===evaluator.consumer+'-completed');assert(checkpoint);assert.equal(checkpoint.namespace,realtime.completedOutput.namespace);

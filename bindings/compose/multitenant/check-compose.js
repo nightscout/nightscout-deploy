@@ -68,10 +68,25 @@ function checkPublisher(config) {
   assert(!(service.ports||[]).length && !service.privileged && service.network_mode!=='host', 'Publisher has no public listener or privileged runtime');
   return true;
 }
+function checkStream(config) {
+  const service=config.services.pgstream,evaluator=config.services.evaluator;
+  assert(service,'Separate pgstream service required');
+  assert.deepEqual(service.command,['/usr/local/bin/pgstream','run','-c','/run/ns-stream/pgstream.yaml','--log-level','info'],'pgstream must run the maintained binary directly');
+  assert(service.restart==='unless-stopped','Platform must own streaming restart');
+  assert(service.depends_on?.postgres?.condition==='service_healthy','pgstream waits for PostgreSQL');
+  assert(service.depends_on?.evaluator?.condition==='service_started','pgstream must not wait for clinical readiness');
+  assert(!Object.hasOwn(evaluator.depends_on||{},'pgstream'),'Evaluator startup must not depend on stream health');
+  const volumes=service.volumes||[];
+  assert(volumes.length===1&&volumes[0].target==='/run/ns-stream'&&volumes[0].source.endsWith('/pgstream')&&volumes[0].read_only,'Streaming credentials belong only to the separate service');
+  assert(!(evaluator.volumes||[]).some(row=>row.target==='/run/ns-stream'||row.source.endsWith('/pgstream')),'Evaluator must not mount streaming credentials');
+  assert(!Object.keys(evaluator.environment||{}).some(key=>['NS_PGSTREAM_BINARY','NS_PGSTREAM_CONFIG'].includes(key)),'Evaluator has no stream process configuration');
+  return true;
+}
 function check (config) {
   checkNetworks(config);
   checkPublisher(config);
-  const runtime = ['api', 'realtime', 'evaluator', 'tenant-admin', 'ui', 'nginx', 'admin', ...Object.keys(config.services).filter(name => /^api-\d+$/.test(name))];
+  checkStream(config);
+  const runtime = ['pgstream', 'api', 'realtime', 'evaluator', 'tenant-admin', 'ui', 'nginx', 'admin', ...Object.keys(config.services).filter(name => /^api-\d+$/.test(name))];
   for (const name of runtime) {
     const service = config.services[name];
     assert(service, 'Missing service: ' + name);
@@ -137,4 +152,4 @@ if (require.main === module) {
     process.stderr.write('Compose boundary check failed: ' + (error.code === 'ERR_ASSERTION' ? error.message : error.code || 'configuration expansion') + '\n'); process.exitCode = 1;
   }
 }
-module.exports = {check, checkPublisher, checkNetworks, checkOrder, checkEdgeResolve, checkEdgeSame};
+module.exports = {checkStream, check, checkPublisher, checkNetworks, checkOrder, checkEdgeResolve, checkEdgeSame};

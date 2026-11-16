@@ -1,14 +1,15 @@
 // Preview environment: one cohort, one evaluator pool member, synthetic tenants only.
-// Core commit and image tag follow ../../../compose/SOURCE.md (the Compose tree this binds).
+// Exact artifact inputs come from the chosen coherent core/deploy image pair.
 local nightscout = import 'ns/nightscout.libsonnet';
 
 nightscout.new({
   namespace: 'nightscout-preview',
   prefix: 'nsdemo',
-  sourceCommit: '0392acf97c720a7e121eea47a9d42a0c8dbe9e73',
+  sourceCommit: std.extVar('NS_SOURCE_COMMIT'),
   images: {
-    // `docker tag nightscout-multitenant-demo:local nightscout-multitenant-demo:<sourceCommit>`
-    // after build.js --check-image confirms the revision label; then load into the cluster.
-    app: 'nightscout-multitenant-demo:0392acf97c720a7e121eea47a9d42a0c8dbe9e73',
+    // Explicit artifact input. The historical stock image cannot run maintained CDC.
+    postgres: std.extVar('NS_PGSTREAM_POSTGRES_IMAGE'),
+    // Supply the already-qualified core/deploy image; rendering does not build it.
+    app: std.extVar('NS_DEMO_IMAGE'),
   },
 })

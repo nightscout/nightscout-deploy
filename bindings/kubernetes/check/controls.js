@@ -12,6 +12,12 @@ const fs = require('node:fs'), os = require('node:os'), path = require('node:pat
 
 const LIB = 'lib/ns/nightscout.libsonnet';
 const CONTROLS = [
+  { check:'independent-pgstream',file:LIB,why:'multiple consumers of one slot',from:"metadata: meta('pgstream', 'pgstream'),\n        spec: {\n          replicas: 1",to:"metadata: meta('pgstream', 'pgstream'),\n        spec: {\n          replicas: 2",expect:'pgstream must be a one-replica Recreate Deployment' },
+  { check:'independent-pgstream',file:LIB,why:'stream Service routes to any evaluator replica',from:"selector: labels('cohort') + { 'statefulset.kubernetes.io/pod-name': 'cohort-0' }",to:"selector: labels('cohort')",expect:'intake Service must select only the admitted cohort-0 owner' },
+  { check:'independent-pgstream',file:LIB,why:'pod-wide readiness blocks the stream startup',from:'publishNotReadyAddresses: true',to:'publishNotReadyAddresses: false',expect:'intake routing must bypass pod-wide clinical readiness' },
+  { check:'independent-pgstream',file:LIB,why:'separate wire Secret omitted',from:"secretName: 'ns-config-pgstream'",to:"secretName: 'ns-config-evaluator'",expect:'pgstream requires its dedicated wire Secret' },
+  { check:'independent-pgstream',file:LIB,why:'required output plugin setting omitted',from:", '-c', 'output_plugin_libraries=wal2json'",to:'',expect:'PostgreSQL is missing maintained streaming setting output_plugin_libraries=wal2json' },
+
   { check: 'internal-listener-not-on-service', file: LIB, why: 'socket volume moved to a node path shared across Pods',
     from: "{ name: 'ns-ipc', emptyDir: { medium: 'Memory', sizeLimit: '1Mi' } },", to: "{ name: 'ns-ipc', hostPath: { path: '/run/ns-ipc' } },",
     expect: 'volume ns-ipc must be a pod-private emptyDir, found hostPath' },
@@ -25,9 +31,9 @@ const CONTROLS = [
     from: "roleContainer('api', [{ name: 'http-api', containerPort: 1337 }]),",
     to: "roleContainer('api', [{ name: 'http-api', containerPort: 1337 }], [{ name: 'NS_API_PG', value: 'postgres://nsdemo_api:synthetic@postgres:5432/nightscout_compose_test' }]),",
     expect: 'env NS_API_PG is a literal; it must come from a Secret reference' },
-  { check: 'images-pinned', file: LIB, why: 'postgres image by floating tag',
-    from: "postgres: 'postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea',", to: "postgres: 'postgres:16',",
-    expect: 'image postgres:16 is not pinned by digest or exact tag' },
+  { check: 'images-pinned', file: LIB, why: 'vault image by floating tag',
+    from: "vault: 'hashicorp/vault@sha256:962a92876e168d68eaaa24b0b8b49bbce1cb63024060a67bba95cd158a366fc2',", to: "vault: 'hashicorp/vault:latest',",
+    expect: 'image hashicorp/vault:latest is not pinned by digest or exact tag' },
   { check: 'evaluator-statefulset', file: LIB, why: 'ordinal rendered with the partition off',
     from: "                ] else []),\n                // The owner plane", to: "                ] else [{ name: c.evaluatorPool.ordinalEnv, valueFrom: { fieldRef: { fieldPath: \"metadata.labels['apps.kubernetes.io/pod-index']\" } } }]),\n                // The owner plane",
     expect: 'partition is off but the evaluator sets MULTITENANT_POOL_EVALUATOR_ORDINAL' },

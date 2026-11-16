@@ -23,7 +23,9 @@ function args (argv) {
 }
 
 function tk (root, env, extra = []) {
-  return JSON.parse(execFileSync('tk', ['eval', env, ...extra], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 << 20 }));
+  const inputs=['NS_SOURCE_COMMIT','NS_DEMO_IMAGE','NS_PGSTREAM_POSTGRES_IMAGE'];
+  for(const key of inputs)if(!process.env[key])throw new Error(key+' must name the explicit supplied artifact input');
+  return JSON.parse(execFileSync('tk', ['eval', env, ...inputs.flatMap(key=>['--ext-str',key+'='+process.env[key]]), ...extra], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 << 20 }));
 }
 
 function manifests (value, out = []) {
@@ -43,7 +45,8 @@ function podSpec (m) {
 function podLabels (m) {
   if (m.kind === 'Pod') return m.metadata.labels || {};
   if (m.kind === 'CronJob') return m.spec.jobTemplate.spec.template.metadata.labels || {};
-  return (m.spec.template.metadata || {}).labels || {};
+  const labels=(m.spec.template.metadata || {}).labels || {};
+  return m.kind==='StatefulSet'&&m.spec.replicas===1?{...labels,'statefulset.kubernetes.io/pod-name':m.metadata.name+'-0'}:labels;
 }
 const containersOf = spec => [...(spec.initContainers || []), ...(spec.containers || [])];
 const id = m => m.kind + '/' + m.metadata.name;
@@ -153,6 +156,23 @@ function checks (all, inventory, composeDir, envMain) {
     }
   });
 
+  run('independent-pgstream', fail => {
+    const streams=workloads.filter(w=>(podSpec(w).containers||[]).some(c=>c.name==='pgstream'));
+    if(streams.length!==1)return fail('exactly one pgstream workload required');
+    const stream=streams[0],spec=podSpec(stream),container=spec.containers.find(c=>c.name==='pgstream');
+    if(stream.kind!=='Deployment'||stream.spec.replicas!==1||stream.spec.strategy?.type!=='Recreate')fail('pgstream must be a one-replica Recreate Deployment');
+    if(JSON.stringify(container.command)!==JSON.stringify(['/usr/local/bin/pgstream','run','-c','/run/ns-stream/pgstream.yaml','--log-level','info']))fail('pgstream must run the maintained binary directly');
+    const volume=(spec.volumes||[]).find(v=>v.name==='secret-pgstream');
+    if(volume?.secret?.secretName!=='ns-config-pgstream'||!(container.volumeMounts||[]).some(v=>v.name==='secret-pgstream'&&v.mountPath==='/run/ns-stream'&&v.readOnly))fail('pgstream requires its dedicated wire Secret');
+    for(const w of workloads)if(w!==stream&&(podSpec(w).volumes||[]).some(v=>v.secret?.secretName==='ns-config-pgstream'))fail('streaming wire credentials must not be mounted in the evaluator or another workload');
+    const intake=services.find(v=>v.metadata.name==='evaluator');
+    if(!intake||intake.spec.type!=='ClusterIP'||intake.spec.selector?.['statefulset.kubernetes.io/pod-name']!=='cohort-0'||intake.spec.selector?.['app.kubernetes.io/component']!=='cohort')fail('intake Service must select only the admitted cohort-0 owner');
+    if(intake?.spec.publishNotReadyAddresses!==true)fail('intake routing must bypass pod-wide clinical readiness to avoid a stream startup cycle');
+    if(intake&&!intake.spec.ports?.some(p=>p.port===19913&&p.targetPort==='stream-intake'))fail('intake Service must target the declared receiver port');
+    const postgres=workloads.find(w=>w.metadata.name==='postgres'),command=(podSpec(postgres).containers.find(c=>c.name==='postgres').command||[]);
+    for(const setting of ['wal_level=logical','max_replication_slots=4','max_wal_senders=4','max_slot_wal_keep_size=256MB','output_plugin_libraries=wal2json'])if(!command.includes(setting))fail('PostgreSQL is missing maintained streaming setting '+setting);
+  });
+
   run('evaluator-statefulset', fail => {
     const hosts = workloads.filter(w => containersOf(podSpec(w)).some(c => c.name === 'evaluator'));
     if (hosts.length !== 1) return fail('the evaluator must run in exactly one workload, found ' + hosts.length);
@@ -246,14 +266,16 @@ function checks (all, inventory, composeDir, envMain) {
       const m = /const ROLE = '([a-z_]+)'/.exec(fs.readFileSync(overlay, 'utf8'));
       compose.admin = m ? [m[1]] : [];
     }
+    if(!fs.readFileSync(path.join(composeDir,'multitenant','registry-bootstrap.js'),'utf8').includes("path.join(output,'pgstream','pgstream.yaml')"))fail('Compose does not publish the separate streaming wire');
+    compose.pgstream=['pgstream'];
     for (const [role, names] of Object.entries(compose)) {
       const want = [...new Set(names)].sort(), have = [...(inventory.postgresIdentities[role] || [])].sort();
       if (JSON.stringify(want) !== JSON.stringify(have)) fail(role + ': binding names ' + (have.join(',') || 'none') + ', Compose names ' + (want.join(',') || 'none'));
     }
     for (const role of Object.keys(inventory.postgresIdentities)) if (!compose[role] && role !== 'admin') fail(role + ' has no Compose counterpart');
-    const source = fs.readFileSync(path.join(composeDir, 'SOURCE.md'), 'utf8');
-    const commit = (/upstream commit \| `([0-9a-f]{40})`/.exec(source) || [])[1];
-    if (commit !== envMain.sourceCommit) fail('the binding renders core ' + envMain.sourceCommit + ' but the Compose tree records ' + commit);
+    // SOURCE.md retired the historical imported-copy pin. Core/deploy compatibility
+    // is measured by tools/plan-contract-check.sh --prospective, not this render.
+    // This check retains the actual current role-to-SQL identity comparison.
   });
   return results;
 }

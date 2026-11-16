@@ -59,7 +59,7 @@ publish() {
   "volumes":[{"name":"state","persistentVolumeClaim":{"claimName":"provision-state","readOnly":true}}]}}
 EOF
   k wait --for=condition=Ready pod/provision-state-reader --timeout=120s >/dev/null
-  k exec provision-state-reader -- tar -C /state -cf - api realtime evaluator tenant-admin ui ownership-admin | tar -C "$work" -xf -
+  k exec provision-state-reader -- tar -C /state -cf - api realtime evaluator pgstream tenant-admin ui ownership-admin | tar -C "$work" -xf -
   k delete pod provision-state-reader --wait=false >/dev/null
   for role in api realtime evaluator tenant-admin ui; do
     args=()
@@ -68,8 +68,9 @@ EOF
     done
     k create secret generic "ns-config-$role" "${args[@]}" >/dev/null
   done
+  k create secret generic ns-config-pgstream --from-file=pgstream.yaml="$work/pgstream/pgstream.yaml" >/dev/null
   k create secret generic ns-config-admin --from-file=env.json="$work/ownership-admin/env.json" --from-file=admin.json="$work/ownership-admin/admin.json" >/dev/null
-  echo '{"state":"published","secrets":["ns-config-api","ns-config-realtime","ns-config-evaluator","ns-config-tenant-admin","ns-config-ui","ns-config-admin"]}'
+  echo '{"state":"published","secrets":["ns-config-api","ns-config-realtime","ns-config-evaluator","ns-config-pgstream","ns-config-tenant-admin","ns-config-ui","ns-config-admin"]}'
 }
 
 case $cmd in

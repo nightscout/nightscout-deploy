@@ -159,6 +159,18 @@ services:
       - ${NS_DEMO_STATE}/ipc:/run/ns-ipc
       - ${NS_DEMO_STATE}/tls/ca.crt:/run/ns-ca/ca.crt:ro
 
+  # The platform owns one consumer of the precreated logical slot. Its restart
+  # never replaces the evaluator, which retains durable intake and due work.
+  pgstream:
+    <<: *app
+    command: [/usr/local/bin/pgstream, run, -c, /run/ns-stream/pgstream.yaml, --log-level, info]
+    restart: unless-stopped
+    depends_on:
+      postgres: {condition: service_healthy}
+      evaluator: {condition: service_started}
+    volumes:
+      - ${NS_DEMO_STATE}/pgstream:/run/ns-stream:ro
+
   evaluator:
     <<: *app
     command: [node, deploy/multitenant/entrypoint.js, evaluator]

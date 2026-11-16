@@ -1,6 +1,6 @@
 'use strict';
-// One evaluator-owned maintained pgstream process, loopback-only subscriptions
-// and receiver. DBA setup is never part of the running role's startup command.
+// One platform-managed maintained pgstream service targets the admitted intake.
+// DBA setup is separate from both serving roles and the streaming worker.
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const {execFileSync}=require('node:child_process');
 function enabled(env=process.env){if(env.NS_PGSTREAM!==undefined&&env.NS_PGSTREAM!=='1')throw new Error('PGSTREAM_LEGACY_MODE_RETIRED');return true;}
@@ -12,11 +12,16 @@ function configure(docs,layout){
  evaluator.pgstream=configuration(layout);
  evaluator.timeIntervalMs=60000; // single-site heartbeat cadence; exact due instants remain independent
  realtime.completedOutput={namespace:layout.namespaces.eval_checkpoint,consumer:evaluator.consumer};
- Object.assign(docs.environments.evaluator,{NS_PGSTREAM_BINARY:'/usr/local/bin/pgstream',NS_PGSTREAM_CONFIG:'/run/ns-config/pgstream.yaml'});
+ delete docs.environments.evaluator.NS_PGSTREAM_BINARY;delete docs.environments.evaluator.NS_PGSTREAM_CONFIG;
 }
 function configuration(layout){
- return {binaryEnv:'NS_PGSTREAM_BINARY',configFileEnv:'NS_PGSTREAM_CONFIG',receiverPort:19913,slot:layout.prefix+'_pgstream',streamRole:layout.roles.pgstream,
-   bounds:{heartbeatMs:1000,stallMs:5000,stepMs:5000,stopMs:2000,recoveryMs:30000,pendingMs:30000,maxRestarts:3}};
+ return {receiver:{url:'http://evaluator:19913/',trust:'network',bindHost:'0.0.0.0',maxBytes:16777216,timeoutMs:5000},slot:layout.prefix+'_pgstream',streamRole:layout.roles.pgstream,
+   bounds:{heartbeatMs:1000,stallMs:5000,stepMs:5000,recoveryMs:30000,pendingMs:30000}};
+}
+function receiverURL(config){
+ const receiver=require('../../lib/server/internal-api/transport').options(config.pgstream.receiver);
+ if(!receiver.url)throw new TypeError('Explicit network intake receiver required');
+ return new URL('pgstream',receiver.url).href;
 }
 function descriptor(layout){return {consumer:'evaluator-compose-demo',namespaces:{clock:layout.namespaces.clock,checkpoint:layout.namespaces.eval_checkpoint},trustedWorker:{settings:layout.namespaces.display_settings,operatorPolicy:layout.namespaces.operator_policy,activity:layout.namespaces.control},pgstream:configuration(layout)};}
 function wire(config,runtimeURL,{subscriptionsPort=19914,routes}={}){
@@ -28,7 +33,7 @@ function wire(config,runtimeURL,{subscriptionsPort=19914,routes}={}){
    target:{webhooks:{subscriptions:{store:{url:storeURL.href,cache:{enabled:false}},server:{address:'127.0.0.1:'+subscriptionsPort}},notifier:{worker_count:1,strict_mode:true,client_timeout:2000,constant:{max_retries:1,interval:50}}}}};
 }
 async function init({admin,adminURL,layout,config,binary='/usr/local/bin/pgstream',binarySha256,routes,workColumns,realtimeColumns,realtimeConsumers=['realtime-compose-demo']}){
- const normalized={...config,namespaces:config.postgres?.namespaces||config.namespaces};
+ const normalized={...config,namespaces:config.postgres?.namespaces||config.namespaces},targetURL=receiverURL(config);
  const product=()=>require('../../lib/pgstream/evaluator');
  const selected=routes||product().routes(normalized),expected=binarySha256||product().BINARY_SHA256;
  if(!path.isAbsolute(binary)||!expected||require('node:crypto').createHash('sha256').update(fs.readFileSync(binary)).digest('hex')!==expected)throw new Error('PGSTREAM_BINARY_PIN_REFUSED');
@@ -72,6 +77,6 @@ async function init({admin,adminURL,layout,config,binary='/usr/local/bin/pgstrea
   await admin.query('CREATE POLICY pgstream_realtime_delivery_update ON '+realtimeTable+' FOR UPDATE TO '+realtime+' USING (consumer IN ('+selectedConsumers+')) WITH CHECK (consumer IN ('+selectedConsumers+'))');
  }
  for(const route of [...selected,{schema:'',table:'',kind:'schema'}])await admin.query('INSERT INTO pgstream.webhook_subscriptions VALUES($1,$2,$3,$4)',[
-   'http://127.0.0.1:'+config.pgstream.receiverPort+'/pgstream',route.schema,route.table,route.kind==='schema'?['M']:['I','U','D']]);
+   targetURL,route.schema,route.table,route.kind==='schema'?['M']:['I','U','D']]);
 }
-module.exports={enabled,configure,configuration,descriptor,wire,init};
+module.exports={enabled,configure,configuration,descriptor,receiverURL,wire,init};
