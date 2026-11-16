@@ -67,6 +67,32 @@ The controller never substitutes its local counters for that ledger
 or for actual tool review. Unsupported hook actions refuse; existing single-point
 hooks and the default `run` command are unchanged.
 
+### Trusted root-hook installation boundary
+
+`pgstream-root-install.mjs` wires the existing root operations to `rootAdapter`.
+The owning host supplies an immutable approval-request lookup and an original-user-
+message reader. The lookup binds the concrete intent hash to the existing question,
+question identifier, accepted answer text and source chat/message references.
+The reader returns the original connected-tool response; agent relays, changed
+questions, other chats and declined answers refuse. Controller JSON supplies none
+of these authority fields. Existing question replies and explicit free-text replies
+retain their format. A single-point approval cannot become batch authority.
+
+The root's `boundBatch` port reads actual inventory and configuration. The module
+derives the canonical projection and full cell hashes itself. Its other ports reuse
+the existing preallocation guard, source/host observation, independent absence,
+cleanup request and `admit`/`delete` operations. `dispatch` exposes only the existing
+five hook actions; host-side `prepare` methods surround the existing allocator.
+The source test composes the full lifecycle with an inert provider and ledger.
+
+There is **no installed native original-message reader in this repository**. The
+current private native hook trusts the owning chat's earlier direct read and checks
+its sealed plan/GO records. `installRootHook` requires the trusted host ports and
+refuses when any is absent; it creates no executable, authority file or key. Actual
+native host wiring and live batch operation remain **UNMEASURED**. The host must
+provide the connected-message bridge and existing provider/custody functions before
+using this module in the reviewed hook. Source fixtures do not supply that authority.
+
 The scheduler reserves whole cells synchronously before awaiting execution and
 uses an exclusive retained batch lock. It never steals a stale lock or reuses an
 old batch directory. Cancellation stops new cells; entered finite campaigns keep
