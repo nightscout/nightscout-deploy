@@ -23,3 +23,13 @@ test('worker connection capacity is explicit and bounded separately from per-IP 
   assert.match(edge.render(template, { source: { NS_EDGE_WORKER_CONNECTIONS: '8192' } }), /worker_connections 8192;/);
   for (const value of ['0','127','32769','8192; allow all;']) assert.throws(() => edge.policy({ NS_EDGE_WORKER_CONNECTIONS: value }));
 });
+
+test('worker process budget defaults auto and accepts bounded explicit counts', () => {
+  assert.match(edge.render(template, { source: {} }), /^worker_processes auto;$/m);
+  for (const workers of ['1','2','64']) { const text=edge.render(template,{source:{NS_EDGE_WORKER_PROCESSES:workers}});assert.match(text,new RegExp('^worker_processes '+workers+';$','m'));assert.match(text,/worker_connections 16384;/);assert.match(text,/proxy_set_header X-Forwarded-For '';/); }
+  for (const value of ['0','65','-1','1.5','01','1; include /tmp/x;','',1]) assert.throws(()=>edge.policy({NS_EDGE_WORKER_PROCESSES:value}));
+  for (const text of [template.replace('worker_processes auto;',''),template+'\nworker_processes auto;']) assert.throws(()=>edge.render(text,{source:{NS_EDGE_WORKER_PROCESSES:'1'}}));
+  const expected=template.replace('worker_processes auto;','worker_processes 1;');
+  assert.equal(edge.render(template,{source:{NS_EDGE_WORKER_PROCESSES:'1'}}),edge.render(expected.replace('worker_processes 1;','worker_processes auto;'),{source:{NS_EDGE_WORKER_PROCESSES:'1'}}));
+  assert.equal(edge.render(template,{source:{}}),edge.render(template,{source:{NS_EDGE_WORKER_PROCESSES:'auto'}}));
+});
