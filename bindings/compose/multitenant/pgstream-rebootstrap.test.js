@@ -13,7 +13,7 @@ function fixture(action='create-missing'){
  fs.writeFileSync(path.join(deployment,'.env'),Object.entries({NS_DEMO_PROJECT:p.project,NS_DEMO_STATE:state,NS_SOURCE_COMMIT:source.coreCommit,NS_PGSTREAM:'1'}).map(([key,value])=>key+'='+value).join('\n'));
  fs.writeFileSync(path.join(state,'bootstrap/complete.json'),JSON.stringify({sourceCommit:source.coreCommit,deployCommit:source.deployCommit}));fs.writeFileSync(p.evaluatorConfig,JSON.stringify(config));p.evaluatorConfigSha256=digest(fs.readFileSync(p.evaluatorConfig));
  const sourceURL=new URL('postgres://postgres/synthetic');sourceURL.username=config.pgstream.streamRole;sourceURL.password=crypto.randomBytes(12).toString('hex');
- const wire={source:{postgres:{url:sourceURL.href,mode:'replication',replication:{replication_slot:p.slot,plugin:{add_tables:routes.map(row=>row.schema+'.'+row.table).join(',')}}}},target:{webhooks:{notifier:{strict_mode:true},subscriptions:{store:{cache:{enabled:false}}}}}};fs.writeFileSync(path.join(state,'pgstream/pgstream.yaml'),JSON.stringify(wire));p.wireConfigSha256=digest(JSON.stringify(wire));
+ const wire={source:{postgres:{url:sourceURL.href,mode:'replication',replication:{replication_slot:p.slot,plugin:{add_tables:routes.map(row=>row.schema+'.'+row.table).join(',')}}}},target:{webhooks:{notifier:{strict_mode:true},subscriptions:{store:{cache:{enabled:true,refresh_interval:60}}}}}};fs.writeFileSync(path.join(state,'pgstream/pgstream.yaml'),JSON.stringify(wire));p.wireConfigSha256=digest(JSON.stringify(wire));
  const services=['postgres','vault','evaluator','realtime','api','admin','nginx','pgstream'],rows=services.map((service,index)=>({Id:String(index+1).repeat(64),Image:service==='postgres'?postgresImageId:imageId,Config:{Labels:{'com.docker.compose.project':p.project,'com.docker.compose.service':service,'com.docker.compose.project.working_dir':deployment,'com.docker.compose.project.config_files':p.composeFiles.join(','),'com.docker.compose.config-hash':String(index+1).repeat(64)}},State:{Running:['postgres','vault'].includes(service),Paused:false,Pid:['postgres','vault'].includes(service)?200+index:0,Status:['postgres','vault'].includes(service)?'running':'exited',StartedAt:'2026-11-14T00:00:00Z'},HostConfig:{RestartPolicy:{Name:'no'}},Mounts:service==='evaluator'?[{Source:path.dirname(p.evaluatorConfig),Destination:'/run/ns-config',RW:false}]:service==='pgstream'?[{Source:path.join(state,'pgstream'),Destination:'/run/ns-stream',RW:false}]:[]}));
  p.containers=rows.map(row=>({cid:row.Id,imageId:row.Image,service:row.Config.Labels['com.docker.compose.service'],startedAt:row.State.StartedAt,configHash:row.Config.Labels['com.docker.compose.config-hash']}));
  const subscriptions=routes.map(row=>({url:'http://synthetic-intake:19913/pgstream',schema_name:row.schema,table_name:row.table,event_types:['D','I','U']}));subscriptions.push({url:subscriptions[0].url,schema_name:'',table_name:'',event_types:['M']});
@@ -43,6 +43,14 @@ function cli(f){
 }
 for(const action of ['create-missing','replace-lost'])test('callable host command '+action+' changes only exact slot and leaves all effects stopped',()=>{
  const f=fixture(action);try{const {q,data}=cli(f);assert.equal(q.status,0,q.stderr);assert.equal(data.mutations,1);assert.match(data.slotSQL,/pg_create_logical_replication_slot\('selected_slot','wal2json'\)/);assert.equal(/\b(?:UPDATE|INSERT|DELETE|CREATE TABLE|ALTER|GRANT|TRUNCATE)\b/.test(data.slotSQL),false);assert.equal(data.commands.some(args=>['start','stop','kill','run','restart'].includes(args[0])||args.includes('up')),false);assert.equal(JSON.parse(fs.readFileSync(f.p.receiptFile)).state,'SLOT_RECREATED_EFFECTS_STOPPED');assert.match(data.slotSQL,/pg_try_advisory_lock/);}finally{f.cleanup();}
+});
+test('legacy uncached wire remains recoverable with exact stopped-worker subscriptions',()=>{
+ const f=fixture();try{
+  const file=path.join(f.p.stateDirectory,'pgstream','pgstream.yaml'),wire=JSON.parse(fs.readFileSync(file));
+  wire.target.webhooks.subscriptions.store.cache={enabled:false};
+  const text=JSON.stringify(wire);fs.writeFileSync(file,text);f.p.wireConfigSha256=digest(text);fs.writeFileSync(f.manifest,JSON.stringify(f.p));
+  const {q,data}=cli(f);assert.equal(q.status,0,q.stderr);assert.equal(data.mutations,1);
+ }finally{f.cleanup();}
 });
 function mixedHistory(f){
  const frozen=f.p.composeFiles[0],old=path.join(f.p.deploymentDirectory,'observer01.json'),current=path.join(f.p.deploymentDirectory,'effects.json');fs.writeFileSync(old,'{}');fs.writeFileSync(current,'{}');f.p.composeFiles=[frozen,current];f.p.approvedHistoricalComposeFiles=[frozen,old,current].map(file=>({path:file,sha256:digest(fs.readFileSync(file))}));

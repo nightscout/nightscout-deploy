@@ -11,8 +11,10 @@ test('selected pgstream documents, raw-to-wire config and completed-consumer pro
   assert.equal(new URL(wire.target.webhooks.subscriptions.store.url).searchParams.get('pool_max_conns'),'2');
   assert.equal(wire.target.webhooks.notifier.strict_mode,true);
   assert(!wire.source.postgres.replication.plugin.add_tables.includes('tenant_consumer_checkpoint'));
-  assert.equal(wire.source.postgres.replication.plugin.add_tables.split(',').length,5);
+  // Six clinical row routes join the five metadata routes in the maintained source.
+  assert.equal(wire.source.postgres.replication.plugin.add_tables.split(',').length,11);
   const routes=require('../../lib/pgstream/evaluator').routes({...evaluator,namespaces:evaluator.postgres.namespaces});
+  assert.deepEqual(wire.source.postgres.replication.plugin.add_tables.split(',').sort(),routes.map(row=>row.schema+'.'+row.table).sort());
   assert.equal(routes.some(row=>row.kind==='heartbeat'||row.table==='nightscout_heartbeat'),false,'SYNTHETIC_HEARTBEAT_ROUTE_RETIRED');
   assert.deepEqual(evaluator.pgstream.bounds,{stepMs:5000,recoveryMs:30000,pendingMs:30000});
   assert.equal(evaluator.pgstream.receiver.url,'http://evaluator:19913/');assert.equal(evaluator.pgstream.receiver.trust,'network');assert.equal(evaluator.pgstream.binaryEnv,undefined);assert.equal(evaluator.pgstream.configFileEnv,undefined);assert.equal(evaluator.pgstream.bounds.maxRestarts,undefined);assert.equal(evaluator.pgstream.bounds.stopMs,undefined);assert.equal(docs.environments.evaluator.NS_PGSTREAM_BINARY,undefined);assert.equal(docs.environments.evaluator.NS_PGSTREAM_CONFIG,undefined);

@@ -119,7 +119,9 @@ async function run(p,{docker=platform(),routes}={}){
  routes=routes||require('../../lib/pgstream/evaluator').routes({...c,namespaces:c.postgres.namespaces});
  const wireFile=path.join(p.stateDirectory,'pgstream','pgstream.yaml'),wireText=read(wireFile);need(SHA.test(p.wireConfigSha256)&&hash(wireText)===p.wireConfigSha256,'PGSTREAM_REBOOTSTRAP_WIRE_CONFIG');
  const wire=JSON.parse(wireText),source=wire.source?.postgres,target=wire.target?.webhooks;
- need(source?.mode==='replication'&&source.replication?.replication_slot===p.slot&&new URL(source.url).username===c.pgstream.streamRole&&decodeURIComponent(new URL(source.url).pathname)==='/'+p.database.name&&source.replication.plugin.add_tables.split(',').sort().join(',')===routes.map(row=>row.schema+'.'+row.table).sort().join(',')&&target?.notifier?.strict_mode===true&&target.subscriptions?.store?.cache?.enabled!==true,'PGSTREAM_REBOOTSTRAP_WIRE_CONFIG');
+ // Recovery admits both historical uncached and current cached wire. The
+ // stopped worker discards its cache; exact stored subscriptions are checked below.
+ need(source?.mode==='replication'&&source.replication?.replication_slot===p.slot&&new URL(source.url).username===c.pgstream.streamRole&&decodeURIComponent(new URL(source.url).pathname)==='/'+p.database.name&&source.replication.plugin.add_tables.split(',').sort().join(',')===routes.map(row=>row.schema+'.'+row.table).sort().join(',')&&target?.notifier?.strict_mode===true,'PGSTREAM_REBOOTSTRAP_WIRE_CONFIG');
  const composeArgs=files=>['compose','--project-name',p.project,'--project-directory',p.deploymentDirectory,'--env-file',envFile,...files.flatMap(file=>['-f',file])];
  const verifyFiles=()=>{for(const file of p.approvedHistoricalComposeFiles)need(hash(read(file.path))===file.sha256,'PGSTREAM_REBOOTSTRAP_APPROVED_FILE_CHANGED');};
  const snapshot=()=>{

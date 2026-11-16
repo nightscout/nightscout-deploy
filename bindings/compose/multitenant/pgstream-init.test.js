@@ -83,3 +83,13 @@ test('native default realtime role reads bound raw tail, with isolation control 
   try{if(createdSchema)await db.query('DROP SCHEMA synthetic_work CASCADE');if(createdRole)await db.query('DROP ROLE synthetic_rt');}finally{await db.end();}
  }
 });
+
+test('fixed deployment subscriptions use the maintained warm cache and bounded refresh',()=>{
+ function criterion(change=text=>text){const f=fixture(false,change);try{
+  const cache=f.binding.wire(f.options.config,f.options.adminURL,{routes:f.options.routes}).target.webhooks.subscriptions.store.cache;
+  assert.deepEqual(cache,{enabled:true,refresh_interval:60},'FIXED_SUBSCRIPTION_CACHE_REQUIRED');
+ }finally{f.close();}}
+ criterion();
+ assert.throws(()=>criterion(text=>text.replace('cache:{enabled:true,refresh_interval:60}','cache:{enabled:false}')),/FIXED_SUBSCRIPTION_CACHE_REQUIRED/);
+ criterion();
+});
