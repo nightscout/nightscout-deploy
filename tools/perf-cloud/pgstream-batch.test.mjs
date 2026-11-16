@@ -20,7 +20,7 @@ function batch(){
  });
  return {version:1,id:'synthetic-batch',payload:{source:{core:PINS.core,deploy:PINS.deploy},image:PINS.app,helper:'a'.repeat(64),files:cells.flatMap(c=>sourceFiles('sut').map(n=>({path:c.id+'/'+n,sha256:'a'.repeat(64)})))},envelope:{maxConcurrent:2,maxLiveResources:6,maxOfferedRps:100,millicpus:24000,memoryBytes:48000000000,heapMiB:2048,hourlyMicrousd:600000,totalMicrousd:18000000,cleanupAt:4600,workload:{tenants:[1,1000],offeredRps:[1,100],durationSeconds:[1,310],probeEveryMs:[1,300000],hotFactor:[1,1],faultCases:[]}},cells};
 }
-async function fixture(){const b=batch(),root=await fs.mkdtemp(path.join(os.tmpdir(),'pgcal-batch-'));
+async function fixture(adjust=()=>{}){const b=batch(),root=await fs.mkdtemp(path.join(os.tmpdir(),'pgcal-batch-'));adjust(b);
  for(const c of b.cells){const dir=path.join(root,c.id);await fs.mkdir(dir);const files={};
   for(const n of sourceFiles('sut').filter(n=>n!=='manifest.json')){const value=n==='spec.json'?JSON.stringify(c.config):n==='receipt.json'?JSON.stringify(c.config.receipt):n==='binding.json'?JSON.stringify(runtimeBinding(c.config)):'synthetic '+n;await fs.writeFile(path.join(dir,n),value);files[n]=await hashFile(path.join(dir,n));}
   await fs.writeFile(path.join(dir,'manifest.json'),JSON.stringify({files}));
@@ -39,8 +39,8 @@ test('whole cell reservation is synchronous under racing completions; exact clea
 test('cancel stops new cells while both entered cells retain exact cleanup',async()=>{const {b,root}=await fixture(),controller=new AbortController(),events=[];
  try{const result=await runBatch(b,root,{now:()=>1000,hooks:rootHooks(events),signal:controller.signal,executeCell:async c=>{await new Promise(r=>setTimeout(r,5));controller.abort();return deleted(c);}});assert.equal(result.cells.filter(c=>c.cleanup==='ABSENT').length,2);assert.equal(result.cells.find(c=>c.id==='cell-2').status,'NOT_STARTED');assert.equal(events.filter(e=>e.startsWith('release:')).length,2);}finally{await fs.rm(root,{recursive:true,force:true});}
 });
-test('one failed cell preserves peer measurement; foreign cleanup retains reservation and stops admission',async()=>{for(const foreign of [false,true]){const {b,root}=await fixture(),events=[];
- try{const result=await runBatch(b,root,{now:()=>1000,hooks:rootHooks(events),executeCell:async c=>{if(c.id==='cell-0'){const result=deleted(c);result.status='FAIL';if(foreign)result.providerDeletion.providerIds=['foreign'];throw Object.assign(Error('SYNTHETIC_FAILURE'),{result});}await new Promise(r=>setTimeout(r,5));return deleted(c);}});assert.equal(result.status,'PARTIAL');assert.equal(result.cells.find(c=>c.id==='cell-1').status,'PASS');assert.equal(events.includes('release:cell-0'),!foreign);assert.equal(result.cells.find(c=>c.id==='cell-2').status,foreign?'NOT_STARTED':'PASS');}finally{await fs.rm(root,{recursive:true,force:true});}}
+test('one failed cell preserves peer measurement; foreign cleanup retains reservation while eligible peers continue',async()=>{for(const foreign of [false,true]){const {b,root}=await fixture(),events=[];
+ try{const result=await runBatch(b,root,{now:()=>1000,hooks:rootHooks(events),executeCell:async c=>{if(c.id==='cell-0'){const result=deleted(c);result.status='FAIL';if(foreign)result.providerDeletion.providerIds=['foreign'];throw Object.assign(Error('SYNTHETIC_FAILURE'),{result});}await new Promise(r=>setTimeout(r,5));return deleted(c);}});assert.equal(result.status,'PARTIAL');assert.equal(result.cells.find(c=>c.id==='cell-1').status,'PASS');assert.equal(events.includes('release:cell-0'),!foreign);assert.equal(result.cells.find(c=>c.id==='cell-2').status,'PASS');}finally{await fs.rm(root,{recursive:true,force:true});}}
 });
 test('changed payload and rewritten transport source refuse before root effects',async()=>{const {b,root}=await fixture();let effects=0;
  try{await verifyBatchPayload(b,root);const file=path.join(root,b.cells[0].id,'app.tar'),original=await fs.readFile(file);await fs.appendFile(file,'corruption');await assert.rejects(runBatch(b,root,{now:()=>1000,hooks:{...rootHooks(),admitBatch:async p=>{effects++;return rootHooks().admitBatch(p);}},executeCell:async c=>deleted(c)}),/PAYLOAD_CHANGED/);assert.equal(effects,0);await fs.writeFile(file,original);await verifyBatchPayload(b,root);
@@ -58,4 +58,30 @@ test('shared Python and JavaScript canonical digest vectors agree',async t=>{
  const file=process.env.PGCAL_BATCH_DIGEST_VECTORS;if(!file)return t.skip('set PGCAL_BATCH_DIGEST_VECTORS to the shared versioned corpus');
  const corpus=JSON.parse(await fs.readFile(file));assert.equal(corpus.version,1);assert(Array.isArray(corpus.vectors)&&corpus.vectors.length>0);
  for(const vector of corpus.vectors)assert.equal(batchDigest(vector.value),createHash('sha256').update(vector.canonical).digest('hex'),vector.canonical);
+});
+
+
+test('retained failed cleanup consumes its slot; shared authority refusal stops new admission',async()=>{
+ for(const authorityLoss of [false,true]){const {b,root}=await fixture(),events=[];let live=0,max=0;const hooks=rootHooks(events);
+ if(authorityLoss)hooks.reserveCell=async({cell})=>{events.push('attempt:'+cell.id);throw Error('SYNTHETIC_SHARED_AUTHORITY_LOST');};
+ try{const result=await runBatch(b,root,{now:()=>1000,hooks,executeCell:async c=>{live++;max=Math.max(max,live);await new Promise(r=>setTimeout(r,5));if(c.id==='cell-0')return {status:'FAIL'};assert(live<=2);live--;return deleted(c);}});
+ if(authorityLoss){assert.equal(max,0);assert.equal(result.cells.find(c=>c.id==='cell-2').status,'NOT_STARTED');}
+ else{assert.equal(max,2);assert.equal(live,1);assert.equal(result.cells.find(c=>c.id==='cell-0').cleanup,'UNCONFIRMED');assert.equal(result.cells.find(c=>c.id==='cell-2').status,'PASS');assert(!events.includes('release:cell-0'));}
+ }finally{await fs.rm(root,{recursive:true,force:true});}}
+});
+
+test('a cell deadline leaves later eligible pairs runnable; shared deadline enters none',async()=>{
+ for(const shared of [false,true]){const {b,root}=await fixture(b=>{b.cells[0].config.lastNewPointAt=2700;});const events=[];let calls=0;
+ try{const result=await runBatch(b,root,{now:()=>++calls<=2?1000:shared?4600:2750,hooks:rootHooks(events),executeCell:async c=>deleted(c)});
+ assert.equal(result.cells.find(c=>c.id==='cell-0').reason,'CELL_DEADLINE');
+ assert.equal(events.filter(e=>e.startsWith('reserve:')).length,shared?0:2);
+ assert.equal(result.cells.find(c=>c.id==='cell-1').status,shared?'NOT_STARTED':'PASS');
+ }finally{await fs.rm(root,{recursive:true,force:true});}}
+});
+
+
+test('a large queued cell does not block a smaller independent pair that fits',async()=>{
+ const {b,root}=await fixture(b=>{b.envelope.heapMiB=3072;b.cells[0].resources.heapMiB=b.cells[1].resources.heapMiB=2048;});const entered=[];
+ try{await runBatch(b,root,{now:()=>1000,hooks:rootHooks(),executeCell:async c=>{entered.push(c.id);await new Promise(r=>setTimeout(r,10));return deleted(c);}});assert.deepEqual(entered,['cell-0','cell-2','cell-1']);}
+ finally{await fs.rm(root,{recursive:true,force:true});}
 });
