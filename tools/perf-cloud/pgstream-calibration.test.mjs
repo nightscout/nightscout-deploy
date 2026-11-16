@@ -176,6 +176,14 @@ test('explicit discovery changes population, clients, rate and duration with exa
  }
  validate(s);
 });
+test('discovery total viewers vary independently and remain sealed to plan and receipt',()=>{
+ for(const total of [0,2,53,80000]){
+  const s=parameterized({tenants:1000});s.reportMode='discovery';s.receipt.remoteReportMode='discovery';s.sourceQualification={path:'/synthetic/image-qualification.json',sha256:'e'.repeat(64)};s.completionContract='evaluator-work-v2';s.receipt.completionContract=s.completionContract;
+  s.logicalPollingClients=total;s.resourcePlan.logicalPollingClients=total;s.receipt.remoteWorkload=clone(workloadBinding(s));validate(s);
+  for(const mutate of [v=>v.logicalPollingClients++,v=>v.resourcePlan.logicalPollingClients++,v=>v.receipt.remoteWorkload.resourcePlan.logicalPollingClients++]){const bad=clone(s);mutate(bad);assert.throws(()=>validate(bad));}
+ }
+ for(const total of [-1,80001,1.5,null]){const s=parameterized({tenants:1000});s.reportMode='discovery';s.logicalPollingClients=total;s.resourcePlan.logicalPollingClients=total;assert.throws(()=>workloadBinding(s));}
+});
 test('discovery partial finishes both sessions while strict nonpass still refuses',async()=>{
  for(const mode of ['strict','discovery']){
   const events=[],app={next:async k=>k==='cell-complete'?{verdict:'PARTIAL',missing:['probe-accounting.json']}:k==='server-recovery-complete'?{measurement:'NOT_RUN'}:{},send:()=>{},finish:async()=>events.push('app-finished')},gen={next:async()=>({}),send:()=>{},finish:async()=>events.push('gen-finished')};

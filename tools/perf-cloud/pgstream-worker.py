@@ -187,6 +187,8 @@ def prepare_arguments(spec):
     cadence=spec['cadence']
     args=cellargs('prepare')+['--core-repo',ROOT/'sources/core.git','--core-commit',spec['pins']['core'],'--deploy-repo',ROOT/'sources/deploy.git','--deploy-commit',spec['pins']['deploy'],'--image',spec['pins']['app'],'--postgres-image',spec['pins']['postgres'],'--receipt',ROOT/'input/receipt.json','--profile','pgstream-sample','--run-purpose','discovery','--completion-contract',spec['completionContract'],'--diagnostics',spec['diagnostics'],'--tenants',str(spec['tenants']),'--replicas','1']
     for key,flag in [('warmupSeconds','warmup-seconds'),('idleSeconds','idle-seconds'),('loadSeconds','load-seconds'),('accel','accel'),('hotFactor','hot-factor'),('samplerIntervalSeconds','sampler-interval'),('probeEveryMs','probe-every-ms'),('socketsPerTenant','sockets-per-tenant')]:args+=['--'+flag,str(cadence[key])]
+    total=spec.get('resourcePlan',{}).get('logicalPollingClients',cadence['socketsPerTenant']*spec['tenants'])
+    if total!=cadence['socketsPerTenant']*spec['tenants']:args+=['--logical-polling-clients',str(total)]
     if 'offeredRps' in cadence:args+=['--offered-rps',str(cadence['offeredRps'])]
     if 'pgstreamTopology' in spec or 'diagnosticResourceProfile' in spec:
         need(spec.get('pgstreamTopology')=='external-service-v1' and spec.get('diagnosticResourceProfile')=='local-diagnostic-external-pgstream-4cpu-8g-v1','PGCAL_EXPLICIT_TOPOLOGY')

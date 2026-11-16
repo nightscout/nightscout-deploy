@@ -50,7 +50,7 @@ export function workloadBinding(spec){
     return null;
   }
   const plan=spec.resourcePlan;
-  need(plan&&equal(Object.keys(plan).sort(),['reference','tenants','logicalPollingClients','hosts'].sort())&&typeof plan.reference==='string'&&/^[A-Za-z0-9_.:/-]{1,160}$/.test(plan.reference)&&plan.tenants===spec.tenants&&plan.logicalPollingClients===(discovery?cadence.socketsPerTenant:2)*spec.tenants&&equal(Object.keys(plan.hosts??{}).sort(),['driver','sut']),'PGCAL_RESOURCE_PLAN_BINDING');
+  need(plan&&equal(Object.keys(plan).sort(),['reference','tenants','logicalPollingClients','hosts'].sort())&&typeof plan.reference==='string'&&/^[A-Za-z0-9_.:/-]{1,160}$/.test(plan.reference)&&plan.tenants===spec.tenants&&Number.isSafeInteger(plan.logicalPollingClients)&&plan.logicalPollingClients>=0&&plan.logicalPollingClients<=80000&&(discovery||plan.logicalPollingClients===2*spec.tenants)&&(spec.logicalPollingClients===undefined||plan.logicalPollingClients===spec.logicalPollingClients)&&equal(Object.keys(plan.hosts??{}).sort(),['driver','sut']),'PGCAL_RESOURCE_PLAN_BINDING');
   for(const role of ['sut','driver']){
     const host=plan.hosts[role],actual=spec.hosts?.[role];
     need(host&&actual&&equal(Object.keys(host).sort(),['providerId','cpuCores','ramBytes'].sort())&&typeof host.providerId==='string'&&host.providerId.length>0&&host.providerId.length<=160&&Number.isFinite(host.cpuCores)&&host.cpuCores>0&&Number.isSafeInteger(host.ramBytes)&&host.ramBytes>0&&equal(host,{providerId:actual.providerId,cpuCores:actual.cpuCores,ramBytes:actual.ramBytes}),'PGCAL_RESOURCE_PLAN_HOST');
@@ -72,7 +72,7 @@ export function validate(spec){
   need(!discovery||spec.componentCases===undefined,'PGCAL_DISCOVERY_COMPONENTS_UNSUPPORTED');
   const components=componentCases(spec.componentCases,spec.tenants);
   need(components===null||equal(spec.receipt?.remoteComponentCases,components),'PGCAL_COMPONENT_RECEIPT');
-  need(spec.profile===PROFILE&&Number.isInteger(spec.tenants)&&(discovery?spec.tenants>=1&&spec.tenants<=10000:COHORTS.includes(spec.tenants))&&spec.logicalPollingClients===spec.tenants*(discovery?spec.cadence?.socketsPerTenant:2),'PGCAL_FIXED_PROFILE');
+  need(spec.profile===PROFILE&&Number.isInteger(spec.tenants)&&(discovery?spec.tenants>=1&&spec.tenants<=10000:COHORTS.includes(spec.tenants))&&Number.isSafeInteger(spec.logicalPollingClients)&&spec.logicalPollingClients>=0&&spec.logicalPollingClients<=80000&&(discovery||spec.logicalPollingClients===2*spec.tenants),'PGCAL_FIXED_PROFILE');
   // Discovery configuration is an unverified request. packet() binds a genuine
   // image qualification; the SUT still executes source/image/loader preflight.
   const requestedPins=spec.pins;
