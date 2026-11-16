@@ -43,8 +43,11 @@ function originalApproval(response,request){
   }
   need(data?.thread?.id===request.chatId&&Array.isArray(data.turns),'ORIGINAL_CHAT');
   const turns=[...data.turns];
-  if(turns.every(t=>Number.isFinite(t.startedAt)))turns.sort((a,b)=>a.startedAt-b.startedAt);
-  else if(data.page?.order==='newest_first')turns.reverse();
+  let chronologyKnown=true;
+  if(data.page?.order==='newest_first')turns.reverse();
+  else if(data.page?.order==='oldest_first'||turns.length<=1){/* source order */}
+  else if(turns.every(t=>Number.isFinite(t.startedAt))&&new Set(turns.map(t=>t.startedAt)).size===turns.length)turns.sort((a,b)=>a.startedAt-b.startedAt);
+  else chronologyKnown=false;
   const items=turns.flatMap(t=>t.items??[]),matching=items.filter(m=>m.id===request.messageId);
   need(matching.length===1&&matching[0].type==='userMessage','ORIGINAL_USER_REQUIRED');
   const message=matching[0],parts=(message.content??[]).filter(c=>c.type==='text').map(c=>c.text);
@@ -57,10 +60,14 @@ function originalApproval(response,request){
     const reply=replies.filter(r=>r.questionItemId===request.questionItemId);
     answered=reply.length===1&&reply[0].question===request.question&&request.approvedAnswers.includes(reply[0].answer);
   }else{
-    // Existing free-text approval is supported only with its actual preceding
-    // question in the same original read, never by an agent relay or guessed text.
-    const at=items.indexOf(message),questions=items.slice(0,at).filter(m=>m.type==='agentMessage'&&m.text===request.question);
-    answered=questions.length===1&&request.approvedAnswers.includes(text);
+    // A historical match is not a pending question. Free text must follow the
+    // nearest conversational item, which must uniquely be this exact question.
+    // An intervening question/reply or unknown order is ambiguous and refuses.
+    // Structured replies above instead retain their explicit question identity.
+    const before=items.slice(0,items.indexOf(message));
+    const conversation=before.filter(m=>m.type==='agentMessage'||m.type==='userMessage');
+    const pending=conversation.at(-1),questions=conversation.filter(m=>m.type==='agentMessage'&&m.text===request.question);
+    answered=chronologyKnown&&pending?.type==='agentMessage'&&pending.text===request.question&&questions.length===1&&request.approvedAnswers.includes(text);
   }
   need(answered,'EXACT_APPROVAL_REQUIRED');
   return {kind:'direct-user-message',chatId:request.chatId,messageId:request.messageId,

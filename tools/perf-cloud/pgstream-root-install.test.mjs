@@ -66,9 +66,36 @@ test('an existing free-text approval requires its actual preceding question',asy
   const missing=fixture();missing.mutable.response.turns[0].items[0].content[0].text='Approve this exact packet';await assert.rejects(missing.hook.prepare.reviewBatch(missing.batch.id),/EXACT_APPROVAL_REQUIRED/);
 });
 
+test('free-text answering a different later packet cannot approve an earlier intent',async()=>{
+  const f=fixture();f.mutable.response.turns[0].items=[
+    {type:'agentMessage',text:f.request.question},
+    {type:'agentMessage',text:'Approve a DIFFERENT concrete expensive packet with different destinations and cost?'},
+    {type:'userMessage',id:'synthetic-user',content:[{type:'text',text:'Approve this exact packet'}]},
+  ];
+  await assert.rejects(f.hook.prepare.reviewBatch(f.batch.id),/EXACT_APPROVAL_REQUIRED/);
+  assert.equal(f.state().totalReservedUpperUSD,7);assert.equal(f.mutable.admitCount+f.mutable.deleteCount,0);
+});
+
+test('a consumed or repeated question cannot supply ambiguous free-text approval',async()=>{
+  for(const intervening of [{type:'userMessage',id:'earlier-reply',content:[{type:'text',text:'Keep deferred'}]},{type:'agentMessage',text:'OTHER_QUESTION'},{type:'agentMessage',text:'SAME_QUESTION'}]){
+    const f=fixture(),middle=structuredClone(intervening);if(middle.text==='SAME_QUESTION')middle.text=f.request.question;
+    f.mutable.response.turns[0].items=[{type:'agentMessage',text:f.request.question},middle,{type:'userMessage',id:'synthetic-user',content:[{type:'text',text:'Approve this exact packet'}]}];await assert.rejects(f.hook.prepare.reviewBatch(f.batch.id),/EXACT_APPROVAL_REQUIRED/);
+  }
+});
+
+test('structured question identity remains unambiguous despite a different later question',async()=>{
+  const f=fixture(),answer=f.mutable.response.turns[0].items[0];f.mutable.response.turns[0].items=[{type:'agentMessage',text:f.request.question},{type:'agentMessage',text:'Approve a different concrete packet?'},answer];await f.hook.prepare.reviewBatch(f.batch.id);
+});
+
 test('newest-first connected reads preserve preceding-question order across turns',async()=>{
   const f=fixture();f.mutable.response.page={order:'newest_first'};f.mutable.response.turns=[{startedAt:2000,items:[{type:'userMessage',id:'synthetic-user',content:[{type:'text',text:'Approve this exact packet'}]}]},{startedAt:1000,items:[{type:'agentMessage',text:f.request.question}]}];await f.hook.prepare.reviewBatch(f.batch.id);
   const future=fixture();future.mutable.response.page={order:'newest_first'};future.mutable.response.turns=[{startedAt:3000,items:[{type:'agentMessage',text:future.request.question}]},{startedAt:2000,items:[{type:'userMessage',id:'synthetic-user',content:[{type:'text',text:'Approve this exact packet'}]}]}];await assert.rejects(future.hook.prepare.reviewBatch(future.batch.id),/EXACT_APPROVAL_REQUIRED/);
+});
+
+test('declared newest-first order resolves equal timestamps, but absent order refuses ambiguous free text',async()=>{
+  const f=fixture();f.mutable.response.page={order:'newest_first'};f.mutable.response.turns=[{startedAt:1000,items:[{type:'userMessage',id:'synthetic-user',content:[{type:'text',text:'Approve this exact packet'}]}]},{startedAt:1000,items:[{type:'agentMessage',text:f.request.question}]}];await f.hook.prepare.reviewBatch(f.batch.id);
+  const ambiguous=fixture();ambiguous.mutable.response.turns=[{items:[{type:'agentMessage',text:ambiguous.request.question}]},{items:[{type:'userMessage',id:'synthetic-user',content:[{type:'text',text:'Approve this exact packet'}]}]}];await assert.rejects(ambiguous.hook.prepare.reviewBatch(ambiguous.batch.id),/EXACT_APPROVAL_REQUIRED/);
+  const structured=fixture();structured.mutable.response.turns=[{items:[{type:'agentMessage',text:'Other question?'}]},{items:structured.mutable.response.turns[0].items}];await structured.hook.prepare.reviewBatch(structured.batch.id);
 });
 
 test('declined answers and an original reply to another question do not authorize the intent',async()=>{

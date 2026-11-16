@@ -77,6 +77,9 @@ The reader returns the original connected-tool response; agent relays, changed
 questions, other chats and declined answers refuse. Controller JSON supplies none
 of these authority fields. Existing question replies and explicit free-text replies
 retain their format. A single-point approval cannot become batch authority.
+Free-text approval requires the nearest conversational item to be the unique exact
+question. An intervening question/reply or ambiguous message order refuses;
+structured replies instead bind directly to their explicit question identifier.
 
 The root's `boundBatch` port reads actual inventory and configuration. The module
 derives the canonical projection and full cell hashes itself. Its other ports reuse
