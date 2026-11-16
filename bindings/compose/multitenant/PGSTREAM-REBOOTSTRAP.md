@@ -10,10 +10,15 @@ policy does not recreate the slot. This host command is the explicit recovery
 operation.
 
 Source controls reproduce command-level refusal and success on a synthetic
-platform. Actual Docker/PostgreSQL populated recovery is **UNMEASURED** until the
-recorded native case runs. The command's successful state means only that the
-slot exists and effect-serving containers remain stopped. It does not mean that
-clinical reconciliation or external effects have resumed.
+platform. An isolated single-host PostgreSQL/Vault/evaluator/pgstream project
+also reproduces the canonical-image CLI, followed by overdue clinical work and
+a second tenant's startup write. The
+[alignment measurement record](https://github.com/bewest/rag-nightscout-ecosystem-alignment/blob/main/reports/tenancy/switch-over-finish-2026-11-15/operational-rebootstrap.json)
+binds the exact source, image, controls, retained evidence and limits. Recovery of
+the full prepared deployment, WAL exhaustion and capacity remain **UNMEASURED**.
+The command's successful state means only that the slot exists and effect-serving
+containers remain stopped. Clinical reconciliation and reopening effects require
+the independent checks below.
 
 ## Operator custody and private plan
 
