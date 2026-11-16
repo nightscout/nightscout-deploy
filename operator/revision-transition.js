@@ -19,7 +19,9 @@ function privateJson(file) {
 }
 
 function validate(plan) {
-  if (plan?.version !== 1 || plan.profile !== 'ordinary-single' || !/^recovery-drills-[a-z0-9-]+$/.test(plan.project || '') ||
+  try { require('../bindings/compose/multitenant/project').validate(plan?.project); }
+  catch { throw fail('REVISION_PLAN_REFUSED'); }
+  if (plan?.version !== 1 || plan.profile !== 'ordinary-single' ||
       !path.isAbsolute(plan.directory || '') || !path.isAbsolute(plan.coldBackup || '') || !path.isAbsolute(plan.state || '') ||
       !Array.isArray(plan.cohort) || !plan.cohort.length || new Set(plan.cohort.map(row => row.id)).size !== plan.cohort.length ||
       !plan.cohort.every(row => /^[a-f0-9]{64}$/.test(row.id) && /^sha256:[a-f0-9]{64}$/.test(row.image)) ||
@@ -50,6 +52,7 @@ function admission(root, libraryRoot = root) {
 function stopped(plan, run = args => execFileSync('docker', args, { encoding: 'utf8', timeout: 30000 })) {
   const ids = run(['ps', '-aq', '--filter', 'label=com.docker.compose.project=' + plan.project]).trim().split(/\s+/).filter(Boolean);
   const all = ids.length ? JSON.parse(run(['inspect', ...ids])) : [];
+  if (all.some(row => row.Config.Labels['com.docker.compose.project'] !== plan.project)) throw fail('REVISION_COHORT_CHANGED_OR_RUNNING');
   const roles = all.filter(row => !['postgres', 'vault'].includes(row.Config.Labels['com.docker.compose.service']));
   const services = roles.map(row => row.Config.Labels['com.docker.compose.service']);
   if (['api', 'evaluator', 'realtime', 'pgstream'].some(service => services.filter(name => name === service).length !== 1) || services.some(name => /^(api|evaluator|realtime)-/.test(name))) throw fail('REVISION_SELECTED_PROFILE_UNSUPPORTED');

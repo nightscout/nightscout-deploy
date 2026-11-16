@@ -31,7 +31,8 @@ do not rewrite that archive or substitute current SQL for its history.
 ### Private plan and custody
 
 Keep the plan and all artifacts outside Git, mode `0600`, in a private directory. The version-1
-plan contains `profile: "ordinary-single"`, the exact `recovery-drills-*` project, absolute
+plan contains `profile: "ordinary-single"`, the exact prepared Compose project (validated by the
+binding's existing project grammar, including its ordinary default), absolute
 `directory` (operation records), `coldBackup`, `state`, `source` and `target`. Each source descriptor
 contains its absolute clean overlaid core `root`, full `sourceCommit` and `deployCommit`; target
 also contains its immutable `image` ID. `database` names the actual `name`, `oid` and
