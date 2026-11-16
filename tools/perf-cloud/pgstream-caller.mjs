@@ -242,25 +242,31 @@ export async function runBatch(batch,root,{hooks,executeCell,signal,now=()=>Date
     result.pendingPairCustody={status:'ROOT_GUARD_ARMED',...guard};
     while(pending.length||running.size){
       while(!stopped&&!signal?.aborted&&pending.length){
-        const cell=pending[0];if(now()>=cell.config.lastNewPointAt||now()>=Math.min(cell.config.expiresAt,frozen.envelope.cleanupAt)-cell.cleanupSeconds){stopped=true;break;}
-        if(!fits(cell))break;
-        pending.shift();active++;rate+=cell.offeredRps;for(const k of BATCH_RESOURCES)used[k]+=cell.resources[k];
+        const index=pending.findIndex(cell=>now()>=cell.config.lastNewPointAt||now()>=Math.min(cell.config.expiresAt,frozen.envelope.cleanupAt)-cell.cleanupSeconds||fits(cell));
+        if(index<0)break;
+        const cell=pending.splice(index,1)[0];
+        if(now()>=cell.config.lastNewPointAt||now()>=Math.min(cell.config.expiresAt,frozen.envelope.cleanupAt)-cell.cleanupSeconds){result.cells.push({id:cell.id,status:'NOT_STARTED',reason:'CELL_DEADLINE'});continue;}
+        active++;rate+=cell.offeredRps;for(const k of BATCH_RESOURCES)used[k]+=cell.resources[k];
         const task=(async()=>{
           const row={id:cell.id,status:'FAILED',cleanup:'UNCONFIRMED'};result.cells.push(row);let reservation;
           try{
             await verifyBatchPayload(frozen,root);
             executionScope(cell.config,now());
             row.reservationAttempted=true;
-            reservation=await hooks.reserveCell({batchId:frozen.id,planSha256:plan.sha256,cell});
-            need(reservation?.status==='RESERVED'&&typeof reservation.token==='string'&&reservation.token.length>0,'PGCAL_BATCH_RESERVATION_REFUSED');
+            const response=await hooks.reserveCell({batchId:frozen.id,planSha256:plan.sha256,cell});
+            need(response?.status==='RESERVED'&&typeof response.token==='string'&&response.token.length>0,'PGCAL_BATCH_RESERVATION_REFUSED');
+            // Only validated custody can take the per-cell cleanup path. A
+            // refusal/invalid response leaves possible accounting reserved and
+            // stops new admission through RESERVATION_UNCONFIRMED below.
+            reservation=response;
             row.result=await executeCell(cell,path.join(root,cell.id));row.status=row.result.status;
           }catch(error){row.error=error.message;if(error.result)row.result=error.result;}
           finally{
             // Never free a reservation merely because its worker returned/threw.
             const deletion=row.result?.providerDeletion;
             if(reservation&&deletion?.status==='DELETED'&&equal([...deletion.providerIds].sort(),Object.values(cell.config.hosts).map(h=>h.providerId).sort())){
-              try{const release=await hooks.releaseCell({batchId:frozen.id,planSha256:plan.sha256,cellId:cell.id,token:reservation.token,providerIds:deletion.providerIds});need(release?.status==='RELEASED','PGCAL_BATCH_RELEASE_REFUSED');row.cleanup='ABSENT';}catch(error){row.cleanupError=error.message;stopped=true;}
-            }else if(reservation){stopped=true;row.cleanupError='PGCAL_BATCH_DELETION_UNCONFIRMED';}
+              try{const release=await hooks.releaseCell({batchId:frozen.id,planSha256:plan.sha256,cellId:cell.id,token:reservation.token,providerIds:deletion.providerIds});need(release?.status==='RELEASED','PGCAL_BATCH_RELEASE_REFUSED');row.cleanup='ABSENT';}catch(error){row.cleanupError=error.message;}
+            }else if(reservation){row.cleanupError='PGCAL_BATCH_DELETION_UNCONFIRMED';}
             else if(row.reservationAttempted){stopped=true;row.cleanupError='PGCAL_BATCH_RESERVATION_UNCONFIRMED';}
             else row.cleanup='NOT_ENTERED';
             if(row.cleanup==='ABSENT'||row.cleanup==='NOT_ENTERED'){active--;rate-=cell.offeredRps;for(const k of BATCH_RESOURCES)used[k]-=cell.resources[k];}

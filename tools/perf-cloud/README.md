@@ -99,8 +99,11 @@ using this module in the reviewed hook. Source fixtures do not supply that autho
 The scheduler reserves whole cells synchronously before awaiting execution and
 uses an exclusive retained batch lock. It never steals a stale lock or reuses an
 old batch directory. Cancellation stops new cells; entered finite campaigns keep
-cleanup custody. Unconfirmed reservation/deletion/release stops admission and
-retains custody for reconciliation. One failed cell with confirmed deletion
+cleanup custody. Unconfirmed reservation or shared authority stops admission. Unconfirmed
+deletion/release retains the whole cell reservation while eligible peers
+continue within the remaining aggregate envelope. A per-cell deadline skips
+that cell; the common cutoff leaves no eligible cells. Unconfirmed custody
+remains reserved for reconciliation. One failed cell with confirmed deletion
 leaves valid peer observations intact. `batch-result.json` records individual
 status, retained result, cleanup and failures; no batch grants capacity acceptance.
 
