@@ -92,6 +92,13 @@ The backup is three things from the same instant, or it is nothing:
 
 ## D. Whole-deployment recovery from a cold backup
 
+For a planned change of application revision, use the explicit
+[ordinary revision transition](interrupted-upgrade.md#explicit-ordinary-revision-transition).
+Its rollback first checks the older catalogues and domain artifact in fresh namespaces, then
+restores this complete paired cold backup before serving. The domain artifact alone does not
+restore global registry authority, Vault keys or role credentials. Retain the upgraded original
+and qualify the replacement on separate disposable resources.
+
 **This returns every tenant to the backup instant.** Rehearsed: a record another tenant wrote after
 the backup is gone afterwards (`drill-whole-deployment-recovery.sh`). A person accepts that before step 1.
 

@@ -96,3 +96,22 @@ const refusedCodes={
 };
 for(const [name,breakIt] of Object.entries(controls))test('callable command refuses '+name+' before mutation',()=>{const f=fixture('replace-lost');try{breakIt(f);const {q,data}=cli(f);assert.notEqual(q.status,0);assert.equal(q.stderr.trim(),'PGSTREAM_REBOOTSTRAP_'+refusedCodes[name]);assert.equal(data.mutations,0);}finally{f.cleanup();}});
 test('slot operation repeats no-client, backend, inactive/lost and operator exclusion guards at mutation boundary',()=>{const f=fixture('replace-lost');try{const sql=recovery.slotSQL(f.p);for(const guard of ['pg_try_advisory_lock','pg_stat_activity','system_identifier','NOT active',"plugin='wal2json'","wal_status='lost'",'\\quit 3'])assert.ok(sql.includes(guard),guard);}finally{f.cleanup();}});
+
+test('planned revision is distinct from missing/lost recovery and requires sealed custody',()=>{
+ const f=fixture('replace-revision');try{
+  assert.throws(()=>recovery.plan(f.p),{code:'PGSTREAM_REBOOTSTRAP_REVISION_REQUIRED'});
+  const valid={...f.data.row,slot:{name:f.p.slot,database:f.p.database.name,plugin:'wal2json',active:false,status:'reserved',restart:'0/100'}};
+  const c=JSON.parse(fs.readFileSync(f.p.evaluatorConfig));
+  assert.throws(()=>recovery.validateDatabase({...f.p,action:'replace-lost'},c,valid,routes),{code:'PGSTREAM_REBOOTSTRAP_SLOT_NOT_LOST'});
+  recovery.validateDatabase(f.p,c,valid,routes);
+  assert.throws(()=>recovery.validateDatabase(f.p,c,{...valid,slot:{...valid.slot,active:true}},routes),{code:'PGSTREAM_REBOOTSTRAP_REVISION_SLOT'});
+ }finally{f.cleanup();}
+});
+test('one admitted upgrade cannot reset another valid slot after interruption or success',()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'revision-slot-claim-'));try{
+  const p={action:'replace-revision',revision:{upgradeRecord:path.join(root,'upgrade-record.json')},slot:'synthetic_slot',receiptFile:path.join(root,'receipt.json')};
+  recovery.claimRevision(p);const before=fs.readFileSync(path.join(root,'revision-slot-started.json'));
+  assert.throws(()=>recovery.claimRevision({...p,receiptFile:path.join(root,'another-receipt.json')}),{code:'PGSTREAM_REBOOTSTRAP_REVISION_ALREADY_STARTED'});
+  assert.deepEqual(fs.readFileSync(path.join(root,'revision-slot-started.json')),before);
+ }finally{fs.rmSync(root,{recursive:true,force:true});}
+});

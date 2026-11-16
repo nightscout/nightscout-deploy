@@ -9,6 +9,14 @@ pgstream service also refuses a missing slot during ordinary startup; its restar
 policy does not recreate the slot. This host command is the explicit recovery
 operation.
 
+A separate `replace-revision` action supports the one qualified populated revision pair in the
+[ordinary revision procedure](../../../operator/runbooks/interrupted-upgrade.md#explicit-ordinary-revision-transition).
+It requires that procedure's sealed upgrade record, paired cold-backup custody and current full
+identities. It reconstructs pre-transition WAL coverage from the stopped current physical source;
+it is not missing/lost-slot recovery. A durable single-use marker prevents retry with a new receipt.
+The existing `create-missing` and `replace-lost` actions still refuse a valid slot. The linked
+procedure owns this action's rehearsal, independent completion/client checks and limitations.
+
 Source controls reproduce command-level refusal and success on a synthetic
 platform. An isolated single-host PostgreSQL/Vault/evaluator/pgstream project
 also reproduces the canonical-image CLI, followed by overdue clinical work and
@@ -34,7 +42,7 @@ outside version control. Its fields are:
 
 | Field | Required current binding |
 |---|---|
-| `version`, `action` | `1`; `create-missing` or `replace-lost` |
+| `version`, `action` | `1`; `create-missing`, `replace-lost`, or the separately admitted `replace-revision` above |
 | `project`, `deploymentDirectory`, `stateDirectory`, `composeFiles`, `environmentFile` | Existing prepared project, absolute paths, exact current ordered Compose file list and explicit active environment file (default `.env` in deployment directory) |
 | `approvedHistoricalComposeFiles` | Explicit ordered approved historical/current file set, each with absolute `path` and current `sha256`; includes every selected or recorded lineage file |
 | `source` | `coreCommit` and `deployCommit` from prepared bootstrap and immutable application image labels |
@@ -58,8 +66,9 @@ image; nginx may use its separately pinned image.
 The DBA query checks physical database/system/postmaster identity, no remaining
 client or WAL-sender backends, the existing nonowner replication runtime role and
 its current least grants, exact clock/settings/policy/activity/lifecycle plus DDL
-subscriptions, and selected slot state. A valid slot is refused rather
-than reset. A lost slot must be inactive, belong to this database and use
+subscriptions, and selected slot state. Missing/lost recovery refuses a valid slot;
+the separately sealed revision action above is the only planned-transition exception.
+A lost slot must be inactive, belong to this database and use
 `wal2json`. The mutation session repeats database/no-backend/slot conditions and
 serializes competing instances of this operator with a session advisory lock.
 That lock is operator serialization, not an old-process/effect fence.
