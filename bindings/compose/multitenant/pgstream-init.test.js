@@ -35,3 +35,51 @@ test('synthetic heartbeat creation and serving grants stay retired; reinstatemen
  await assert.rejects(criterion(text=>{const needle=" await admin.query('GRANT SELECT ON pgstream.webhook_subscriptions TO '+evaluator);";assert(text.includes(needle));return text.replace(needle,needle+"\n await admin.query('GRANT SELECT ON synthetic_clock.nightscout_heartbeat TO '+evaluator);");}),/SYNTHETIC_HEARTBEAT_SQL_RETIRED/);
  await criterion();
 });
+
+test('native default realtime role reads bound raw tail, with isolation control and immutable checkpoints',{
+ skip:!process.env.NS_PGSTREAM_INIT_PG_SOCKET
+},async()=>{
+ // Run from the reviewed core overlay, using an explicitly owned synthetic DB.
+ const {Client}=require('../../node_modules/pg'),scope=require('../../lib/storage/tenant-scope');
+ const f=fixture(true),db=new Client({host:process.env.NS_PGSTREAM_INIT_PG_SOCKET,user:'postgres',database:'postgres'});
+ const A='11111111-1111-4111-8111-111111111111',B='22222222-2222-4222-8222-222222222222';
+ const previous=scope.getTenancyMode();let connection,createdSchema=false,createdRole=false;
+ try{
+  await db.connect();await f.binding.init(f.options);
+  await db.query('CREATE SCHEMA synthetic_work');createdSchema=true;
+  await db.query('CREATE ROLE synthetic_rt LOGIN NOSUPERUSER NOBYPASSRLS');createdRole=true;
+  const catalogue=require('../../lib/migrations/catalogue');
+  const migrations=catalogue.validateCatalogue(require('../../migrations/candidates/postgres-evaluator-work-v2.json'));
+  await db.query('SET search_path=synthetic_work,pg_catalog');
+  for(const migration of migrations)for(const sql of catalogue.renderMigration(migration,'synthetic_work'))await db.query(sql);
+  await db.query('RESET search_path');
+  const table='synthetic_work.tenant_consumer_checkpoint',tail=require('../../lib/storage/storage-event-journal').empty();
+  for(const tenant of [A,B])for(const consumer of ['evaluator-synthetic','evaluator-synthetic-completed'])await db.query(
+   'INSERT INTO '+table+'(tenant_id,consumer,contract_digest,checkpoint,projection,work_enabled) VALUES($1,$2,$3,0,$4,true)',
+   [tenant,consumer,'a'.repeat(64),JSON.stringify(consumer.endsWith('-completed')?[]:[{},tail])]);
+  await db.query('GRANT USAGE ON SCHEMA synthetic_work TO synthetic_rt;GRANT SELECT ON '+table+' TO synthetic_rt');
+  const policy=f.sql.find(row=>row.text.startsWith('CREATE POLICY pgstream_realtime_output ')).text;
+  await db.query(policy);
+  scope.setTenancyMode('multi');
+  const url=new URL('postgres://synthetic_rt@localhost/postgres');url.searchParams.set('host',process.env.NS_PGSTREAM_INIT_PG_SOCKET);
+  connection=await require('../../lib/storage/postgres-connection')({connectionString:url.href,max:1});
+  const config={completedOutput:{namespace:'synthetic_work',consumer:'evaluator-synthetic'},maxRows:3,maxBytes:10000};
+  const reader=require('../../lib/pgstream/storage-events').create({config,connection});
+  assert.deepEqual(await reader.read(A),tail,'DEFAULT_BOUND_RAW_TAIL_READ');
+  assert.equal((await connection.readOnly('SELECT consumer FROM '+table+" WHERE consumer='evaluator-synthetic'")).rows.length,0,'UNBOUND_SCAN_MUST_NOT_READ_INPUT');
+  await scope.withTenant(A,async()=>{
+   assert.equal((await connection.query('SELECT consumer FROM '+table+' WHERE tenant_id=$1 AND consumer=$2',[B,'evaluator-synthetic'])).rows.length,0,'FOREIGN_INPUT_MUST_BE_HIDDEN');
+   await assert.rejects(connection.query('UPDATE '+table+' SET projection=projection WHERE tenant_id=$1',[A]),error=>error.code==='42501');
+  });
+  // Removing the ordinary tenant policy must expose the missing input row:
+  // completed-only metadata policy cannot replace tenant-bound journal access.
+  await db.query('DROP POLICY tenant_consumer_checkpoint_isolation ON '+table);
+  await assert.rejects(reader.read(A),/STORAGE_EVENT_NOT_PROVISIONED/,'ISOLATION_POLICY_CONTROL_MUST_FAIL_RAW_READ');
+  const base=migrations[0].up.find(sql=>sql.startsWith('CREATE POLICY tenant_consumer_checkpoint_isolation '));
+  await db.query('SET search_path=synthetic_work,pg_catalog');await db.query(base);await db.query('RESET search_path');
+  assert.deepEqual(await reader.read(A),tail,'RESTORED_DEFAULT_BOUND_RAW_TAIL_READ');
+ }finally{
+  await connection?.end();scope.setTenancyMode(previous);f.close();
+  try{if(createdSchema)await db.query('DROP SCHEMA synthetic_work CASCADE');if(createdRole)await db.query('DROP ROLE synthetic_rt');}finally{await db.end();}
+ }
+});
