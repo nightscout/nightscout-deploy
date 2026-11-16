@@ -120,7 +120,10 @@ export async function campaign(spec,directory,io,hooks,now=()=>Date.now()/1000){
     const binding=path.join(directory,'binding.actual.json');await fs.writeFile(binding,JSON.stringify(runtimeBinding(spec)),{mode:0o600});
     for(const role of ['sut','driver'])await io.put(role,binding,'/opt/nsperf/input/binding.json');
     const admission=await hooks.admit(spec);need(admission.status==='APPLIED'&&equal(admission.effectiveInbound,spec.sutInbound)&&admission.sutProviderId===spec.hosts.sut.providerId,'PGCAL_EFFECTIVE_PROVIDER_ADMISSION');
-    await io.action('sut','admit');guard();await io.action('sut','deploy',2400000);record('cold-deployment-complete',{port});
+    await io.action('sut','admit');guard();
+    const deployMs=spec.reportMode==='discovery'?(Math.min(spec.expiresAt-540,spec.lastNewPointAt)-now())*1000:2400000;
+    need(Number.isFinite(deployMs)&&deployMs>0,'PGCAL_COLD_SETUP_CUTOFF');
+    await io.action('sut','deploy',deployMs);record('cold-deployment-complete',{port});
     const descriptor=JSON.parse((await io.action('sut','export')).trim());
     need(equal(descriptor.binding,runtimeBinding(spec))&&equal(Object.keys(descriptor.files).sort(),[...TRAFFIC_FILES].sort()),'PGCAL_TRAFFIC_TRANSFER');
     await io.ssh('driver','sudo -n install -d -m 755 -o 1000 -g 1000 /opt/nsperf/traffic');

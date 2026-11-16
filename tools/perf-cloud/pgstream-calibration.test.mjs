@@ -191,3 +191,14 @@ test('discovery partial finishes both sessions while strict nonpass still refuse
   if(mode==='strict')await assert.rejects(call(),/CELL_NONPASS/);else{assert.equal((await call()).verdict,'PARTIAL');assert.deepEqual(events,['transferred','app-finished','gen-finished']);}
  }
 });
+
+test('actual bound discovery sessions spend remaining original work after cold admission',async()=>{
+ let now=1000000;const seen=[];const make=node=>({binding:{reportMode:'discovery',expiresAt:10000},now:()=>now,
+ next:async(kind,ms)=>{seen.push([node,kind,ms]);if(kind==='load-complete')now=9000000;return kind==='cell-complete'?{verdict:'PARTIAL'}:kind==='server-recovery-complete'?{measurement:'NOT_RUN'}:{primed:64};},send:()=>{},finish:async()=>{}});
+ const app=make('app'),gen=make('gen');
+ await coordinateCalibration(app,async()=>gen,async()=>{},()=>{},60,()=>123,'discovery');
+ assert.equal(seen.find(r=>r[1]==='app-ready')[2],123);
+ assert.equal(seen.find(r=>r[1]==='load-complete')[2],8460000);
+ for(const kind of ['client-complete','server-recovery-complete','cell-complete'])assert.equal(seen.find(r=>r[1]===kind)[2],460000);
+ now=9460000;await assert.rejects(coordinateCalibration(app,async()=>gen,async()=>{},()=>{},60,()=>123,'discovery'),/PGCAL_DEADLINE/);
+});

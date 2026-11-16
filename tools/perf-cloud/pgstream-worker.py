@@ -3,6 +3,7 @@
 from contextlib import contextmanager
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import pwd
@@ -173,6 +174,14 @@ def context(final=False,role=None,action=None):
     # The outer controller still deletes exact provider IDs independently of either.
     if not final:need(metadata_text('id')==host['providerId'],'PGCAL_PHYSICAL_PROVIDER_ID')
     return spec
+
+def deploy_seconds(spec,marker,now=None):
+    if spec.get('reportMode','strict')!='discovery':return 2400
+    cutoff=min(spec['expiresAt'],marker['expires_at'])-540
+    if spec.get('lastNewPointAt') is not None:cutoff=min(cutoff,spec['lastNewPointAt'])
+    remaining=cutoff-(time.time() if now is None else now)
+    need(math.isfinite(remaining) and 0<remaining<=10800,'PGCAL_DEADLINE')
+    return remaining
 
 def worker(args,seconds=1800):
     account=pwd.getpwuid(1000);need(account.pw_gid==1000,'PGCAL_RUNTIME_GID')
@@ -433,7 +442,7 @@ def action_main():
         account=pwd.getpwuid(1000)
         os.execvp('setpriv',['setpriv','--reuid','1000','--regid','1000','--init-groups','env','-i','PATH=/usr/local/bin:/usr/bin:/bin','HOME='+account.pw_dir,'LANG=C.UTF-8','DOCKER_HOST=unix:///var/run/docker.sock',*map(str,cellargs('session'))])
     if action in ('deploy','export'):
-        sys.stdout.buffer.write(worker(cellargs(action),2400 if action=='deploy' else 1800));return
+        sys.stdout.buffer.write(worker(cellargs(action),deploy_seconds(spec,read(MARKER)) if action=='deploy' else 1800));return
     if action=='generator-session':
         soft,hard=resource.getrlimit(resource.RLIMIT_NOFILE)
         wanted=spec['driverLimits'].get('requestedWorkerFdSoft',soft)

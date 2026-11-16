@@ -167,14 +167,21 @@ export async function packet(spec,helperRoot,archives){
 // Reuses existing external-runner Session instances and exact-file traffic export.
 // Callers own remote staging/collection and must use the packet source identities.
 export async function coordinateCalibration(app,startGenerator,transfer,beforeLoad=()=>{},loadSeconds=310,coldWaitMs=()=>1800000,reportMode='strict'){
+  const workMs=(session,legacy)=>{
+    // Real Sessions carry the immutable binding and their original clock.
+    // Cold waits keep lastNewPointAt; strict/direct callers keep legacy bounds.
+    if(reportMode!=='discovery'||session.binding?.reportMode!=='discovery')return legacy;
+    const left=session.binding.expiresAt*1000-session.now()-540000;
+    need(Number.isFinite(left)&&left>0,'PGCAL_DEADLINE');return left;
+  };
   await app.next('app-ready',coldWaitMs());const gen=await startGenerator();
   app.send('client-primed',await gen.next('client-primed',coldWaitMs()));
   await app.next('load-ready',coldWaitMs());beforeLoad();gen.send('load-start');
-  await gen.next('load-complete',(loadSeconds+600)*1000);app.send('load-complete');
-  const [server]=await Promise.all([app.next('server-recovery-complete',1000000),gen.next('client-complete',1500000)]);
+  await gen.next('load-complete',workMs(gen,(loadSeconds+600)*1000));app.send('load-complete');
+  const [server]=await Promise.all([app.next('server-recovery-complete',workMs(app,1000000)),gen.next('client-complete',workMs(gen,1500000))]);
   need(equal(server,{measurement:'NOT_RUN'}),'PGCAL_NO_RESTART');
   await transfer();app.send('finish');
-  const result=await app.next('cell-complete',180000);need(result.verdict==='PASS'||(reportMode==='discovery'&&result.verdict==='PARTIAL'),'PGCAL_CELL_NONPASS');
+  const result=await app.next('cell-complete',workMs(app,180000));need(result.verdict==='PASS'||(reportMode==='discovery'&&result.verdict==='PARTIAL'),'PGCAL_CELL_NONPASS');
   gen.send('finish');await Promise.all([app.finish(),gen.finish()]);return result;
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
