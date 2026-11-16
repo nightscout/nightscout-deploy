@@ -182,7 +182,35 @@ def worker(args,seconds=1800):
 def helper():return ROOT/'alignment/tools/mt-bench/remote-pgstream'
 def cellargs(action):return ['python3',helper()/'cell.py',action,'--binding',ROOT/'input/binding.json','--cell',ROOT/'work/cell']
 
-def prepare_arguments(spec):
+def prepare_diagnostic_dependencies(spec,run=worker):
+    """Use the canonical owned lockfile installer before diagnostic admission.
+
+    This is setup work on the same finite SUT, outside application quotas. The
+    adapter then verifies and copies this exact private tree into its cell.
+    """
+    if spec.get('diagnosticResourceProfile') is None:return None
+    directory=ROOT/'work/generator-bootstrap'
+    need(not directory.exists() and not directory.is_symlink(),'PGCAL_DEPENDENCY_TARGET_EXISTS')
+    program=r'''import json,sys
+from pathlib import Path
+root=Path(sys.argv[1]);source=Path(sys.argv[2]);spec=json.loads(sys.argv[3])
+sys.path.insert(0,str(root/'alignment/tools/mt-bench/m7-joined'))
+import adapter as a
+need=a.require
+need(not source.exists() and not source.is_symlink(),'PGCAL_DEPENDENCY_TARGET_EXISTS')
+source.mkdir(mode=0o700)
+a.command(['git','clone','--no-hardlinks','--no-checkout',root/'sources/core.git',source/'core'])
+a.command(['git','-C',source/'core','checkout','--detach',spec['pins']['core']])
+need(a.command(['git','-C',source/'core','rev-parse','HEAD']).strip()==spec['pins']['core'],'PGCAL_DEPENDENCY_SOURCE_HEAD')
+a.setup_generator(source,{'pair':{'core':spec['pins']['core'],'deploy':spec['pins']['deploy']},'imageId':spec['pins']['app']})
+'''
+    run(['python3','-c',program,ROOT,directory,json.dumps(spec)])
+    receipt=directory/'generator-provenance.json'
+    need(receipt.is_file() and not receipt.is_symlink(),'PGCAL_DEPENDENCY_RECEIPT_REQUIRED')
+    return {'root':str(directory/'dependencies'),'receipt':str(receipt),'sha256':digest(receipt)}
+
+
+def prepare_arguments(spec,dependencies=None):
     """The existing cell parser receives the reviewed workload, not worker defaults."""
     cadence=spec['cadence']
     args=cellargs('prepare')+['--core-repo',ROOT/'sources/core.git','--core-commit',spec['pins']['core'],'--deploy-repo',ROOT/'sources/deploy.git','--deploy-commit',spec['pins']['deploy'],'--image',spec['pins']['app'],'--postgres-image',spec['pins']['postgres'],'--receipt',ROOT/'input/receipt.json','--profile','pgstream-sample','--run-purpose','discovery','--completion-contract',spec['completionContract'],'--diagnostics',spec['diagnostics'],'--tenants',str(spec['tenants']),'--replicas','1']
@@ -192,6 +220,9 @@ def prepare_arguments(spec):
         need(spec.get('pgstreamTopology')=='external-service-v1' and spec.get('diagnosticResourceProfile')=='local-diagnostic-external-pgstream-4cpu-8g-v1','PGCAL_EXPLICIT_TOPOLOGY')
         need(spec.get('receipt',{}).get('remotePgstreamTopology')==spec['pgstreamTopology'] and spec.get('receipt',{}).get('remoteDiagnosticResourceProfile')==spec['diagnosticResourceProfile'],'PGCAL_TOPOLOGY_RECEIPT')
         args+=['--pgstream-topology',spec['pgstreamTopology'],'--diagnostic-resource-profile',spec['diagnosticResourceProfile']]
+    if spec.get('diagnosticResourceProfile') is not None:
+        need(isinstance(dependencies,dict) and set(dependencies)=={'root','receipt','sha256'} and re.fullmatch('[a-f0-9]{64}',dependencies.get('sha256','')),'PGCAL_DIAGNOSTIC_DEPENDENCIES_REQUIRED')
+        args+=['--generator-dependencies',dependencies['root'],'--generator-dependency-receipt',dependencies['receipt'],'--generator-dependency-receipt-sha256',dependencies['sha256']]
     args+=['--primer-concurrency',str(spec.get('primerConcurrency',1))]
     return args
 
@@ -380,7 +411,7 @@ def action_main():
     if action=='bootstrap':return bootstrap(spec,role)
     sys.path.insert(0,str(helper()))
     if action=='prepare':
-        args=prepare_arguments(spec)
+        args=prepare_arguments(spec,prepare_diagnostic_dependencies(spec))
         sys.stdout.buffer.write(worker(args));return
     if action=='port':return print(json.dumps({'port':read(ROOT/'work/cell/owner.json')['port']}))
     if action=='admit':

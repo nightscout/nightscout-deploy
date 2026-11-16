@@ -9,7 +9,7 @@ s=importlib.util.spec_from_file_location('topology_worker',HERE/'pgstream-worker
 class Topology(unittest.TestCase):
  def test_exact_selector_forwarding_and_receipt_refusal(self):
   selected={'pins':{'core':'a'*40,'deploy':'b'*40,'app':'sha256:'+'c'*64,'postgres':'sha256:'+'d'*64},'completionContract':'evaluator-work-v2','diagnostics':'on','tenants':2,'cadence':{'warmupSeconds':2,'idleSeconds':2,'loadSeconds':6,'accel':1,'hotFactor':1,'samplerIntervalSeconds':2,'probeEveryMs':1000,'socketsPerTenant':2,'offeredRps':7},'pgstreamTopology':'external-service-v1','diagnosticResourceProfile':'local-diagnostic-external-pgstream-4cpu-8g-v1','receipt':{'remotePgstreamTopology':'external-service-v1','remoteDiagnosticResourceProfile':'local-diagnostic-external-pgstream-4cpu-8g-v1'}}
-  args=list(map(str,worker.prepare_arguments(selected)))
+  args=list(map(str,worker.prepare_arguments(selected,{'root':'/synthetic/dependencies','receipt':'/synthetic/receipt','sha256':'e'*64})))
   for flag,expected in [('--pgstream-topology',selected['pgstreamTopology']),('--diagnostic-resource-profile',selected['diagnosticResourceProfile'])]:self.assertEqual(args[args.index(flag)+1],expected)
   for key in ['pgstreamTopology','diagnosticResourceProfile']:
    broken=dict(selected);del broken[key]
