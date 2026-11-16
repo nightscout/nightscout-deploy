@@ -11,10 +11,10 @@ test('selected pgstream documents, raw-to-wire config and completed-consumer pro
   assert.equal(new URL(wire.target.webhooks.subscriptions.store.url).searchParams.get('pool_max_conns'),'2');
   assert.equal(wire.target.webhooks.notifier.strict_mode,true);
   assert(!wire.source.postgres.replication.plugin.add_tables.includes('tenant_consumer_checkpoint'));
-  assert.equal(wire.source.postgres.replication.plugin.add_tables.split(',').length,6);
-  const heartbeat=require('../../lib/pgstream/evaluator').routes({...evaluator,namespaces:evaluator.postgres.namespaces}).find(row=>row.kind==='heartbeat');
-  assert.equal(heartbeat.schema,evaluator.postgres.namespaces.clock);
-  assert.notEqual(heartbeat.schema,'pgstream','upstream drops internal-schema DML before webhook delivery');
+  assert.equal(wire.source.postgres.replication.plugin.add_tables.split(',').length,5);
+  const routes=require('../../lib/pgstream/evaluator').routes({...evaluator,namespaces:evaluator.postgres.namespaces});
+  assert.equal(routes.some(row=>row.kind==='heartbeat'||row.table==='nightscout_heartbeat'),false,'SYNTHETIC_HEARTBEAT_ROUTE_RETIRED');
+  assert.deepEqual(evaluator.pgstream.bounds,{stepMs:5000,recoveryMs:30000,pendingMs:30000});
   assert.equal(evaluator.pgstream.receiver.url,'http://evaluator:19913/');assert.equal(evaluator.pgstream.receiver.trust,'network');assert.equal(evaluator.pgstream.binaryEnv,undefined);assert.equal(evaluator.pgstream.configFileEnv,undefined);assert.equal(evaluator.pgstream.bounds.maxRestarts,undefined);assert.equal(evaluator.pgstream.bounds.stopMs,undefined);assert.equal(docs.environments.evaluator.NS_PGSTREAM_BINARY,undefined);assert.equal(docs.environments.evaluator.NS_PGSTREAM_CONFIG,undefined);
   assert.equal(evaluator.changeFeed,undefined);assert.equal(realtime.changeFeed,undefined);assert.equal(evaluator.timeIntervalMs,60000);
   assert.equal(realtime.completedOutput.namespace,evaluator.postgres.namespaces.checkpoint);

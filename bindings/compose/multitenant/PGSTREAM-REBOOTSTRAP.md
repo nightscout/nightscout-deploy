@@ -57,8 +57,8 @@ image; nginx may use its separately pinned image.
 
 The DBA query checks physical database/system/postmaster identity, no remaining
 client or WAL-sender backends, the existing nonowner replication runtime role and
-its current least grants, exact clock/settings/policy/activity/lifecycle/output/
-heartbeat subscriptions, and selected slot state. A valid slot is refused rather
+its current least grants, exact clock/settings/policy/activity/lifecycle plus DDL
+subscriptions, and selected slot state. A valid slot is refused rather
 than reset. A lost slot must be inactive, belong to this database and use
 `wal2json`. The mutation session repeats database/no-backend/slot conditions and
 serializes competing instances of this operator with a session advisory lock.
@@ -135,9 +135,11 @@ Next, use the same prepared Compose arguments and canonical image to explicitly
 start **the evaluator and separate pgstream service**, with
 `--no-deps --no-build --pull never`. Keep all other effect-serving roles stopped.
 Do not use `demo.sh up`: that command starts other effects and performs
-demonstration setup. The evaluator first establishes received heartbeat/stream
-coverage, then verifies and scans current tenant metadata and commits bootstrap
-reconciliation. Its indexed pending/due work reconstructs clinical progress
+demonstration setup. The evaluator validates the actual source role, slot and
+subscriptions at startup, then verifies and scans current tenant metadata and
+commits bootstrap reconciliation. The application creates no synthetic heartbeat
+row or periodic pulse. The platform owns the separate Go process lifecycle; an
+idle silent feed has no application-level bounded detection claim. Its indexed pending/due work reconstructs clinical progress
 without resetting persisted ages, versions, output revision, notification identity
 or due clocks.
 

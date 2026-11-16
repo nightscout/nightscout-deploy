@@ -6,12 +6,12 @@ function fixture(realtime=false,change=text=>text){
  const binarySha256=crypto.createHash('sha256').update(fs.readFileSync(binary)).digest('hex'),commands=[],sql=[];
  const module={exports:{}};vm.runInThisContext('(function(require,module,exports){'+change(fs.readFileSync(file,'utf8'))+'\n})',{filename:file})(name=>name==='node:child_process'?{execFileSync:(...args)=>commands.push(args)}:load(name),module,module.exports);
  const layout={roles:{pgstream:'synthetic_stream',evaluator:'synthetic_eval',...(realtime?{realtime:'synthetic_rt'}:{})},namespaces:{clock:'synthetic_clock',eval_checkpoint:'synthetic_work',...(realtime?{rt_checkpoint:'synthetic_delivery'}:{})}};
- const routes=['clock','settings','policy','activity','lifecycle','heartbeat'].map(kind=>({schema:'synthetic_'+kind,table:'source_'+kind,kind}));
+ const routes=['clock','settings','policy','activity','lifecycle'].map(kind=>({schema:'synthetic_'+kind,table:'source_'+kind,kind}));
  const config={consumer:'evaluator-synthetic',pgstream:{slot:'synthetic_slot',receiver:{url:'http://synthetic-intake:19913/',trust:'network',bindHost:'0.0.0.0',maxBytes:16777216,timeoutMs:5000}}};
  return {binding:module.exports,commands,sql,options:{admin:{query:async(text,values)=>{sql.push({text,values});return{rows:[]};}},adminURL:'postgres://synthetic@localhost/synthetic_test',layout,config,binary,binarySha256,routes,workColumns:['work_version','delivery_revision'],realtimeColumns:['output_received'],realtimeConsumers:['realtime-synthetic']},close:()=>fs.rmSync(root,{recursive:true,force:true})};
 }
 test('maintained deployment is the default and retired selection refuses',()=>{const f=fixture();try{assert.equal(f.binding.enabled({}),true);assert.equal(f.binding.enabled({NS_PGSTREAM:'1'}),true);assert.throws(()=>f.binding.enabled({NS_PGSTREAM:'0'}),/LEGACY_MODE_RETIRED/);}finally{f.close();}});
-test('same canonical initializer supports evaluator-only native fixtures and exact six-route wire',async()=>{const f=fixture();try{await f.binding.init(f.options);assert.equal(f.commands.length,1);assert.equal(f.commands[0][0],f.options.binary);assert(!f.sql.some(row=>row.text.includes('pgstream_realtime_')));const inserts=f.sql.filter(row=>row.text.startsWith('INSERT INTO pgstream.webhook_subscriptions'));assert.equal(inserts.length,7);assert(inserts.every(row=>row.values[0]==='http://synthetic-intake:19913/pgstream'),'EXTERNAL_INTAKE_TARGET_REQUIRED');assert(!inserts.some(row=>row.values[2]==='tenant_consumer_checkpoint'));const wire=f.binding.wire(f.options.config,'postgres://synthetic@localhost/synthetic_test',{subscriptionsPort:19915,routes:f.options.routes});assert.equal(wire.target.webhooks.subscriptions.server.address,'127.0.0.1:19915');assert.equal(wire.source.postgres.replication.plugin.add_tables.split(',').length,6);}finally{f.close();}});
+test('same canonical initializer supports evaluator-only native fixtures and exact five-route wire',async()=>{const f=fixture();try{await f.binding.init(f.options);assert.equal(f.commands.length,1);assert.equal(f.commands[0][0],f.options.binary);assert(!f.sql.some(row=>row.text.includes('pgstream_realtime_')));const inserts=f.sql.filter(row=>row.text.startsWith('INSERT INTO pgstream.webhook_subscriptions'));assert.equal(inserts.length,6);assert(inserts.every(row=>row.values[0]==='http://synthetic-intake:19913/pgstream'),'EXTERNAL_INTAKE_TARGET_REQUIRED');assert(!inserts.some(row=>row.values[2]==='tenant_consumer_checkpoint'));const wire=f.binding.wire(f.options.config,'postgres://synthetic@localhost/synthetic_test',{subscriptionsPort:19915,routes:f.options.routes});assert.equal(wire.target.webhooks.subscriptions.server.address,'127.0.0.1:19915');assert.equal(wire.source.postgres.replication.plugin.add_tables.split(',').length,5);}finally{f.close();}});
 test('wrong binary pin refuses before any CLI or SQL effects and restored pin enables typed realtime setup',async()=>{const f=fixture(true);try{await assert.rejects(f.binding.init({...f.options,binarySha256:'0'.repeat(64)}),/BINARY_PIN_REFUSED/);assert.equal(f.commands.length,0);assert.equal(f.sql.length,0);await f.binding.init(f.options);assert(f.sql.some(row=>row.text.includes('FOR UPDATE TO "synthetic_rt"')&&row.text.includes("consumer IN ('realtime-synthetic')")));assert(!f.sql.some(row=>/FOR ALL/.test(row.text)));}finally{f.close();}});
 
 test('control: old loopback subscription target fails the external intake oracle, restored target passes',async()=>{
@@ -21,3 +21,17 @@ test('control: old loopback subscription target fails the external intake oracle
 });
 
 test('invalid receiver contract refuses before the privileged initializer or SQL',async()=>{const f=fixture();try{f.options.config.pgstream.receiver.url='http://synthetic-intake:19913/not-the-root';await assert.rejects(f.binding.init(f.options));assert.equal(f.commands.length,0);assert.equal(f.sql.length,0);}finally{f.close();}});
+
+test('synthetic heartbeat creation and serving grants stay retired; reinstatement control is red',async()=>{
+ async function criterion(change=text=>text){const f=fixture(false,change);try{
+  await f.binding.init(f.options);
+  assert.equal(f.sql.some(row=>row.text.includes('nightscout_heartbeat')),false,'SYNTHETIC_HEARTBEAT_SQL_RETIRED');
+  assert.equal(f.sql.some(row=>/\bDROP\b/.test(row.text)),false,'NO_IMPLICIT_LEGACY_TABLE_REMOVAL');
+  const inputs=f.sql.filter(row=>row.text.startsWith('INSERT INTO pgstream.webhook_subscriptions'));
+  assert.equal(inputs.length,6,'FIVE_INPUT_ROUTES_PLUS_DDL');
+  assert.deepEqual(f.binding.configuration({prefix:'synthetic',roles:{pgstream:'synthetic_stream'}}).bounds,{stepMs:5000,recoveryMs:30000,pendingMs:30000});
+ }finally{f.close();}}
+ await criterion();
+ await assert.rejects(criterion(text=>{const needle=" await admin.query('GRANT SELECT ON pgstream.webhook_subscriptions TO '+evaluator);";assert(text.includes(needle));return text.replace(needle,needle+"\n await admin.query('GRANT SELECT ON synthetic_clock.nightscout_heartbeat TO '+evaluator);");}),/SYNTHETIC_HEARTBEAT_SQL_RETIRED/);
+ await criterion();
+});

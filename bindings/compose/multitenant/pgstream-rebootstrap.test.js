@@ -2,7 +2,7 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),crypto=require('node:crypto'),{spawnSync}=require('node:child_process');
 const recovery=require('./pgstream-rebootstrap');
 const digest=value=>crypto.createHash('sha256').update(value).digest('hex');
-const routes=[['clock','tenant_write_clock'],['settings','tenant_settings'],['policy','tenant_operator_policy'],['control','tenant_activity'],['control','tenant_lifecycle_windows'],['clock','nightscout_heartbeat']].map(([schema,table])=>({schema,table}));
+const routes=[['clock','tenant_write_clock'],['settings','tenant_settings'],['policy','tenant_operator_policy'],['control','tenant_activity'],['control','tenant_lifecycle_windows']].map(([schema,table])=>({schema,table}));
 function fixture(action='create-missing'){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'pgstream-rebootstrap-')),state=path.join(root,'state'),deployment=path.join(root,'deployment');fs.mkdirSync(deployment);fs.mkdirSync(path.join(state,'bootstrap'),{recursive:true});fs.mkdirSync(path.join(state,'evaluator'));fs.mkdirSync(path.join(state,'pgstream'));
  const config={consumer:'synthetic',postgres:{namespaces:{clock:'clock',checkpoint:'checkpoint'}},trustedWorker:{settings:'settings',operatorPolicy:'policy',activity:'control'},pgstream:{slot:'selected_slot',streamRole:'stream_reader',receiver:{url:'http://synthetic-intake:19913/',trust:'network',bindHost:'0.0.0.0',maxBytes:16777216,timeoutMs:5000}}};
@@ -81,6 +81,7 @@ const controls={
  'active-old-backend':f=>{f.data.row.otherClients=1;},
  'runtime-owner-privilege':f=>{f.data.row.role.nonowner=false;},
  'changed-subscription':f=>{f.data.row.subscriptions.pop();},
+ 'retired-heartbeat-subscription':f=>{f.data.row.subscriptions.push({url:f.data.row.subscriptions[0].url,schema_name:'clock',table_name:'nightscout_heartbeat',event_types:['D','I','U']});},
  'wrong-physical-database':f=>{f.data.row.systemIdentifier='999';},
  'active-slot':f=>{f.data.row.slot.active=true;},
  'valid-slot':f=>{f.data.row.slot.status='reserved';f.data.row.slot.restart='0/123';},
@@ -88,7 +89,7 @@ const controls={
 };
 const refusedCodes={
  'stream-autorestart-not-disabled':'AUTORESTART','stream-left-running':'PROCESS_ALIVE','stream-config-mount-missing':'STREAM_CONFIG_MOUNT','wire-exposed-to-evaluator':'WIRE_EXPOSED_TO_EVALUATOR',
- 'autorestart-not-disabled':'AUTORESTART','unrecorded-compose-lineage':'COMPOSE_CHANGED','stopped-but-PID-present':'PROCESS_ALIVE','live-but-paused':'PROCESS_ALIVE','wrong-image':'CONTAINER_CHANGED','new-process-incarnation':'CONTAINER_CHANGED','unknown-project-process':'COHORT_CHANGED','changed-compose-hash':'CONTAINER_CHANGED','changed-current-compose-declaration':'COMPOSE_CHANGED','active-old-backend':'OLD_BACKEND_PRESENT','runtime-owner-privilege':'RUNTIME_GRANTS','changed-subscription':'SUBSCRIPTIONS','wrong-physical-database':'BACKEND_CHANGED','active-slot':'SLOT_NOT_LOST','valid-slot':'SLOT_NOT_LOST','wrong-plugin':'SLOT_NOT_LOST'
+ 'autorestart-not-disabled':'AUTORESTART','unrecorded-compose-lineage':'COMPOSE_CHANGED','stopped-but-PID-present':'PROCESS_ALIVE','live-but-paused':'PROCESS_ALIVE','wrong-image':'CONTAINER_CHANGED','new-process-incarnation':'CONTAINER_CHANGED','unknown-project-process':'COHORT_CHANGED','changed-compose-hash':'CONTAINER_CHANGED','changed-current-compose-declaration':'COMPOSE_CHANGED','active-old-backend':'OLD_BACKEND_PRESENT','runtime-owner-privilege':'RUNTIME_GRANTS','changed-subscription':'SUBSCRIPTIONS','retired-heartbeat-subscription':'SUBSCRIPTIONS','wrong-physical-database':'BACKEND_CHANGED','active-slot':'SLOT_NOT_LOST','valid-slot':'SLOT_NOT_LOST','wrong-plugin':'SLOT_NOT_LOST'
 };
 for(const [name,breakIt] of Object.entries(controls))test('callable command refuses '+name+' before mutation',()=>{const f=fixture('replace-lost');try{breakIt(f);const {q,data}=cli(f);assert.notEqual(q.status,0);assert.equal(q.stderr.trim(),'PGSTREAM_REBOOTSTRAP_'+refusedCodes[name]);assert.equal(data.mutations,0);}finally{f.cleanup();}});
 test('slot operation repeats no-client, backend, inactive/lost and operator exclusion guards at mutation boundary',()=>{const f=fixture('replace-lost');try{const sql=recovery.slotSQL(f.p);for(const guard of ['pg_try_advisory_lock','pg_stat_activity','system_identifier','NOT active',"plugin='wal2json'","wal_status='lost'",'\\quit 3'])assert.ok(sql.includes(guard),guard);}finally{f.cleanup();}});
