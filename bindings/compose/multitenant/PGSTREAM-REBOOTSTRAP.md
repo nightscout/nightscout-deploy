@@ -3,8 +3,11 @@
 The host operator command replaces one explicitly selected missing or lost
 `wal2json` replication slot in an existing Compose deployment. It never runs
 `pgstream init`, provisions a schema, changes runtime grants, clears a checkpoint
-or starts a service. The existing supervisor continues to fail closed with
-`PGSTREAM_REBOOTSTRAP_REQUIRED`. This command is separate from that supervisor.
+or starts a service. The evaluator refuses observed slot loss with
+`PGSTREAM_REBOOTSTRAP_REQUIRED` and exits. The independent platform-managed
+pgstream service also refuses a missing slot during ordinary startup; its restart
+policy does not recreate the slot. This host command is the explicit recovery
+operation.
 
 Source controls reproduce command-level refusal and success on a synthetic
 platform. Actual Docker/PostgreSQL populated recovery is **UNMEASURED** until the
@@ -145,7 +148,7 @@ incarnations in the operator evidence. Reopen the remaining cohort only through
 its existing admission/restore protocols, with explicit operator disposition.
 
 Full initial DBA setup is not a recovery alternative: it creates tables,
-subscriptions and policies. Silent supervisor slot recreation is not an
+subscriptions and policies. Silent runtime slot recreation is not an
 alternative either: it would skip the explicit stream-coverage/reconciliation
 boundary. This operation preserves those boundaries instead of manufacturing
 completion counters or extending product deadlines.
