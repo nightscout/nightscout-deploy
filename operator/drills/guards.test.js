@@ -74,3 +74,62 @@ test('the pre-check takes a tenant identifier only', () => {
   const result = run('precheck.sh', ["x'; SELECT 1; --"], d.env);
   assert.equal(result.status, 64); assert.match(result.stderr, /PRECHECK_USAGE/);
 });
+
+for (const [setting, code] of [
+  ['NS_CONNECTION_BUDGET=1', 'DRILL_SELECTED_PROFILE_UNSUPPORTED'],
+  ['NS_EVALUATOR_WORKERS=2', 'DRILL_SELECTED_PROFILE_UNSUPPORTED'],
+  ['NS_REALTIME_WORKERS=2', 'DRILL_SELECTED_PROFILE_UNSUPPORTED'],
+  ['NS_API_REPLICAS=2', 'DRILL_REPLICA_PROFILE_UNSUPPORTED'],
+  ['NS_DEMO_PROJECT=recovery-drills-another', 'DRILL_PREPARED_PROJECT_CHANGED']
+]) test('refuses unsupported recovery cohort before Docker: ' + setting, () => {
+  const d = deployment();
+  fs.appendFileSync(path.join(d.env.NS_DRILL_CORE, 'deploy/multitenant/.env'), setting + '\n');
+  for (const action of ['up', 'roles-up', 'roles-restart']) {
+    const result = run('stack.sh', [action], d.env);
+    assert.equal(result.status, code === 'DRILL_PREPARED_PROJECT_CHANGED' ? 64 : 78);
+    assert.match(result.stderr, new RegExp(code));
+  }
+});
+
+test('ordinary up and restart include the independent stream and omit the retired feed reader', () => {
+  const d=deployment(), bin=path.join(d.root,'bin'), folder=path.join(d.env.NS_DRILL_CORE,'deploy/multitenant'), log=path.join(d.root,'calls');
+  fs.mkdirSync(bin);fs.writeFileSync(path.join(bin,'docker'),'#!/bin/sh\nprintf "%s\\n" "$*" >> "$DRILL_CALLS"\n',{mode:0o755});
+  for(const name of ['build.js','publish-primer.js'])fs.writeFileSync(path.join(folder,name),'process.exit(0);');
+  for(const action of ['up','roles-up','roles-restart']){
+    fs.writeFileSync(log,'');const result=run('stack.sh',[action],{...d.env,PATH:bin+':'+d.env.PATH,DRILL_CALLS:log});assert.equal(result.status,0,result.stderr);
+    const calls=fs.readFileSync(log,'utf8');assert(!calls.includes('feed-reader'),'retired service');
+    assert.match(calls,/up -d .*realtime evaluator pgstream tenant-admin ui nginx/,'stream recovery cohort');
+    if(action==='roles-restart')assert.match(calls,/stop nginx ui tenant-admin pgstream evaluator realtime api admin/,'old stream stopped before restart');
+  }
+});
+
+const {qualify}=require('./container/pgstream-recovery.cjs');
+function recovered(){
+  const expected=[{tenant:'a',date:10,value:50},{tenant:'b',date:20,value:159}];
+  const rows=expected.map(x=>({tenant:x.tenant,work_observed:[8,1,2,3],work_completed:[8,1,2,3],work_pending_at:null,work_due_at:null,work_completed_at:100,last_stamp:8,settings:1,policy:2,activity:3,restore:4,phase:'active',output_restore_generation:4,output_identity:'current',input:{ready:true},input_checkpoint:8,output:{result:{now:100},frame:{sgvs:[{mills:x.date,mgdl:x.value}]}}}));
+  rows[1].work_due_at=300;const before=structuredClone(rows);before[0].work_due_at=90;
+  return {expected,rows,before};
+}
+for(const [name,breakIt]of Object.entries({
+  'missing tenant':x=>x.rows.pop(),
+  'duplicate tenant':x=>x.rows[1]=structuredClone(x.rows[0]),
+  'lost neighbor future due':x=>x.rows[1].work_due_at=null,
+  'foreign tenant':x=>x.rows[0].tenant='foreign',
+  'uncompleted observed work':x=>x.rows[0].work_observed[0]=9,
+  'pending work':x=>x.rows[0].work_pending_at=1,
+  'physical source ahead':x=>x.rows[0].last_stamp=9,
+  'restore generation changed':x=>x.rows[0].restore=5,
+  'stale accepted input':x=>x.rows[0].input_checkpoint=7,
+  'input not ready':x=>x.rows[0].input.ready=false,
+  'stale clinical output':x=>x.rows[1].output.frame.sgvs[0].mgdl=120,
+  'old authority':x=>x.rows[0].output_identity='old',
+  'due not executed':x=>x.rows[0].work_completed_at=89,
+  'due not retired':x=>x.rows[0].work_due_at=90
+}))test('recovery oracle red/restored: '+name,()=>{
+ const x=recovered();assert.equal(qualify(x.rows,x.before,x.expected),true);const broken=structuredClone(x);breakIt(broken);
+ assert.throws(()=>qualify(broken.rows,broken.before,broken.expected));assert.equal(qualify(x.rows,x.before,x.expected),true);
+});
+
+ test('recovery retains later genuine due work without forcing timer classification',()=>{const x=recovered();x.rows[0].work_due_at=200;assert.equal(qualify(x.rows,x.before,x.expected),true);});
+
+ test('unchanged clinical content retains its body timestamp while durable due completion progresses',()=>{const x=recovered();x.rows[0].output.result.now=10;x.rows[0].work_due_at=200;assert.equal(qualify(x.rows,x.before,x.expected),true);});

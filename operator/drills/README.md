@@ -78,3 +78,55 @@ private operator and lab-client services; they call the shipping `restore.js`, `
 The drills read the lifecycle tables as the database administrator, for inspection only. A tenant is
 reopened and an operation record is cleared only through the shipping operator command
 (`restore.js inspect|resume|clear-operations`), never by a statement written here.
+
+## Populated stream coverage recovery
+
+`drill-pgstream-recovery.sh` uses the current ordinary profile: two synthetic
+registry tenants, one API, one realtime role, one evaluator and the independent
+pgstream service. `stack.sh up`, `roles-up` and `roles-restart` include that stream
+service. These commands refuse selected connection admission, evaluator/realtime
+pools and multiple API replicas before changing roles; those profiles need their
+own per-process admission procedure. `verify-profile` checks this boundary and the
+prepared image labels. The prepared project must match `NS_DRILL_PROJECT`.
+
+Run this drill only on a disposable project prepared as above. It replaces that
+project's synthetic entries through its API and drops its selected slot. The core
+checkout needs matching development dependencies, including `socket.io-client`;
+the client dependencies and drill are mounted read-only into disposable operator
+containers. They do not change the application image.
+
+```bash
+# NS_DRILL_IMAGE must be the actual immutable sha256 image ID.
+operator/drills/drill-pgstream-recovery.sh
+```
+
+The drill writes two known clinical values through the API, stops the evaluator
+and pgstream, and commits another API write while stream coverage is absent. It
+then disables restart policies and stops the whole application cohort. It records
+exact identities, approved Compose files, effective image environment and original
+policies, refuses a wrong physical database identity, and runs the existing
+[slot operator](../../bindings/compose/multitenant/PGSTREAM-REBOOTSTRAP.md).
+Only the exact evaluator and pgstream containers start during reconciliation.
+
+Before reopening, the independent database snapshot must cover both tenants:
+physical clinical/control clocks equal completed work, accepted input is ready and
+current, pending work is empty, the expected clinical values are present, and
+current restore generation and unchanged authority match. The original genuine
+due instant must be crossed by durable completion and retired or replaced by a
+later due instant. Unchanged clinical content may retain its prior body timestamp
+and revision. A later real deadline remains scheduled; no TIME-counter or
+executor-label requirement is imposed. Other effects must remain stopped.
+
+After this proof, the drill restores the exact recorded policies and deliberately
+starts the same serving containers. Fresh per-tenant credentials must read the
+current API value and receive the matching clinical frame through the maintained
+ingress, with no foreign clinical value. A refusal leaves application policies
+disabled and effects stopped. Do not replay a partial slot operation blindly.
+Private originals live under `<state>/drill/`; an existing capture is refused,
+so retain it before another fresh rehearsal. Use the explicit `destroy` command
+only for the owned project when the rehearsal ends.
+
+This qualifies the selected populated slot recovery journey. It does not qualify
+in-place revision upgrade, whole-deployment backup/rollback, logical restore,
+changed owner authority, every client namespace, provider sends, WAL exhaustion
+or capacity. Runtime integration owns full candidate acceptance.

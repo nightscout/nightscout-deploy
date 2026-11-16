@@ -14,8 +14,8 @@ platform. An isolated single-host PostgreSQL/Vault/evaluator/pgstream project
 also reproduces the canonical-image CLI, followed by overdue clinical work and
 a second tenant's startup write. The
 [alignment measurement record](https://github.com/bewest/rag-nightscout-ecosystem-alignment/blob/main/reports/tenancy/switch-over-finish-2026-11-15/operational-rebootstrap.json)
-binds the exact source, image, controls, retained evidence and limits. Recovery of
-the full prepared deployment, WAL exhaustion and capacity remain **UNMEASURED**.
+binds the exact source, image, controls, retained evidence and limits. The current ordinary-profile rehearsal below adds populated serving/client recovery;
+other deployment profiles, WAL exhaustion and capacity remain **UNMEASURED**.
 The command's successful state means only that the slot exists and effect-serving
 containers remain stopped. Clinical reconciliation and reopening effects require
 the independent checks below.
@@ -161,3 +161,67 @@ boundary. This operation preserves those boundaries instead of manufacturing
 completion counters or extending product deadlines.
 
 Plans and receipts contain only identity metadata, file paths/hashes and selected policy metadata. They contain no private environment, config document, URL or credential contents. Receipt container fields are selected explicitly rather than echoing an arbitrary raw Docker inspection.
+
+## Current ordinary-profile rehearsal
+
+The maintained [populated recovery drill](../../../operator/drills/README.md#populated-stream-coverage-recovery)
+composes the stopped-slot operation with current ordinary-profile reconciliation
+and authorized API/WebSocket convergence. It binds an explicit private effective
+environment file when startup supplied the immutable image through the
+environment. The helper sanitizes inherited Docker variables: an ambient image
+pin alone is insufficient to reproduce the stopped cohort's Compose hashes.
+Do not weaken the hash guard to accommodate a different effective Compose view.
+
+Recovery obligations concern current durable work and clinical content. The typed
+checkpoint can advance completion and the next due instant while retaining an
+unchanged clinical body and revision. Requiring every recovery to increment a
+revision, change an executor label, replace its body timestamp, or clear every
+future due instant would reject supported deduplication and scheduling behavior.
+Keep the independent physical/input/completed/authority checks and real deadline
+progress before deliberate reopening.
+
+### Captured ordinary-profile result — 2026-11-16
+
+**Reproduced: PASS** on core
+`db9fcc33bc36c3c800873bda7d9ad10c6daa322a`, prepared deployment
+`9bb971c8704d2436e9a5ca1a3850511cc7b7cc6a`, application image
+`sha256:859d96ecd3992f755565778b04157fff60d56a6c1e6ef3184e32f248ebea214e`.
+The separately mounted operator drill SHA256 was
+`d87048d3342b9ccc42ba60163a6e19d20801b30dc1a92ff1d5b5aa6e78627133`.
+This result does not inherit earlier image qualification.
+
+| Actual operation | Result |
+|---|---|
+| Populated API write during evaluator/stream stop | New clinical value remained uncompleted before recovery and matched physical, accepted and completed state afterward |
+| Wrong physical database identity | `PGSTREAM_REBOOTSTRAP_BACKEND_CHANGED`; no slot created |
+| Existing canonical slot helper | `SLOT_RECREATED_EFFECTS_STOPPED`; application cohort still stopped |
+| Reconciliation before serving reopen | Both tenants current, no pending work, unchanged authority and restore generation |
+| Original recent-SGV deadline | Durable completion crossed it; later genuine retention deadline preserved; neighbor's future deadline retained |
+| Deliberate same-container restart | Recorded evaluator `on-failure:3` and pgstream `unless-stopped` policies restored |
+| Current authorized viewers | Both API reads and WebSocket clinical frames matched their tenant's expected value through maintained ingress |
+
+Retained evidence identifier: `operator-recovery-stream-20261116-final`.
+Private original `pgstream-reconciled.json` SHA256:
+`c9c1902334878d0d8ef9ac5df84f8e000eb69a1f35d5e9bfdc2edb1b2eb891a1`;
+final command log SHA256:
+`9b2217181d39d9ef6efa0b59977a5abfd44ff7900dbd0ece3c4b2658d5236607`.
+Earlier fixture identity, environment-composition and overconstrained due-oracle
+failures remain retained with their original attribution. They are not semantic
+product failures or replacement passing runs. See the drill's scope and controls
+for the unsupported upgrade/restore/authority-change cases.
+
+Focused controls reproduced 30 wrapper/oracle checks and 31 installed-helper
+checks. Removing pgstream from the wrapper's restart cohort made the wrapper
+control fail; restoring it passed. The helper fixture now includes all six raw
+clinical routes as well as metadata, so missing clinical subscriptions reach the
+specific `PGSTREAM_REBOOTSTRAP_SUBSCRIPTIONS` refusal instead of being masked by
+an earlier stale-wire fixture failure. The helper itself is unchanged.
+
+After the deployed run, the oracle was strengthened to reject duplicate tenant
+coverage and a dropped neighbor deadline. That validator, SHA256
+`5a464a74018f6c1a31e44a6d618efff03acef0c4872cda62c7557c84cecb06ec`,
+passed against the unchanged captured before/reconciled snapshots, with separate
+broken/restored controls. It did not trigger another deployment campaign.
+The owned containers, volumes, networks and published port were removed; private
+originals remain retained. The host was shared with other independently owned
+runs; this is functional recovery evidence, not a performance measurement.
