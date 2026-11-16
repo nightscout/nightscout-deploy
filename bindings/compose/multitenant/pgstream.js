@@ -30,7 +30,7 @@ function wire(config,runtimeURL,{subscriptionsPort=19914,routes}={}){
  const streamURL=new URL(runtimeURL);streamURL.searchParams.set('sslmode','disable');runtimeURL=streamURL.href;
  const storeURL=new URL(runtimeURL);storeURL.searchParams.set('pool_max_conns','2');
  return {source:{postgres:{url:runtimeURL,mode:'replication',replication:{replication_slot:config.pgstream.slot,plugin:{add_tables:selected.map(row=>row.schema+'.'+row.table).join(',')}}}},
-   target:{webhooks:{subscriptions:{store:{url:storeURL.href,cache:{enabled:false}},server:{address:'127.0.0.1:'+subscriptionsPort}},notifier:{worker_count:1,strict_mode:true,client_timeout:2000,constant:{max_retries:1,interval:50}}}}};
+   target:{webhooks:{subscriptions:{store:{url:storeURL.href,cache:{enabled:false}},server:{address:'127.0.0.1:'+subscriptionsPort}},notifier:{worker_count:1,strict_mode:true,client_timeout:2000,backoff:{constant:{max_retries:1,interval:50}}}}}};
 }
 async function init({admin,adminURL,layout,config,binary='/usr/local/bin/pgstream',binarySha256,routes,workColumns,realtimeColumns,realtimeConsumers=['realtime-compose-demo']}){
  const normalized={...config,namespaces:config.postgres?.namespaces||config.namespaces},targetURL=receiverURL(config);
