@@ -10,13 +10,13 @@ function configure(docs,layout){
  const evaluator=docs.configs.evaluator,realtime=docs.configs.realtime;
  delete evaluator.changeFeed;delete realtime.changeFeed;
  evaluator.pgstream=configuration(layout);
- evaluator.timeIntervalMs=60000; // single-site heartbeat cadence; exact due instants remain independent
+ evaluator.timeIntervalMs=60000; // time-only work retains its exact durable due instants
  realtime.completedOutput={namespace:layout.namespaces.eval_checkpoint,consumer:evaluator.consumer};
  delete docs.environments.evaluator.NS_PGSTREAM_BINARY;delete docs.environments.evaluator.NS_PGSTREAM_CONFIG;
 }
 function configuration(layout){
  return {receiver:{url:'http://evaluator:19913/',trust:'network',bindHost:'0.0.0.0',maxBytes:16777216,timeoutMs:5000},slot:layout.prefix+'_pgstream',streamRole:layout.roles.pgstream,
-   bounds:{heartbeatMs:1000,stallMs:5000,stepMs:5000,recoveryMs:30000,pendingMs:30000}};
+   bounds:{stepMs:5000,recoveryMs:30000,pendingMs:30000}};
 }
 function receiverURL(config){
  const receiver=require('../../lib/server/internal-api/transport').options(config.pgstream.receiver);
@@ -37,7 +37,7 @@ async function init({admin,adminURL,layout,config,binary='/usr/local/bin/pgstrea
  const product=()=>require('../../lib/pgstream/evaluator');
  const selected=routes||product().routes(normalized),expected=binarySha256||product().BINARY_SHA256;
  if(!path.isAbsolute(binary)||!expected||require('node:crypto').createHash('sha256').update(fs.readFileSync(binary)).digest('hex')!==expected)throw new Error('PGSTREAM_BINARY_PIN_REFUSED');
- const q=require('./config').quote,role=q(layout.roles.pgstream),evaluator=q(layout.roles.evaluator),table=q(layout.namespaces.eval_checkpoint)+'.tenant_consumer_checkpoint',heartbeat=q(layout.namespaces.clock)+'.nightscout_heartbeat';
+ const q=require('./config').quote,role=q(layout.roles.pgstream),evaluator=q(layout.roles.evaluator),table=q(layout.namespaces.eval_checkpoint)+'.tenant_consumer_checkpoint';
  const columns=workColumns||require('../../lib/pgstream/checkpoint').WORK_COLUMNS;
  if(!Array.isArray(columns)||!columns.length||columns.some(name=>!/^[a-z][a-z0-9_]*$/.test(name)))throw new TypeError('Explicit typed work columns required');
  const hasRealtime=layout.roles.realtime!==undefined;
@@ -53,8 +53,6 @@ async function init({admin,adminURL,layout,config,binary='/usr/local/bin/pgstrea
   execFileSync(binary,['init','-c',file],{stdio:['ignore','pipe','pipe'],timeout:30000});
  }finally{fs.rmSync(directory,{recursive:true,force:true});}
  await admin.query('ALTER ROLE '+role+' REPLICATION NOINHERIT CONNECTION LIMIT 4');
- await admin.query('CREATE TABLE '+heartbeat+'(id integer PRIMARY KEY CHECK(id=1),revision bigint NOT NULL CHECK(revision>=0))');
- await admin.query('INSERT INTO '+heartbeat+' VALUES(1,0)');
  await admin.query('CREATE TABLE pgstream.webhook_subscriptions(url text,schema_name text,table_name text,event_types text[],PRIMARY KEY(url,schema_name,table_name))');
  await admin.query('REVOKE ALL ON SCHEMA pgstream FROM PUBLIC');
  await admin.query('REVOKE ALL ON ALL TABLES IN SCHEMA pgstream FROM PUBLIC');
@@ -63,7 +61,6 @@ async function init({admin,adminURL,layout,config,binary='/usr/local/bin/pgstrea
  await admin.query('GRANT SELECT ON pgstream.webhook_subscriptions TO '+role);
  await admin.query('GRANT USAGE ON SCHEMA pgstream TO '+evaluator);
  await admin.query('GRANT SELECT ON pgstream.webhook_subscriptions TO '+evaluator);
- await admin.query('GRANT SELECT,UPDATE(revision) ON '+heartbeat+' TO '+evaluator);
  await admin.query('CREATE POLICY pgstream_evaluator_metadata ON '+table+' TO '+evaluator+" USING (consumer='"+consumer+"') WITH CHECK (consumer='"+consumer+"')");
  await admin.query('GRANT UPDATE('+columns.join(',')+') ON '+table+' TO '+evaluator);
  if(hasRealtime){

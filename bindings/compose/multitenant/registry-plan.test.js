@@ -109,7 +109,7 @@ test('maintained capture and typed completed delivery replace the retired feed r
   }
   assert.equal(Object.hasOwn(realtime,'pageSize'),false);assert.equal(Object.hasOwn(realtime,'socketOrderDomains'),false);
   const routes=require('../../lib/pgstream/evaluator').routes({...evaluator,namespaces:evaluator.postgres.namespaces});
-  assert.deepEqual(routes.map(row=>row.kind).sort(),['activity','clock','heartbeat','lifecycle','policy','settings']);
+  assert.deepEqual(routes.map(row=>row.kind).sort(),['activity','clock','lifecycle','policy','settings']);
   assert.equal(routes.some(row=>row.table==='tenant_consumer_checkpoint'),false,'completed output is handed off after commit rather than recaptured');
   const typed=docs.admin.config.provisioning.checkpoints.find(row=>row.consumer===evaluator.consumer+'-completed');
   const receipt=docs.admin.config.provisioning.checkpoints.find(row=>row.consumer===realtime.consumer);
@@ -139,10 +139,10 @@ test('placement publication has readonly control metadata and registry enumerati
   for(const sql of grants){assert.ok(!/INSERT|UPDATE|DELETE|REPLICATION|tenant_lifecycle_backend_birth|ALL TABLES/.test(sql),sql);}
 });
 
-test('maintained capture health bounds are distinct from evaluator due work and realtime delivery retries',()=>{
+test('maintained startup bounds and durable clinical pending bounds have no synthetic heartbeat',()=>{
   const {docs}=generated(),evaluator=docs.configs.evaluator,realtime=docs.configs.realtime;
   const bounds=evaluator.pgstream.bounds;
-  assert(bounds.heartbeatMs>0&&bounds.stallMs>=bounds.heartbeatMs);
+  assert.deepEqual(Object.keys(bounds).sort(),['pendingMs','recoveryMs','stepMs']);
   assert(bounds.stepMs>0&&bounds.recoveryMs>=bounds.stepMs&&bounds.pendingMs>0);
   assert.equal(evaluator.timeIntervalMs,60000);
   assert.equal(Object.hasOwn(realtime,'pgstream'),false,'one evaluator-owned input capture');

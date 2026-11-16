@@ -53,7 +53,7 @@ accepted normal effects; unchanged A and the changed B payload must not repeat
 early. Cancelled superseded rows are classified separately, accepted clears and
 extra live/pending effects refuse, socket fanout matches those typed effects, and
 the new B frame must carry its exact upload timestamp. The verdict must finish
-before both original durable repeat deadlines; it never changes heartbeat cadence.
+before both original durable repeat deadlines; it does not reschedule those deadlines.
 
 Initial client diagnostics record bounded typed connect/error/disconnect/reconnect,
 subscribe ACK, root-authorize ACK and initial-frame metadata without credentials
