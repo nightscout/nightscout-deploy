@@ -64,8 +64,8 @@ plaintext endpoint credentials. The private restore operator uses the same exact
 serving participants; the synthetic seed list selects demonstration tenants.
 The separate pgstream service owns capture through its registered stream login.
 The platform restarts that worker independently; its wire credentials are mounted
-only in the pgstream container. The evaluator accepts the private stream at the
-sole admitted intake endpoint and commits durable evaluation work and hands completed output to realtime
+only in the pgstream container. Evaluators accept the private stream at their
+admitted endpoints, commit durable evaluation work and hand completed output to realtime
 over the private service boundary. Clinical reads stay on the evaluator's
 registered storage connection; realtime reads typed completed output and current
 presentation/control metadata. Partial setup is refused; source
@@ -424,6 +424,40 @@ Its private once-only journal refuses a repeated qualification run. It performs
 no container lifecycle, SQL seeding, membership or settings mutation. A skipped
 native test is UNMEASURED, not deployment acceptance.
 
+
+## Fixed native evaluator processes
+
+Prepare fresh synthetic state with a core revision that accepts
+`NS_PGSTREAM_EVALUATOR_PROCESSES`. Set `NS_EVALUATOR_WORKERS` during preparation
+to opt in to a fixed roster of 1–8 processes. Leaving it unset keeps the
+standalone evaluator. This example provisions two synthetic tenants before
+starting their two evaluator processes.
+
+```bash
+NS_EVALUATOR_WORKERS=2 ./demo.sh prepare
+./demo.sh config
+./demo.sh build
+./demo.sh up
+```
+
+Each process owns a nonempty tenant slice selected by core's SHA-256 modulo
+rule. Preparation refuses a seed count that leaves a slice empty. Set
+`NS_DEMO_TENANTS` during preparation when the selected count requires more
+seed tenants. The generated overlay binds both counts. Each evaluator has its
+own private listener and readiness identity, one CPU and 1 GiB of memory.
+The producer has one CPU and 512 MiB. Evaluator and operation pools are
+bounded at four and eight connections per process respectively. PostgreSQL
+keeps one persistent producer slot and permits bounded snapshot recovery.
+
+The producer registers every receiver for every input table and transaction
+boundary. It advances the source checkpoint only after all receivers acknowledge
+a cohort. An evaluator can finish accepted work while another is held.
+An unavailable receiver can stall later intake for every slice. Restart the
+same receiver with its prepared configuration so the producer can replay
+from the retained slot. Replanning receiver membership requires coordinated
+downtime and a fresh synthetic deployment through this binding. Live tenant
+admission, populated slot rebootstrap, and the restore demo require separate
+qualification for fixed process rosters.
 
 ## Explicit pgstream slot recovery
 

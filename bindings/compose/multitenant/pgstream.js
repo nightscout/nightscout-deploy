@@ -1,12 +1,11 @@
 'use strict';
-// One platform-managed maintained pgstream service targets the admitted intake.
+// One platform-managed maintained pgstream service targets the admitted receiver roster.
 // DBA setup is separate from both serving roles and the streaming worker.
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const {execFileSync}=require('node:child_process');
 function enabled(env=process.env){if(env.NS_PGSTREAM!==undefined&&env.NS_PGSTREAM!=='1')throw new Error('PGSTREAM_LEGACY_MODE_RETIRED');return true;}
 function configure(docs,layout){
  enabled();
- if(require('./evaluator-workers').selection())throw new Error('PGSTREAM_EVALUATOR_PARTITION_UNQUALIFIED');
  const evaluator=docs.configs.evaluator,realtime=docs.configs.realtime;
  delete evaluator.changeFeed;delete realtime.changeFeed;
  evaluator.pgstream=configuration(layout);
@@ -24,7 +23,10 @@ function receiverURL(config){
  if(!receiver.url)throw new TypeError('Explicit network intake receiver required');
  return new URL('pgstream',receiver.url).href;
 }
-function descriptor(layout){return {consumer:'evaluator-compose-demo',namespaces:{...Object.fromEntries(['entries','treatments','devicestatus','profile','food','activity'].map(domain=>[domain,layout.namespaces[domain]])),clock:layout.namespaces.clock,checkpoint:layout.namespaces.eval_checkpoint},trustedWorker:{settings:layout.namespaces.display_settings,operatorPolicy:layout.namespaces.operator_policy,activity:layout.namespaces.control},pgstream:configuration(layout)};}
+function descriptor(layout,selected){
+ const workers=selected&&require('./evaluator-workers').roster(selected);
+ const processAssignment=workers&&{ordinal:workers.findIndex(worker=>worker.service==='evaluator'),receivers:workers.map(worker=>worker.url)};
+ return {...(processAssignment?{processAssignment}:{}),consumer:'evaluator-compose-demo',namespaces:{...Object.fromEntries(['entries','treatments','devicestatus','profile','food','activity'].map(domain=>[domain,layout.namespaces[domain]])),clock:layout.namespaces.clock,checkpoint:layout.namespaces.eval_checkpoint},trustedWorker:{settings:layout.namespaces.display_settings,operatorPolicy:layout.namespaces.operator_policy,activity:layout.namespaces.control},pgstream:configuration(layout)};}
 function wire(config,runtimeURL,{subscriptionsPort=19914,routes}={}){
  if(!Number.isSafeInteger(config.pgstream?.transactionRows)||config.pgstream.transactionRows<1||config.pgstream.transactionRows>1000000||!Number.isSafeInteger(config.pgstream?.receiver?.maxBytes??16777216)||(config.pgstream?.receiver?.maxBytes??16777216)<1)throw new TypeError('Explicit positive transaction row/byte bounds required');
  if(!Number.isSafeInteger(subscriptionsPort)||subscriptionsPort<1024||subscriptionsPort>65535)throw new TypeError('Explicit subscriptions port required');
@@ -38,7 +40,10 @@ function wire(config,runtimeURL,{subscriptionsPort=19914,routes}={}){
    target:{webhooks:{subscriptions:{store:{url:storeURL.href,cache:{enabled:true,refresh_interval:60}},server:{address:'127.0.0.1:'+subscriptionsPort}},notifier:{worker_count:1,strict_mode:true,transaction_batch:{max_rows:config.pgstream.transactionRows,max_bytes:config.pgstream?.receiver?.maxBytes??16777216},client_timeout:2000,backoff:{constant:{max_retries:1,interval:50}}}}}};
 }
 async function init({admin,adminURL,layout,config,binary='/usr/local/bin/pgstream',binarySha256,routes,workColumns,realtimeColumns,realtimeConsumers=['realtime-compose-demo']}){
- const normalized={...config,namespaces:config.postgres?.namespaces||config.namespaces},targetURL=receiverURL(config);
+ const normalized={...config,namespaces:config.postgres?.namespaces||config.namespaces};
+ const receiver=config.pgstream.receiver;
+ const profile=config.processAssignment===undefined?undefined:require('../../lib/pgstream/assigned-worker').processProfile(JSON.stringify(config.processAssignment),receiver);
+ const targets=profile?profile.receivers.map(url=>receiverURL({pgstream:{receiver:{...receiver,url}}})):[receiverURL(config)];
  const product=()=>require('../../lib/pgstream/evaluator');
  const selected=routes||product().routes(normalized),expected=binarySha256||product().BINARY_SHA256;
  if(!path.isAbsolute(binary)||!expected||require('node:crypto').createHash('sha256').update(fs.readFileSync(binary)).digest('hex')!==expected)throw new Error('PGSTREAM_BINARY_PIN_REFUSED');
@@ -57,7 +62,9 @@ async function init({admin,adminURL,layout,config,binary='/usr/local/bin/pgstrea
   const file=path.join(directory,'init.yaml');fs.writeFileSync(file,JSON.stringify({source:{postgres:{url:connection.href,replication:{replication_slot:config.pgstream.slot}}}}),{mode:0o600});
   execFileSync(binary,['init','-c',file],{stdio:['ignore','pipe','pipe'],timeout:30000});
  }finally{fs.rmSync(directory,{recursive:true,force:true});}
- await admin.query('ALTER ROLE '+role+' REPLICATION NOINHERIT CONNECTION LIMIT 5');
+ // Keep the standalone bound and allow bounded identification/export and
+ // cancellation connections for the extra receiver processes.
+ await admin.query('ALTER ROLE '+role+' REPLICATION NOINHERIT CONNECTION LIMIT '+(5+2*(targets.length-1)));
  await admin.query('CREATE TABLE pgstream.webhook_subscriptions(url text,schema_name text,table_name text,event_types text[],PRIMARY KEY(url,schema_name,table_name))');
  await admin.query('REVOKE ALL ON SCHEMA pgstream FROM PUBLIC');
  await admin.query('REVOKE ALL ON ALL TABLES IN SCHEMA pgstream FROM PUBLIC');
@@ -78,7 +85,8 @@ async function init({admin,adminURL,layout,config,binary='/usr/local/bin/pgstrea
   await admin.query('CREATE POLICY pgstream_realtime_metadata ON '+realtimeTable+' FOR SELECT TO '+realtime+' USING (consumer IN ('+selectedConsumers+'))');
   await admin.query('CREATE POLICY pgstream_realtime_delivery_update ON '+realtimeTable+' FOR UPDATE TO '+realtime+' USING (consumer IN ('+selectedConsumers+')) WITH CHECK (consumer IN ('+selectedConsumers+'))');
  }
- for(const route of [...selected,{schema:'',table:'',kind:'schema'}])await admin.query('INSERT INTO pgstream.webhook_subscriptions VALUES($1,$2,$3,$4)',[
-   targetURL,route.schema,route.table,route.kind==='schema'?['B','C','M']:['I','U','D']]);
+ const subscribed=[...selected,{schema:'',table:'',kind:'schema'}];
+ for(const target of targets)for(const route of subscribed)await admin.query('INSERT INTO pgstream.webhook_subscriptions VALUES($1,$2,$3,$4)',[
+   target,route.schema,route.table,route.kind==='schema'?['B','C','M']:['I','U','D']]);
 }
 module.exports={enabled,configure,configuration,descriptor,receiverURL,wire,init};

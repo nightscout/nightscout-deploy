@@ -93,3 +93,28 @@ test('fixed deployment subscriptions use the maintained warm cache and bounded r
  assert.throws(()=>criterion(text=>text.replace('cache:{enabled:true,refresh_interval:60}','cache:{enabled:false}')),/FIXED_SUBSCRIPTION_CACHE_REQUIRED/);
  criterion();
 });
+
+test('K2 installs one strict producer with every receiver, route and transaction boundary',async()=>{
+ const f=fixture();
+ try{
+  const receivers=['http://synthetic-intake-2:19913/','http://synthetic-intake:19913/'];
+  f.options.config.processAssignment={ordinal:1,receivers};
+  await f.binding.init(f.options);
+  const inserts=f.sql.filter(row=>row.text.startsWith('INSERT INTO pgstream.webhook_subscriptions')).map(row=>row.values);
+  const expected=receivers.flatMap(url=>[
+   ...f.options.routes.map(route=>[new URL('pgstream',url).href,route.schema,route.table,['I','U','D']]),
+   [new URL('pgstream',url).href,'','',['B','C','M']]
+  ]);
+  assert.deepEqual(inserts,expected);
+  assert.equal(f.commands.length,1);
+  assert(f.sql.some(row=>row.text.endsWith('REPLICATION NOINHERIT CONNECTION LIMIT 7')));
+  const wire=f.binding.wire(f.options.config,f.options.adminURL,{routes:f.options.routes});
+  assert.equal(wire.source.postgres.replication.replication_slot,f.options.config.pgstream.slot);
+  assert.equal(wire.target.webhooks.notifier.strict_mode,true);
+  const seen=f.sql.length;
+  f.options.config.processAssignment={ordinal:0,receivers};
+  await assert.rejects(f.binding.init(f.options),/EVALUATOR_PROCESS_ASSIGNMENT_CONFIG/);
+  assert.equal(f.sql.length,seen);
+  assert.equal(f.commands.length,1);
+ }finally{f.close();}
+});

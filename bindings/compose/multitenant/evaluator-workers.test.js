@@ -1,51 +1,135 @@
 'use strict';
-const { test } = require('node:test'), assert = require('node:assert/strict');
+
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const workers = require('./evaluator-workers'), plan = require('./config');
-function selected(fn) {
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
+const workers = require('./evaluator-workers');
+const plan = require('./config');
+const binding = require('./pgstream');
+
+function generated(count) {
   const before = process.env.NS_EVALUATOR_WORKERS;
-  process.env.NS_EVALUATOR_WORKERS = '3';
-  try { return fn(); } finally { if(before===undefined)delete process.env.NS_EVALUATOR_WORKERS;else process.env.NS_EVALUATOR_WORKERS=before; }
+  if (count === undefined) delete process.env.NS_EVALUATOR_WORKERS;
+  else process.env.NS_EVALUATOR_WORKERS = String(count);
+  try {
+    const layout = plan.layout();
+    const urls = Object.fromEntries(Object.keys(layout.roles).map(kind =>
+      [kind, 'postgres://' + layout.roles[kind] + ':' + crypto.randomBytes(20).toString('hex') + '@postgres/nightscout_compose_test']));
+    return { layout, docs: plan.documents({ layout, urls, tokens: [], publicKeys: [], managementKeys: [], vaultAddress: 'https://vault:8200' }) };
+  } finally {
+    if (before === undefined) delete process.env.NS_EVALUATOR_WORKERS;
+    else process.env.NS_EVALUATOR_WORKERS = before;
+  }
 }
-function generated() {
-  const layout = plan.layout(), urls = Object.fromEntries(Object.keys(layout.roles).map(kind => [kind, 'postgres://' + layout.roles[kind] + ':' + crypto.randomBytes(20).toString('hex') + '@postgres/nightscout_compose_test']));
-  return { layout, urls, docs: plan.documents({ layout, urls, tokens: [], publicKeys: [], managementKeys: [], vaultAddress: 'https://vault:8200', registryMode: true }) };
+
+function documentSet(docs) {
+  return { contract: 1, processes: Object.keys(docs.configs).map(name => ({
+    name, roles: [name.replace(/-\d+$/, '')], environment: docs.environments[name],
+    files: {
+      '/run/ns-config/config.json': docs.configs[name],
+      '/run/ns-config/operation.json': docs.operations[name],
+      ...(name === 'api' ? { '/run/ns-config/evaluator-metadata.json': docs.configs.evaluator } : {})
+    }
+  })).concat({
+    name: 'admin', roles: ['admin'], environment: docs.admin.environment,
+    files: { '/run/ns-config/config.json': docs.admin.config }
+  }) };
 }
-test('fixed evaluator pool is opt-in and strictly bounded independently of other roles',()=>{
-  assert.equal(workers.selection({}),null);
-  for(const raw of ['0','17','2x','',2])assert.throws(()=>workers.selection({NS_EVALUATOR_WORKERS:raw}));
-  assert.deepEqual(workers.services(workers.selection({NS_EVALUATOR_WORKERS:'3'})),['evaluator','evaluator-2','evaluator-3']);
+
+function checkCore(documents) {
+  const result = spawnSync(process.execPath, [path.join(__dirname, '../../bin/nightscout.js'), 'plan', 'check', '-'],
+    { input: JSON.stringify(documents), encoding: 'utf8', timeout: 10000 });
+  assert.ifError(result.error);
+  return { status: result.status, report: JSON.parse(result.stdout) };
+}
+
+function validateFiles(docs) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ns-native-plan-'));
+  try {
+    for (const [role, config] of Object.entries(docs.configs)) {
+      const target = path.join(directory, role);
+      fs.mkdirSync(target);
+      fs.writeFileSync(path.join(target, 'config.json'), JSON.stringify(config));
+      fs.writeFileSync(path.join(target, 'operation.json'), JSON.stringify(docs.operations[role]));
+      if (role === 'api') fs.writeFileSync(path.join(target, 'evaluator-metadata.json'), JSON.stringify(docs.configs.evaluator));
+    }
+    plan.validateFiles(directory, docs);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+test('opt-in evaluator processes require an explicit bounded count and a nonempty seed in every slice', () => {
+  assert.equal(workers.selection({}), null);
+  for (const raw of ['0', '9', '17', '2x', '', 2]) assert.throws(() => workers.selection({NS_EVALUATOR_WORKERS:raw}));
+  assert.deepEqual(workers.services(workers.selection({NS_EVALUATOR_WORKERS:'3'})), ['evaluator','evaluator-2','evaluator-3']);
+  assert.throws(() => workers.assertSeed({ workers: 2 }, [plan.A]), /every evaluator slice/);
+  workers.assertSeed({ workers: 2 }, [plan.A, plan.B]);
 });
-test('maintained pgstream deployment explicitly refuses a partitioned evaluator before runtime files or database work',()=>selected(()=>{
-  assert.throws(()=>generated(),/PGSTREAM_EVALUATOR_PARTITION_UNQUALIFIED/);
-}));
-test('pure evaluator roster planning retains idle members, exact private instances and distinct operator capability',()=>{
-  const {layout,urls,docs}=generated();
-  layout.namespaces.pool='synthetic_pool';
-  urls.pool_member='postgres://synthetic_member:synthetic@postgres/nightscout_compose_test';
-  urls.pool_operator='postgres://synthetic_operator:synthetic@postgres/nightscout_compose_test';
-  // Explicit metadata planner only. This output is not an admitted product
-  // configuration: maintained deployment rejects partition selection above.
-  const expanded=workers.expand(docs,{layout,urls},{workers:3});
-  assert.deepEqual(workers.services(expanded.evaluatorPool),['evaluator','evaluator-2','evaluator-3']);
-  assert.deepEqual(expanded.operations.api.participants.filter(row=>row.roles.includes('evaluator')).map(row=>row.id),['evaluator-1','evaluator-2','evaluator-3']);
-  assert.deepEqual(expanded.remote.filter(row=>row.roles.includes('evaluator')).map(row=>row.endpoint.socketPath),['/run/ns-ipc/evaluator-1.sock','/run/ns-ipc/evaluator-2.sock','/run/ns-ipc/evaluator-3.sock']);
-  assert.deepEqual(workers.services(expanded.evaluatorPool).map(role=>expanded.environments[role].MULTITENANT_POOL_EVALUATOR_ORDINAL),['0','1','2']);
-  assert.deepEqual(expanded.admin.config.pools.kinds,['evaluator']);assert.equal(expanded.admin.environment.NS_POOL_OPERATOR_PG,urls.pool_operator);
-  for(const role of workers.services(expanded.evaluatorPool)){
-    assert.equal(expanded.environments[role].MULTITENANT_POOL_EVALUATOR_DATABASE_URL,urls.pool_member);
-    assert.notEqual(expanded.environments[role].MULTITENANT_POOL_EVALUATOR_DATABASE_URL,urls.pool_operator);
-    assert(expanded.operations[role].participants.find(peer=>peer.id===expanded.operations[role].participantId).namespaces.includes('synthetic_pool'));
+
+test('standalone, K1 and K2 compose documents pass the exact core plan and deployment checks', () => {
+  for (const count of [undefined, 1, 2]) {
+    const { layout, docs } = generated(count);
+    assert.equal(Object.hasOwn(layout.namespaces, 'pool'), false);
+    assert.equal(Object.hasOwn(layout.roles, 'pool_member'), false);
+    assert.equal(Object.hasOwn(docs.admin.config, 'pools'), false);
+    assert.equal(Object.hasOwn(docs.admin.environment, 'NS_POOL_OPERATOR_PG'), false);
+    const selected = docs.evaluatorWorkers;
+    const roster = workers.roster(selected);
+    const descriptor = binding.descriptor(layout, selected);
+    const receivers = roster.map(worker => worker.url);
+    assert.deepEqual(receivers, [...receivers].sort());
+    assert.equal(docs.configs.realtime.completedOutput.consumer, docs.configs.evaluator.consumer);
+    for (const [ordinal, {service, id, url, socket}] of roster.entries()) {
+      const env = docs.environments[service], cfg = docs.configs[service], op = docs.operations[service];
+      assert.equal(cfg.pgstream.receiver.url, url);
+      assert.equal(cfg.pgstream.generation, docs.configs.evaluator.pgstream.generation);
+      assert.equal(cfg.pgstream.slot, descriptor.pgstream.slot);
+      assert.equal(cfg.consumer, descriptor.consumer);
+      const raw = env.NS_PGSTREAM_EVALUATOR_PROCESSES;
+      if (!selected) {
+        assert.equal(raw, undefined);
+        assert.equal(op.participantId, 'evaluator');
+        assert.equal(descriptor.processAssignment, undefined);
+        continue;
+      }
+      assert.deepEqual(JSON.parse(raw), {ordinal, receivers});
+      assert.deepEqual(descriptor.processAssignment.receivers, receivers);
+      assert.equal(op.participantId, id);
+      assert.equal(env.NS_SERVE_INTERNAL_SOCKET, socket);
+      assert.equal(docs.remote.find(peer => peer.id === id).endpoint.socketPath, socket);
+      assert.equal(env.NS_EVALUATOR_INTERNAL_SOCKET, undefined);
+      assert(!Object.keys(env).some(name => name.startsWith('MULTITENANT_POOL_')));
+    }
+    validateFiles(docs);
+    const result = checkCore(documentSet(docs));
+    assert.equal(result.status, 0, JSON.stringify(result.report));
+    assert.equal(result.report.ok, true);
   }
 });
-test('operator uses existing private protocol, refuses implicit resize and count outside fixed roster',async()=>{
-  const {configure}=require('./evaluator-pool');let desired=null,calls=0;
-  const client={async getPool(){return {desired};},async setPoolMembers(body){calls++;desired={members:body.members};return {outcome:'applied',desired};}};
-  const config={evaluatorPool:{workers:3}};
-  assert.equal((await configure(config,'initialize',undefined,client)).outcome,'applied');
-  await configure(config,'initialize',undefined,client);assert.equal(calls,1);
-  await configure(config,'set','2',client);
-  await assert.rejects(configure(config,'initialize',undefined,client),{code:'EVALUATOR_POOL_ALREADY_CONFIGURED'});
-  await assert.rejects(configure(config,'set','4',client),{code:'EVALUATOR_POOL_MEMBERS_OUTSIDE_ROSTER'});
-  assert.equal(calls,2);
+
+test('wrong ordinal, missing participant and divergent generation fail before deployment and the restored plan passes', () => {
+  const baseline = generated(2).docs;
+  const badOrdinal = structuredClone(baseline);
+  const env = badOrdinal.environments.evaluator;
+  const configured = JSON.parse(env.NS_PGSTREAM_EVALUATOR_PROCESSES);
+  env.NS_PGSTREAM_EVALUATOR_PROCESSES = JSON.stringify({...configured, ordinal: 1 - configured.ordinal});
+  const result = checkCore(documentSet(badOrdinal));
+  assert.equal(result.status, 1, JSON.stringify(result.report));
+  const reports = result.report.processes.filter(process => !process.ok);
+  assert.deepEqual(reports.map(process => process.name), ['evaluator']);
+  assert.deepEqual(reports[0].findings.map(finding => finding.code), ['PLAN_CONFIGURATION_REFUSED']);
+  assert.throws(() => validateFiles(badOrdinal), /invalid explicit evaluator preview configuration/);
+  const badPeer = structuredClone(baseline);
+  badPeer.operations.api.participants = badPeer.operations.api.participants.filter(row => row.id !== 'evaluator-2');
+  assert.throws(() => validateFiles(badPeer), /evaluator participant coverage mismatch/);
+  const badGeneration = structuredClone(baseline);
+  badGeneration.configs['evaluator-2'].pgstream.generation = 'b'.repeat(32);
+  assert.throws(() => validateFiles(badGeneration), /native source or assignment mismatch/);
+  validateFiles(baseline);
+  assert.equal(checkCore(documentSet(baseline)).status, 0);
 });

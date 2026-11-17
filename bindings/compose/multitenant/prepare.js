@@ -40,6 +40,8 @@ function prepare (args) {
   const realtime = require('./realtime-workers'), selectedRealtime = realtime.selection();
   const diagnostics = require('./diagnostics').selection();
   const evaluator = require('./evaluator-workers'), selectedEvaluator = evaluator.selection();
+  const evaluatorSeed = selectedEvaluator && require('./config').tenantIds();
+  if (selectedEvaluator) evaluator.assertSeed(selectedEvaluator, evaluatorSeed);
   const leaseSessions = require('./registry-plan').leaseSessions();
   require('./edge').policy();
   const clinicalIsolation = require('./clinical-isolation').selection();
@@ -86,13 +88,13 @@ function prepare (args) {
   }
   if (selectedEvaluator) {
     for (const service of evaluator.services(selectedEvaluator).slice(1)) fs.mkdirSync(path.join(state, service), {mode: 0o700});
-    write(path.join(state, 'compose.evaluator.yaml'), evaluator.compose(selectedEvaluator, path.join(base, 'compose.yaml')));
+    write(path.join(state, 'compose.evaluator.yaml'), evaluator.compose(selectedEvaluator, path.join(base, 'compose.yaml'), evaluatorSeed.length));
   }
   write(path.join(state, 'edge/nginx.conf'), require('./edge').render(fs.readFileSync(path.join(base, 'nginx.compose.conf'), 'utf8'), { replicas: apiReplicas, realtime: !!selectedRealtime }));
   write(path.join(state, 'compose.replicas.yaml'), replicas.compose(apiReplicas, path.join(base, 'compose.yaml'))+require('./networks').render(selectedNetworks));
   write(path.join(base, '.env'), 'NS_PGSTREAM='+(require('./pgstream').enabled()?'1':'0')+'\nNS_DEPLOY_COMMIT=' + deployCommit + '\nNS_DEMO_PROJECT=' + options.project + '\nNS_API_REPLICAS=' + apiReplicas + '\n' +
     (selectedRealtime ? 'NS_REALTIME_WORKERS=' + selectedRealtime.workers + '\nNS_REALTIME_SHARDS=' + selectedRealtime.shards + '\n' : '') +
-    (selectedEvaluator ? 'NS_EVALUATOR_WORKERS=' + selectedEvaluator.workers + '\n' : '') +
+    (selectedEvaluator ? 'NS_EVALUATOR_WORKERS=' + selectedEvaluator.workers + '\nNS_PGSTREAM_WAL_SENDERS=' + Math.max(4, selectedEvaluator.workers + 2) + '\n' : '') +
     (connectionBudget?'NS_CONNECTION_BUDGET=1\n':'') + 'NS_M7_DIAGNOSTICS=' + diagnostics.enabled + '\nNS_M7_DIAGNOSTICS_INTERVAL_MS=' + diagnostics.interval + '\n' +
     require('./clinical-isolation').envLines(clinicalIsolation) +
     'NS_OPERATION_LEASE_SESSIONS=' + leaseSessions + '\nNS_DEMO_STATE=' + state + '\nNS_DEMO_BIND=' + options.bind + '\nNS_DEMO_PORT=' + options.port + '\nNS_SOURCE_COMMIT=' + source + '\n');

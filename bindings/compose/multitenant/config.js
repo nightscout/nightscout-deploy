@@ -38,7 +38,7 @@ function catalogues() {
   require('./pgstream').enabled();
   const domains = require('../../lib/server/serve/postgres-domains');
   const successors = require('../../lib/server/tenant-socket-order-port').catalogues;
-  return {...(require('./evaluator-workers').selection() ? {pool:require('../../lib/pool-membership/postgres-candidate.json')} : {}),...Object.fromEntries([...clinical,'settings'].map(name => [name,successors[name] || domains.get(name).catalogue])),
+  return {...Object.fromEntries([...clinical,'settings'].map(name => [name,successors[name] || domains.get(name).catalogue])),
     authorization:require('../../lib/tenant-authorization/postgres-candidate.json'), secrets:require('../../lib/secrets/postgres-candidate.json'),
     legacy:require('../../lib/secrets/legacy-credentials-candidate.json'), access:require('../../lib/tenant-authorization/access-candidate.json'),
     clock:require('../../migrations/candidates/postgres-write-clock-v1.json'), rt_checkpoint:require('../../migrations/candidates/postgres-realtime-output-v2.json'),
@@ -55,7 +55,6 @@ function layout(prefix = 'nsdemo') {
   quote(prefix);
   if (prefix.length > 24) throw new TypeError('Deployment prefix too long');
   const names = ['pgstream','api','readiness','realtime','evaluator','alarm','suppression','outbox','owner_writer','owner_reader','owner_credentials','root_writer','operator','provisioner','display_reader','activity_reader','placement_publisher','ownership_operator','connector_writer','management_issuer','ui_registry',
-    ...(require('./evaluator-workers').selection() ? ['pool_member','pool_operator'] : []),
     ...serviceRoles.map(name=>'lifetime_'+name.replace('-','_'))];
   return {prefix,owner:prefix+'_owner',managementAuthorityOwner:prefix+'_management_authority',namespaces:Object.fromEntries(Object.keys(catalogues()).map(name=>[name,prefix+'_'+name])),
     roles:Object.fromEntries(names.map(name=>[name,prefix+'_'+name])),mount:prefix+'_transit'};
@@ -111,7 +110,8 @@ function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress,
   const remote=participants.map(peer=>({id:peer.id,roles:peer.roles,namespaces:peer.namespaces,endpoint:{socketPath:socketOf(peer.id),maxBytes:peer.maxMessageBytes,timeoutMs:peer.timeoutMs}}));
   let docs = {configs,environments,operations,admission,remote,locks,ui:{version:1,tenants:aliases.map(aliases=>({aliases,theme:'default'}))}};
   docs = require('./registry-plan').expand(docs,{layout:l,urls,vaultAddress});
-  return require('./evaluator-workers').expand(require('./realtime-workers').expand(require('./replicas').expand(docs), realtimePlacement), {layout:l,urls});
+  const evaluatorWorkers = require('./evaluator-workers');
+  return evaluatorWorkers.expand(require('./realtime-workers').expand(require('./replicas').expand(docs), realtimePlacement), evaluatorWorkers.selection());
 }
 function lifecycle(l) {
   const aliases={rt_checkpoint:'checkpoint',eval_checkpoint:'evaluator_checkpoint',alarm:'alarm_suppression',outbox:'notification_outbox',display_settings:'tenant_settings'};
@@ -141,11 +141,7 @@ function validateFiles(directory, docs) {
     const internal=require('../../lib/server/internal-api/listener-config').resolve([productRole],env);
     const parsed=parsers[productRole](env,internal),operation=require('../../lib/server/serve/operation-cohort-config').load(env,internal);
     const participant=operation.participants.find(row=>row.id===operation.participantId);
-    if(docs.evaluatorPool){
-      const expected=require('./evaluator-workers').services(docs.evaluatorPool),peers=operation.participants.filter(row=>row.roles.includes('evaluator'));
-      if(peers.length!==expected.length||expected.some((service,index)=>!peers.some(row=>row.id==='evaluator-'+(index+1)&&row.endpoint.socketPath==='/run/ns-ipc/evaluator-'+(index+1)+'.sock')))throw new TypeError('Deployment evaluator pool coverage mismatch');
-      if(productRole==='evaluator'&&(!parsed.partition.partitioned||parsed.partition.ordinal!==expected.indexOf(role)))throw new TypeError('Deployment evaluator ordinal mismatch');
-    }
+    require('./evaluator-workers').validate(docs, role, parsed, operation);
     if(JSON.stringify(namespaces(parsed).filter(name => name !== operation.namespace).sort())!==JSON.stringify(participant.namespaces))throw new TypeError('Deployment participant namespace mismatch');
     if (operation.placement) {
       const map = operation.placement.current(), peers = operation.participants.filter(row => row.roles.includes('realtime'));

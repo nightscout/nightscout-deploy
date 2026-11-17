@@ -21,6 +21,7 @@ test('selected launcher applies the same two fixed-roster overlays and starts ev
     for(const call of calls){assert.equal(call[call.indexOf('--project-name')+1],'nightscout-multitenant-demo');assert.ok(call.includes(path.join(state,'compose.replicas.yaml')));assert.ok(call.includes(path.join(state,'compose.realtime.yaml')));assert.ok(call.includes(path.join(state,'compose.evaluator.yaml')));}
     const final=calls.at(-1);for(const service of ['realtime','realtime-2','socket-edge','evaluator','evaluator-2','evaluator-3','pgstream','tenant-admin','ui','nginx'])assert.ok(final.includes(service),service);
     assert.ok(calls.find(call=>call.includes('api')&&call.includes('api-2')),'both API instances start before final roles');
+    assert(!calls.some(call=>call.some(argument=>argument.endsWith('evaluator-pool.js'))),'native launch never configures pool membership');
     fs.appendFileSync(path.join(dir,'.env'),'NS_DEMO_PROJECT=ns-admission-0123456789abcdef\n');
     execFileSync('bash',['demo.sh','config'],options);
     const selected=JSON.parse(fs.readFileSync(record,'utf8').trim().split('\n').at(-1));assert.equal(selected[selected.indexOf('--project-name')+1],'ns-admission-0123456789abcdef');

@@ -13,7 +13,7 @@ if [ -f .env ]; then
   [ -f "$replica_file" ] && compose+=(-f "$replica_file")
   evaluator_file="$(dirname "$replica_file")/compose.evaluator.yaml"
   if [[ "$(<.env)" == *NS_EVALUATOR_WORKERS=* ]]; then
-    [ -f "$evaluator_file" ] || { echo 'Selected evaluator pool overlay missing' >&2; exit 1; }
+    [ -f "$evaluator_file" ] || { echo 'Selected native evaluator overlay missing' >&2; exit 1; }
     compose+=(-f "$evaluator_file")
   fi
   evaluator_services=$(node -e 'const fs=require("node:fs");const source=Object.fromEntries(fs.readFileSync(".env","utf8").trim().split("\n").map(line=>{const i=line.indexOf("=");return [line.slice(0,i),line.slice(i+1)];}));console.log(require("./evaluator-workers").services(require("./evaluator-workers").selection(source)).join(" "));')
@@ -59,7 +59,6 @@ case "${1:-}" in
     "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 90 admin
     "${compose[@]}" --profile ops run --rm primer node deploy/multitenant/prime.js provision
     "${compose[@]}" --profile ops run --rm --no-deps bootstrap node deploy/multitenant/commission-restore.js
-    "${compose[@]}" --profile ops run --rm --no-deps primer node deploy/multitenant/evaluator-pool.js initialize
     replicas=$(node -e 'const fs=require("node:fs"),lines=fs.readFileSync(".env","utf8").split("\n");const n=Number((lines.find(x=>x.startsWith("NS_API_REPLICAS="))||"NS_API_REPLICAS=1").slice(16));if(!Number.isSafeInteger(n)||n<1||n>16)process.exit(1);console.log(Array.from({length:n},(_,i)=>i?"api-"+(i+1):"api").join(" "));')
     "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 900 $replicas
     "${compose[@]}" --profile ops run --rm --no-deps primer node deploy/multitenant/prime.js prime

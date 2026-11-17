@@ -55,6 +55,8 @@ async function bootstrap(options) {
   }else if(options.lifecycleOperator)throw fail('LIFECYCLE_OPERATOR_SELECTION');
   require('./pgstream').enabled();
   if(options.connectionBudgetProfile)throw fail('PGSTREAM_EXTERNAL_ADMISSION_UNQUALIFIED');
+  const workers=require('./evaluator-workers'),evaluatorWorkers=workers.selection();
+  if(evaluatorWorkers)workers.assertSeed(evaluatorWorkers,plan.tenantIds());
   const freshControl=!!(options.lifecycleOperator&&selected.version===2);
   const {pg,vault,output,sourceCommit,deployCommit,uid,gid,configMaxBytes}=options;
   const privateDirectory=path.join(output,'bootstrap');fs.mkdirSync(privateDirectory,{recursive:true,mode:0o700});
@@ -80,6 +82,7 @@ async function bootstrap(options) {
   if(fs.existsSync(completeFile)){
     const complete=JSON.parse(fs.readFileSync(completeFile,'utf8'));
     if(complete.version!==2||complete.sourceCommit!==sourceCommit||complete.deployCommit!==deployCommit)throw fail('BOOTSTRAP_SOURCE_CHANGED_RECREATE_DEMO');
+    if(complete.evaluatorWorkers!==evaluatorWorkers?.workers)throw fail('BOOTSTRAP_EVALUATOR_ROSTER_CHANGED_RECREATE_DEMO');
     return {state:'existing-demo-unsealed',sourceCommit};
   }
   if(fs.existsSync(startedFile))throw fail('BOOTSTRAP_PARTIAL_RECREATE_DEMO');
@@ -129,7 +132,7 @@ async function bootstrap(options) {
     if(freshControl)for(const sql of require('./control-recovery-bootstrap').grants(l))await admin.query(sql);
     const managementGrants=require('../../lib/management-sessions/authority').grants({namespaces:{registry:l.namespaces.registry,authorization:l.namespaces.authorization,access:l.namespaces.access,control:l.namespaces.control},issuer:l.roles.management_issuer,authorityOwner:l.managementAuthorityOwner});
     for(const sql of [...managementGrants.authorityOwner,...managementGrants.issuer])await admin.query(sql);
-    await require('./pgstream').init({admin,adminURL:pg.toString(),layout:l,config:require('./pgstream').descriptor(l)});
+    await require('./pgstream').init({admin,adminURL:pg.toString(),layout:l,config:require('./pgstream').descriptor(l,evaluatorWorkers)});
     if(options.connectionBudgetProfile&&require('./connection-budget-files').read(options.connectionBudgetProfile).version===2){
       const database=(await admin.query('SELECT current_database() AS database,(SELECT oid::text FROM pg_database WHERE datname=current_database()) AS "databaseOid"')).rows;
       if(database.length!==1)throw fail('WORKER_DATABASE_IDENTITY');

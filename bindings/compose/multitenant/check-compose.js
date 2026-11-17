@@ -69,17 +69,26 @@ function checkPublisher(config) {
   return true;
 }
 function checkStream(config) {
-  const service=config.services.pgstream,evaluator=config.services.evaluator;
+  const service=config.services.pgstream;
   assert(service,'Separate pgstream service required');
   assert.deepEqual(service.command,['/usr/local/bin/pgstream','run','-c','/run/ns-stream/pgstream.yaml','--log-level','info'],'pgstream must run the maintained binary directly');
   assert(service.restart==='unless-stopped','Platform must own streaming restart');
   assert(service.depends_on?.postgres?.condition==='service_healthy','pgstream waits for PostgreSQL');
   assert(service.depends_on?.evaluator?.condition==='service_started','pgstream must not wait for clinical readiness');
-  assert(!Object.hasOwn(evaluator.depends_on||{},'pgstream'),'Evaluator startup must not depend on stream health');
+  const receivers=Object.keys(config.services).filter(name => /^evaluator(?:-\d+)?$/.test(name));
+  const selected=require('./evaluator-workers').selection(config.services.bootstrap?.environment || {});
+  assert.deepEqual(receivers.sort(),require('./evaluator-workers').services(selected).sort(),'Native evaluator services must match the prepared count');
+  for(const name of receivers){
+    const worker=config.services[name];
+    assert(service.depends_on?.[name]?.condition==='service_started','pgstream waits for every receiver process to start');
+    assert(!Object.hasOwn(worker.depends_on||{},'pgstream'),'Evaluator startup must not depend on stream health');
+    assert(!(worker.volumes||[]).some(row=>row.target==='/run/ns-stream'||row.source.endsWith('/pgstream')),'Evaluator must not mount streaming credentials');
+    assert(!Object.keys(worker.environment||{}).some(key=>['NS_PGSTREAM_BINARY','NS_PGSTREAM_CONFIG'].includes(key)),'Evaluator has no stream process configuration');
+    if(selected)assert(Number(worker.cpus)>0&&Number(worker.mem_limit)>0,'Selected evaluator requires CPU and memory limits');
+  }
+  if(selected)assert(Number(service.cpus)>0&&Number(service.mem_limit)>0,'Selected producer requires CPU and memory limits');
   const volumes=service.volumes||[];
   assert(volumes.length===1&&volumes[0].target==='/run/ns-stream'&&volumes[0].source.endsWith('/pgstream')&&volumes[0].read_only,'Streaming credentials belong only to the separate service');
-  assert(!(evaluator.volumes||[]).some(row=>row.target==='/run/ns-stream'||row.source.endsWith('/pgstream')),'Evaluator must not mount streaming credentials');
-  assert(!Object.keys(evaluator.environment||{}).some(key=>['NS_PGSTREAM_BINARY','NS_PGSTREAM_CONFIG'].includes(key)),'Evaluator has no stream process configuration');
   return true;
 }
 // PostgreSQL keeps reserved_connections slots for the clinical roles bootstrap
@@ -97,7 +106,7 @@ function check (config) {
   checkClinicalReserve(config);
   checkPublisher(config);
   checkStream(config);
-  const runtime = ['pgstream', 'api', 'realtime', 'evaluator', 'tenant-admin', 'ui', 'nginx', 'admin', ...Object.keys(config.services).filter(name => /^api-\d+$/.test(name))];
+  const runtime = ['pgstream', 'api', 'realtime', 'evaluator', 'tenant-admin', 'ui', 'nginx', 'admin', ...Object.keys(config.services).filter(name => /^(?:api|evaluator)-\d+$/.test(name))];
   for (const name of runtime) {
     const service = config.services[name];
     assert(service, 'Missing service: ' + name);

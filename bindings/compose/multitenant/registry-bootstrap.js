@@ -49,7 +49,7 @@ async function finish({ options, request, rootToken, layout, roleURLs, writePriv
   require('../../lib/server/serve/admin-config').parse(docs.admin.config, docs.admin.environment);
   const ids = plan.tenantIds();
   const seed = ids.map((id, index) => ({ id, hosts: [plan.tenantAlias(index)], issueRootSecret: true }));
-  writePrivate(path.join(output, 'primer', 'config.json'), { version: 1, adminOrigin: 'http://admin:1342', apiOrigin: docs.apiOrigin || 'http://api:1337', ownerConsumer: docs.configs['tenant-admin'].management.consumer, ...(docs.evaluatorPool ? {evaluatorPool:docs.evaluatorPool} : {}), seed }, own);
+  writePrivate(path.join(output, 'primer', 'config.json'), { version: 1, adminOrigin: 'http://admin:1342', apiOrigin: docs.apiOrigin || 'http://api:1337', ownerConsumer: docs.configs['tenant-admin'].management.consumer, seed }, own);
   const lifecycle = plan.lifecycle(l);
   writePrivate(path.join(output, 'ops', 'config.json'), { version: 1, drainTimeoutMs: 10000,
     tenants: ids.map((id, i) => ({ id, host: plan.tenantAlias(i), tokenEnv: i === 0 ? 'NS_DEMO_TOKEN_A' : i === 1 ? 'NS_DEMO_TOKEN_B' : 'NS_DEMO_TOKEN_' + i })),
@@ -61,7 +61,7 @@ async function finish({ options, request, rootToken, layout, roleURLs, writePriv
   if(options.controlRecoveryPrincipals)require('./control-recovery-bootstrap').files({options,docs,layout:l,roleURLs,writePrivate});
   if(options.connectionBudgetProfile) require('./connection-budget-bootstrap').prepare({options,docs,writePrivate});
   writePrivate(path.join(output, 'bootstrap', 'layout.json'), l);
-  writePrivate(path.join(output, 'bootstrap', 'complete.json'), { version: 2, sourceCommit, deployCommit: options.deployCommit, registryMode: true });
+  writePrivate(path.join(output, 'bootstrap', 'complete.json'), { version: 2, sourceCommit, deployCommit: options.deployCommit, registryMode: true, evaluatorWorkers: docs.evaluatorWorkers?.workers });
   return { state: 'synthetic-infrastructure-ready', sourceCommit };
 }
 module.exports = { finish };
