@@ -19,7 +19,7 @@ test('selected pgstream documents, raw-to-wire config and completed-consumer pro
   assert.equal(routes.some(row=>row.kind==='heartbeat'||row.table==='nightscout_heartbeat'),false,'SYNTHETIC_HEARTBEAT_ROUTE_RETIRED');
   assert.deepEqual(evaluator.pgstream.bounds,{stepMs:5000,recoveryMs:30000,pendingMs:30000});
   assert.equal(evaluator.pgstream.receiver.url,'http://evaluator:19913/');assert.equal(evaluator.pgstream.receiver.trust,'network');assert.equal(evaluator.pgstream.binaryEnv,undefined);assert.equal(evaluator.pgstream.configFileEnv,undefined);assert.equal(evaluator.pgstream.bounds.maxRestarts,undefined);assert.equal(evaluator.pgstream.bounds.stopMs,undefined);assert.equal(docs.environments.evaluator.NS_PGSTREAM_BINARY,undefined);assert.equal(docs.environments.evaluator.NS_PGSTREAM_CONFIG,undefined);
-  assert.equal(docs.environments.evaluator.NS_STREAM_RECOVERY_PG,urls.pgstream);assert.equal(evaluator.pgstream.recovery.connectionEnv,'NS_STREAM_RECOVERY_PG');assert.match(evaluator.pgstream.generation,/^[a-f0-9]{32}$/);assert.equal(wire.source.postgres.replication.plugin.include_transactions,true);assert.deepEqual(wire.target.webhooks.notifier.transaction_batch,{max_rows:evaluator.maxRows,max_bytes:evaluator.pgstream.receiver.maxBytes});
+  assert.equal(docs.environments.evaluator.NS_STREAM_RECOVERY_PG,urls.pgstream);assert.equal(evaluator.pgstream.recovery.connectionEnv,'NS_STREAM_RECOVERY_PG');assert.match(evaluator.pgstream.generation,/^[a-f0-9]{32}$/);assert.equal(evaluator.pgstream.transactionRows,10000);assert.equal(wire.source.postgres.replication.plugin.include_transactions,true);assert.deepEqual(wire.target.webhooks.notifier.transaction_batch,{max_rows:evaluator.pgstream.transactionRows,max_bytes:evaluator.pgstream.receiver.maxBytes});
   assert.equal(evaluator.changeFeed,undefined);assert.equal(realtime.changeFeed,undefined);assert.equal(evaluator.timeIntervalMs,60000);
   assert.equal(realtime.completedOutput.namespace,evaluator.postgres.namespaces.checkpoint);
   const checkpoint=docs.admin.config.provisioning.checkpoints.find(row=>row.consumer===evaluator.consumer+'-completed');assert(checkpoint);assert.equal(checkpoint.namespace,realtime.completedOutput.namespace);
@@ -33,7 +33,7 @@ test('selected pgstream documents, raw-to-wire config and completed-consumer pro
 // pgstream v1.6.0 cmd/config/config_yaml.go WebhookNotifierConfig reads Backoff;
 // constant at notifier level is ignored and falls back to upstream defaults.
 test('canonical wire places the bounded retry policy in the maintained notifier backoff namespace',()=>{
- const notifier=binding.wire({pgstream:{slot:'synthetic_slot'}},'postgres://synthetic@127.0.0.1/synthetic',{routes:[{schema:'synthetic_clock',table:'tenant_write_clock'}]}).target.webhooks.notifier;
+ const notifier=binding.wire({pgstream:{transactionRows:10000,slot:'synthetic_slot'}},'postgres://synthetic@127.0.0.1/synthetic',{routes:[{schema:'synthetic_clock',table:'tenant_write_clock'}]}).target.webhooks.notifier;
  const criterion=value=>{
   assert.deepEqual(value.backoff,{constant:{max_retries:1,interval:50}},'PGSTREAM_BACKOFF_NAMESPACE_REQUIRED');
   assert.equal(Object.hasOwn(value,'constant'),false,'PGSTREAM_IGNORED_CONSTANT_FORBIDDEN');
@@ -46,11 +46,11 @@ test('canonical wire places the bounded retry policy in the maintained notifier 
 });
 
 test('native cohort wire has explicit preserved bounds and framing with red/restored controls',()=>{
- const config={maxRows:128,pgstream:{slot:'synthetic_slot',receiver:{maxBytes:1048576}}};
+ const config={maxRows:1,maxBytes:1,pgstream:{transactionRows:128,slot:'synthetic_slot',receiver:{maxBytes:1048576}}};
  const wire=()=>binding.wire(config,'postgres://synthetic@127.0.0.1/synthetic',{routes:[{schema:'synthetic_entries',table:'entries'}]});
  const criterion=value=>{assert.equal(value.source.postgres.replication.plugin.include_transactions,true,'NATIVE_FRAMING_REQUIRED');assert.deepEqual(value.target.webhooks.notifier.transaction_batch,{max_rows:128,max_bytes:1048576},'BOUNDED_NATIVE_COHORT_REQUIRED');};
  criterion(wire());for(const mutate of [x=>{x.source.postgres.replication.plugin.include_transactions=false;},x=>{delete x.target.webhooks.notifier.transaction_batch;},x=>{x.target.webhooks.notifier.transaction_batch.max_rows=1;}]){const bad=wire();mutate(bad);assert.throws(()=>criterion(bad));criterion(wire());}
- for(const cap of [0,-1,NaN]){assert.throws(()=>binding.wire({...config,maxRows:cap},'postgres://synthetic@127.0.0.1/synthetic',{routes:[]}),/positive transaction/);}
+ for(const cap of [undefined,0,-1,NaN,1000001]){assert.throws(()=>binding.wire({...config,pgstream:{...config.pgstream,transactionRows:cap}},'postgres://synthetic@127.0.0.1/synthetic',{routes:[]}),/positive transaction/);}
 });
 
 test('image builds the exact maintained source patch and final deterministic binary; pin/source controls fail',()=>{
