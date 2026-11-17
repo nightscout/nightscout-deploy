@@ -62,7 +62,7 @@ function validateDatabase(p,c,row,routes){
  need(row.database===p.database.name&&row.databaseOid===p.database.oid&&row.systemIdentifier===p.database.systemIdentifier&&row.postmasterStartedAt===p.database.postmasterStartedAt,'PGSTREAM_REBOOTSTRAP_BACKEND_CHANGED');
  need(row.otherClients===0,'PGSTREAM_REBOOTSTRAP_OLD_BACKEND_PRESENT');
  need(row.role?.replication===true&&row.role.super===false&&row.role.bypass===false&&row.role.nonowner===true&&row.role.grants===true,'PGSTREAM_REBOOTSTRAP_RUNTIME_GRANTS');
- const expected=routes.map(route=>({url:new URL('pgstream',c.pgstream.receiver.url).href,schema_name:route.schema,table_name:route.table,event_types:['D','I','U']}));expected.push({url:expected[0].url,schema_name:'',table_name:'',event_types:['M']});
+ const expected=routes.map(route=>({url:new URL('pgstream',c.pgstream.receiver.url).href,schema_name:route.schema,table_name:route.table,event_types:['D','I','U']}));expected.push({url:expected[0].url,schema_name:'',table_name:'',event_types:['B','C','M']});
  need(equal(normalized(row.subscriptions),normalized(expected)),'PGSTREAM_REBOOTSTRAP_SUBSCRIPTIONS');
  if(p.action==='create-missing')need(row.slot===null,'PGSTREAM_REBOOTSTRAP_SLOT_NOT_MISSING');
  else if(p.action==='replace-revision')need(row.slot&&row.slot.name===p.slot&&row.slot.database===p.database.name&&row.slot.plugin==='wal2json'&&row.slot.active===false&&row.slot.status!=='lost'&&row.slot.restart!==null,'PGSTREAM_REBOOTSTRAP_REVISION_SLOT');
@@ -146,7 +146,19 @@ async function run(p,{docker=platform(),routes}={}){
  fs.writeFileSync(p.receiptFile,JSON.stringify(receipt)+'\n',{mode:0o600,flag:'wx'});
  try{
   current=snapshot();inspect();await verifyRevision();receipt.state='SLOT_OPERATION_STARTED';fs.writeFileSync(p.receiptFile,JSON.stringify(receipt)+'\n',{mode:0o600});
-  claimRevision(p);query(slotSQL(p));current=snapshot();const after=JSON.parse(query(sqlInspection(p,c)));
+  claimRevision(p);
+  // A PostgreSQL slot name is reusable. Rotate the deployment incarnation
+  // before replacing it so durable clinical/raw coverage cannot adopt a new
+  // slot under the previous generation. Every effect-serving role is stopped.
+  if(c.pgstream.generation!==undefined){
+   need(/^[a-f0-9]{32}$/.test(c.pgstream.generation),'PGSTREAM_REBOOTSTRAP_STREAM_GENERATION');
+   const next={...c,pgstream:{...c.pgstream,generation:require('node:crypto').randomBytes(16).toString('hex')}};
+   const temporary=p.evaluatorConfig+'.rebootstrap-'+process.pid;
+   const fd=fs.openSync(temporary,'wx',0o600);try{fs.writeFileSync(fd,JSON.stringify(next)+'\n');fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
+   fs.renameSync(temporary,p.evaluatorConfig);const parent=fs.openSync(path.dirname(p.evaluatorConfig),'r');try{fs.fsyncSync(parent);}finally{fs.closeSync(parent);}
+   receipt.streamGeneration=next.pgstream.generation;receipt.nextEvaluatorConfigSha256=hash(read(p.evaluatorConfig));
+  }
+  query(slotSQL(p));current=snapshot();const after=JSON.parse(query(sqlInspection(p,c)));
   need(after.database===before.database&&after.databaseOid===before.databaseOid&&after.systemIdentifier===before.systemIdentifier&&after.postmasterStartedAt===before.postmasterStartedAt&&after.otherClients===0,'PGSTREAM_REBOOTSTRAP_BACKEND_CHANGED');
   need(after.slot?.database===p.database.name&&after.slot.plugin==='wal2json'&&after.slot.active===false&&after.slot.restart!==null&&after.slot.status!=='lost','PGSTREAM_REBOOTSTRAP_NEW_SLOT_INVALID');
   need(equal(after.role,before.role)&&equal(normalized(after.subscriptions),normalized(before.subscriptions)),'PGSTREAM_REBOOTSTRAP_METADATA_CHANGED');receipt.state='SLOT_RECREATED_EFFECTS_STOPPED';

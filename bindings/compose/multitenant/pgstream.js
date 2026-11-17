@@ -15,7 +15,8 @@ function configure(docs,layout){
  delete docs.environments.evaluator.NS_PGSTREAM_BINARY;delete docs.environments.evaluator.NS_PGSTREAM_CONFIG;
 }
 function configuration(layout){
- return {receiver:{url:'http://evaluator:19913/',trust:'network',bindHost:'0.0.0.0',maxBytes:16777216,timeoutMs:5000},slot:layout.prefix+'_pgstream',streamRole:layout.roles.pgstream,
+ return {receiver:{url:'http://evaluator:19913/',trust:'network',bindHost:'0.0.0.0',maxBytes:16777216,timeoutMs:5000},slot:layout.prefix+'_pgstream',streamRole:layout.roles.pgstream,generation:require('node:crypto').randomBytes(16).toString('hex'),
+   recovery:{connectionEnv:'NS_STREAM_RECOVERY_PG',timeoutMs:5000,maxQueued:32},
    bounds:{stepMs:5000,recoveryMs:30000,pendingMs:30000}};
 }
 function receiverURL(config){
@@ -32,8 +33,8 @@ function wire(config,runtimeURL,{subscriptionsPort=19914,routes}={}){
  // Subscriptions are installed by DBA bootstrap before the worker starts.
  // The runtime role can only read this fixed set; a stopped-worker change or
  // recovery starts a new cache with a synchronous upstream warm-up.
- return {source:{postgres:{url:runtimeURL,mode:'replication',replication:{replication_slot:config.pgstream.slot,plugin:{include_xids:true,add_tables:selected.map(row=>row.schema+'.'+row.table).join(',')}}}},
-   target:{webhooks:{subscriptions:{store:{url:storeURL.href,cache:{enabled:true,refresh_interval:60}},server:{address:'127.0.0.1:'+subscriptionsPort}},notifier:{worker_count:1,strict_mode:true,client_timeout:2000,backoff:{constant:{max_retries:1,interval:50}}}}}};
+ return {source:{postgres:{url:runtimeURL,mode:'replication',replication:{replication_slot:config.pgstream.slot,plugin:{include_xids:true,include_transactions:true,add_tables:selected.map(row=>row.schema+'.'+row.table).join(',')}}}},
+   target:{webhooks:{subscriptions:{store:{url:storeURL.href,cache:{enabled:true,refresh_interval:60}},server:{address:'127.0.0.1:'+subscriptionsPort}},notifier:{worker_count:1,strict_mode:true,transaction_batch:{max_rows:config.maxRows||10000,max_bytes:config.pgstream.receiver.maxBytes},client_timeout:2000,backoff:{constant:{max_retries:1,interval:50}}}}}};
 }
 async function init({admin,adminURL,layout,config,binary='/usr/local/bin/pgstream',binarySha256,routes,workColumns,realtimeColumns,realtimeConsumers=['realtime-compose-demo']}){
  const normalized={...config,namespaces:config.postgres?.namespaces||config.namespaces},targetURL=receiverURL(config);
@@ -55,7 +56,7 @@ async function init({admin,adminURL,layout,config,binary='/usr/local/bin/pgstrea
   const file=path.join(directory,'init.yaml');fs.writeFileSync(file,JSON.stringify({source:{postgres:{url:connection.href,replication:{replication_slot:config.pgstream.slot}}}}),{mode:0o600});
   execFileSync(binary,['init','-c',file],{stdio:['ignore','pipe','pipe'],timeout:30000});
  }finally{fs.rmSync(directory,{recursive:true,force:true});}
- await admin.query('ALTER ROLE '+role+' REPLICATION NOINHERIT CONNECTION LIMIT 4');
+ await admin.query('ALTER ROLE '+role+' REPLICATION NOINHERIT CONNECTION LIMIT 5');
  await admin.query('CREATE TABLE pgstream.webhook_subscriptions(url text,schema_name text,table_name text,event_types text[],PRIMARY KEY(url,schema_name,table_name))');
  await admin.query('REVOKE ALL ON SCHEMA pgstream FROM PUBLIC');
  await admin.query('REVOKE ALL ON ALL TABLES IN SCHEMA pgstream FROM PUBLIC');
@@ -77,6 +78,6 @@ async function init({admin,adminURL,layout,config,binary='/usr/local/bin/pgstrea
   await admin.query('CREATE POLICY pgstream_realtime_delivery_update ON '+realtimeTable+' FOR UPDATE TO '+realtime+' USING (consumer IN ('+selectedConsumers+')) WITH CHECK (consumer IN ('+selectedConsumers+'))');
  }
  for(const route of [...selected,{schema:'',table:'',kind:'schema'}])await admin.query('INSERT INTO pgstream.webhook_subscriptions VALUES($1,$2,$3,$4)',[
-   targetURL,route.schema,route.table,route.kind==='schema'?['M']:['I','U','D']]);
+   targetURL,route.schema,route.table,route.kind==='schema'?['B','C','M']:['I','U','D']]);
 }
 module.exports={enabled,configure,configuration,descriptor,receiverURL,wire,init};

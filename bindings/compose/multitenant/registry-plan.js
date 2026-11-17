@@ -47,6 +47,7 @@ function expand(docs, { layout, urls, vaultAddress }) {
     for (const name of Object.keys(env)) if (/^NS_VAULT_\d+$/.test(name) || name === 'NS_ADMISSION_FILE') delete env[name];
     if (role === 'api' || role === 'evaluator' || role === 'realtime') env.NS_DISPLAY_PG = urls.display_reader;
     if (role === 'api' || role === 'evaluator') env.NS_ACTIVITY_PG = urls.activity_reader;
+    if(role==='evaluator')env.NS_STREAM_RECOVERY_PG=urls.pgstream;
     if(role==='tenant-admin')env.NS_OWNER_CREDENTIALS_PG=urls.owner_credentials;
     delete docs.operations[role].locks; docs.operations[role].leaseSessions = leaseSessions(); docs.operations[role].registry = { namespace: ns.registry };
   }
