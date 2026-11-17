@@ -35,6 +35,12 @@ async function main () {
   const operation = JSON.parse(fs.readFileSync(process.env.MULTITENANT_OPERATION_CONFIG, 'utf8'));
   const request = require('node:crypto').randomUUID();
   const reply = await require('../../lib/server/internal-api/clients').lifecycleParticipant(endpoint).getStatus({request});
+  if (role === 'api') {
+    const health = await require('../../lib/server/internal-api/clients').lifecycleParticipant(endpoint).getApiHealth({request});
+    // Display readiness is reported separately; raw ingestion owns its storage
+    // admission and stays available during display/evaluator dependency failure.
+    if (health.request !== request || health.storageReady !== true) throw new Error();
+  }
   if (reply.request !== request || reply.participant !== operation.participantId || JSON.stringify(reply.roles) !== JSON.stringify([role])) throw new Error();
 }
 main().catch(() => { process.exitCode = 1; });

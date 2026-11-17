@@ -25,7 +25,8 @@ function expand(docs, { layout, urls, vaultAddress }) {
   for (const [role, config] of Object.entries(docs.configs)) {
     delete config.tenants; config.registry = { ...registry };
     if (role === 'api' || role === 'evaluator' || role === 'realtime') config.tenantSettings = settings;
-    if (role === 'api' || role === 'evaluator') config.activity = activity;
+    if (role === 'api') config.activity = { namespace: ns.control };
+    if (role === 'evaluator') config.activity = activity;
     if(role==='realtime')config.activity={namespace:ns.control};
     if (role === 'api') {
       config.localDataAuthentication = 'node';
@@ -46,7 +47,8 @@ function expand(docs, { layout, urls, vaultAddress }) {
     const env = docs.environments[role];
     for (const name of Object.keys(env)) if (/^NS_VAULT_\d+$/.test(name) || name === 'NS_ADMISSION_FILE') delete env[name];
     if (role === 'api' || role === 'evaluator' || role === 'realtime') env.NS_DISPLAY_PG = urls.display_reader;
-    if (role === 'api' || role === 'evaluator') env.NS_ACTIVITY_PG = urls.activity_reader;
+    if (role === 'evaluator') env.NS_ACTIVITY_PG = urls.activity_reader;
+    if (role === 'api') delete env.NS_ACTIVITY_PG;
     if(role==='evaluator')env.NS_STREAM_RECOVERY_PG=urls.pgstream;
     if(role==='tenant-admin')env.NS_OWNER_CREDENTIALS_PG=urls.owner_credentials;
     delete docs.operations[role].locks; docs.operations[role].leaseSessions = leaseSessions(); docs.operations[role].registry = { namespace: ns.registry };

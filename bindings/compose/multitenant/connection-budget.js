@@ -24,7 +24,6 @@ const SOURCE = {
   'nightscout-preview-data': 'lib/server/serve/preview-api.js',
   'nightscout-subject-admin': 'lib/subject-admin/postgres.js',
   'nightscout-display-settings': 'lib/tenant-settings/effective-postgres.js',
-  'nightscout-api-activity': 'lib/tenant-activity/postgres.js',
   'nightscout-socket-alarm': 'lib/server/realtime/private-api.js',
   'nightscout-realtime-registry': 'lib/server/serve/registry-tenant-set.js',
   'nightscout-evaluator-registry': 'lib/server/serve/registry-tenant-set.js',
@@ -74,9 +73,9 @@ function describe(docs, poolConfig) {
     const direct = key => { need(SOURCE[key] && !capabilities[key], 'CONNECTION_PLAN_CONSTRUCTOR_UNKNOWN'); capabilities[key] = { kind: 'client', source: SOURCE[key] }; };
     need(c.registry || role === 'admin', 'CONNECTION_PLAN_REGISTRY_GRAPH_REQUIRED');
     if (role === 'api') {
-      pool('nightscout-api-registry', 2); pool('nightscout-legacy-authority', 4); pool('nightscout-tenant-authorization', 4); pool('nightscout-secrets', 4);
+      pool('nightscout-api-registry', 2); pool('nightscout-secrets', 4);
       pool('nightscout-preview-data', poolConfig.pool('api', env).max);
-      for (const [feature, key, maximum] of [['accessTokens', 'nightscout-current-access', 4], ['subjectAdmin', 'nightscout-subject-admin', 4], ['tenantSettings', 'nightscout-display-settings', 4], ['activity', 'nightscout-api-activity', 2], ['socketForwarding', 'nightscout-socket-alarm', 4]]) if (c[feature]) pool(key, maximum);
+      for (const [feature, key, maximum] of [['subjectAdmin', 'nightscout-subject-admin', 4], ['tenantSettings', 'nightscout-display-settings', 4], ['socketForwarding', 'nightscout-socket-alarm', 4]]) if (c[feature]) pool(key, maximum);
       direct('api-readiness'); direct('migration-direct'); if (c.tenantSettings) direct('settings-readiness');
     } else if (role === 'realtime') {
       need(c.completedOutput && c.trustedWorker && c.changeFeed === undefined, 'CONNECTION_PLAN_MAINTAINED_REALTIME_REQUIRED');

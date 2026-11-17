@@ -51,6 +51,7 @@ test('provisioning identity and read-only settings/activity capabilities are dis
   const { layout } = generated();
   assert.equal(new Set([layout.roles.api, layout.roles.provisioner, layout.roles.display_reader, layout.roles.activity_reader]).size, 4);
   const grants = plan.grants(layout).join('\n');
+  assert.match(grants, /GRANT SELECT ON "nsdemo_control"\."tenant_activity" TO "nsdemo_api"/);
   assert.match(grants,/GRANT SELECT ON "nsdemo_secrets"."schema_migrations" TO "nsdemo_owner_credentials"/);
   assert.match(grants, /REVOKE ALL ON FUNCTION \"nsdemo_display_settings\"\.tenant_settings_values_valid\(jsonb\) FROM PUBLIC/);
   assert.match(grants, /GRANT EXECUTE ON FUNCTION \"nsdemo_display_settings\"\.tenant_settings_values_valid\(jsonb\) TO \"nsdemo_provisioner\"/);

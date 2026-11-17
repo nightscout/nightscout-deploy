@@ -336,7 +336,7 @@ describe('Compose demo private node:http transport', function () {
 });
 
 describe('Compose role health uses the lifecycle participant contract', function () {
-  async function check (mutateReply = reply => reply) {
+  async function check (mutateReply = reply => reply, mutateHealth = reply => reply) {
     const file = require.resolve('../health'), calls = [], facade = { argv: ['node', file, 'api'], exitCode: 0, env: { NS_SERVE_INTERNAL_SOCKET: '/run/ns-ipc/api.sock', MULTITENANT_OPERATION_CONFIG: '/run/ns-config/operation.json' } };
     const source = fs.readFileSync(file, 'utf8');
     const nativeRequire = createRequire(file);
@@ -351,7 +351,7 @@ describe('Compose role health uses the lifecycle participant contract', function
       } };
       if (name === '../../lib/server/internal-api/clients') return { lifecycleParticipant: options => {
         calls.push(options);
-        return { getStatus: async body => { calls.push(body); return mutateReply({ request: body.request, participant: 'api', roles: ['api'] }); } };
+        return { getApiHealth: async body => mutateHealth({request:body.request,ready:false,storageReady:true,displaySettings:{ready:false,state:'pending'}}), getStatus: async body => { calls.push(body); return mutateReply({ request: body.request, participant: 'api', roles: ['api'] }); } };
       } };
       return nativeRequire(name);
     };
@@ -365,5 +365,7 @@ describe('Compose role health uses the lifecycle participant contract', function
     assert.match(valid.calls[1].request, /^[0-9a-f-]{36}$/);
     assert.equal((await check(reply => ({ ...reply, participant: 'realtime' }))).code, 1);
     assert.equal((await check(reply => ({ ...reply, request: 'wrong' }))).code, 1);
+    assert.equal((await check(undefined, health => ({...health,storageReady:false}))).code, 1);
+    assert.equal((await check(undefined, health => ({...health,request:'wrong'}))).code, 1);
   });
 });
