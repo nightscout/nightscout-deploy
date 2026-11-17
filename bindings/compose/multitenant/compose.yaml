@@ -17,6 +17,9 @@ x-app: &app
     MULTITENANT_CONFIG_MAX_BYTES: ${NS_BOOTSTRAP_CONFIG_MAX_BYTES:-}
     NS_M7_DIAGNOSTICS: ${NS_M7_DIAGNOSTICS:-0}
     NS_M7_DIAGNOSTICS_INTERVAL_MS: ${NS_M7_DIAGNOSTICS_INTERVAL_MS:-5000}
+    # Opt-in sampled clinical stage records (core lib/diagnostics/clinical-stages.js);
+    # empty is off. A fraction in (0,1] selects the same tenants in every role.
+    NS_CLINICAL_STAGE_TRACE: ${NS_CLINICAL_STAGE_TRACE:-}
   networks: [backend]
   security_opt: [no-new-privileges:true]
   cap_drop: [ALL]
