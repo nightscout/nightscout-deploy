@@ -43,6 +43,8 @@ const SOURCE = {
   'nightscout-ui-registry': 'bindings/compose/multitenant/ui-registry.js',
   'migration-direct': 'lib/migrations/postgres.js',
   'settings-readiness': 'lib/tenant-settings/readiness.js',
+  'snapshot-export': 'lib/server/serve/evaluator-preview.js',
+  'snapshot-lock': 'lib/server/serve/evaluator-preview.js',
   'clinical-readiness': 'lib/server/serve/evaluator-readiness.js',
   'api-readiness': 'lib/server/serve/postgres-domains.js',
   'owner-readiness': 'lib/server/serve/owner-preview.js',
@@ -95,6 +97,7 @@ function describe(docs, poolConfig) {
         capabilities['nightscout-evaluator-consumer-preview'].minimumInstances = 2;
       }
       direct('clinical-readiness'); direct('migration-direct');
+      if(c.pgstream.recovery){direct('snapshot-export');direct('snapshot-lock');}
     } else if (role === 'tenant-admin') {
       pool('nightscout-tenant-admin-registry', 2); pool('nightscout-current-access', 4); pool('nightscout-subject-admin', 4);
       need(!c.ownerSettings && !c.ownerActivity, 'CONNECTION_PLAN_OWNER_EXTENSION_UNKNOWN');
@@ -152,6 +155,12 @@ function compile(profile, docs, { source, poolConfig }) {
         need(exact(selected, ['kind', 'directGroup']) && selected.kind === 'client' && typeof selected.directGroup === 'string' && Object.hasOwn(given.directGroups, selected.directGroup), 'CONNECTION_PLAN_DIRECT_UNKNOWN');
         capabilities[key] = { ...selected, metadata: { source: described.source, configurationSource: 'explicit-profile' } };
       }
+    }
+    // One serialized recovery overlaps lock+exporter+one transient cancel.
+    if (capabilities['snapshot-export'] || capabilities['snapshot-lock']) {
+      need(capabilities['snapshot-export'] && capabilities['snapshot-lock'], 'CONNECTION_PLAN_RECOVERY_COVERAGE');
+      const exporter=capabilities['snapshot-export'].directGroup, lock=capabilities['snapshot-lock'].directGroup;
+      need(exporter===lock ? given.directGroups[exporter]>=3 : given.directGroups[exporter]>=2 && given.directGroups[lock]>=2, 'CONNECTION_PLAN_RECOVERY_CONCURRENCY');
     }
     const usedGroups = new Set(Object.values(capabilities).filter(x => x.kind === 'client').map(x => x.directGroup));
     need(equal([...usedGroups].sort(), Object.keys(given.directGroups).sort()), 'CONNECTION_PLAN_DIRECT_UNKNOWN');

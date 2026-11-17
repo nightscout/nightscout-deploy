@@ -1,0 +1,15 @@
+{
+  "upstreamCommit": "97d7ab464f0accf6cf1373b3c3f7b328debae4b9",
+  "connectorCommit": "e0dcdb9f537e426bdb17fc2915a480c734209264",
+  "patchSha256": "9efeeb30a2b5a4b9a5826b70ad107863f6ad64e6e031463e5834a52b1be983e7",
+  "binarySha256": "eac69908e214dd42c19a96761ee0fabcadc1b5c7e89c747614df59b458d82a14",
+  "goBuilder": "golang:1.26.11-alpine@sha256:f496f8c537ed506626ee1a6913afb32c45068a48697163c088f604cc775a0c38",
+  "buildFlags": [
+    "CGO_ENABLED=0",
+    "GOTOOLCHAIN=local",
+    "GOOS=linux",
+    "GOARCH=amd64",
+    "-trimpath",
+    "-buildvcs=false"
+  ]
+}

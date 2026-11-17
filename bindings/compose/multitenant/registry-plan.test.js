@@ -109,7 +109,9 @@ test('maintained capture and typed completed delivery replace the retired feed r
   }
   assert.equal(Object.hasOwn(realtime,'pageSize'),false);assert.equal(Object.hasOwn(realtime,'socketOrderDomains'),false);
   const routes=require('../../lib/pgstream/evaluator').routes({...evaluator,namespaces:evaluator.postgres.namespaces});
-  assert.deepEqual(routes.map(row=>row.kind).sort(),['activity','clock','lifecycle','policy','settings']);
+  assert.deepEqual(routes.filter(row=>row.kind!=='clinical').map(row=>row.kind).sort(),['activity','lifecycle','policy','settings']);
+  assert.deepEqual(routes.filter(row=>row.kind==='clinical').map(row=>row.table).sort(),['activity','devicestatus','entries','food','profile','treatments']);
+  assert.equal(routes.some(row=>row.table==='tenant_write_clock'),false,'INTERNAL_CLOCK_ROUTE_RETIRED');
   assert.equal(routes.some(row=>row.table==='tenant_consumer_checkpoint'),false,'completed output is handed off after commit rather than recaptured');
   const typed=docs.admin.config.provisioning.checkpoints.find(row=>row.consumer===evaluator.consumer+'-completed');
   const receipt=docs.admin.config.provisioning.checkpoints.find(row=>row.consumer===realtime.consumer);
