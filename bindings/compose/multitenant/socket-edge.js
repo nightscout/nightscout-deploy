@@ -77,14 +77,21 @@ function create({ resolver, placement, timeoutMs = 60000, connectTimeoutMs = 500
     await stopped; await resolver.close();
   } });
 }
+function loadPlacement(source) {
+  const internal = require('../../lib/server/internal-api/listener-config').observer(source);
+  if (!source.MULTITENANT_REALTIME_ROUTES) throw new Error('Explicit admitted routing view required');
+  return require('../../lib/realtime-placement').load({ ...source, MULTITENANT_REALTIME_PLACEMENT: source.MULTITENANT_REALTIME_ROUTES }, { internal });
+}
 async function main(source = process.env) {
   const fs = require('node:fs');
   const config = JSON.parse(fs.readFileSync(source.UI_PUBLIC_CONFIG, 'utf8'));
+  const staticOwnership = require('./static-ownership');
+  const fixed = source[staticOwnership.MAP] !== undefined || source.NS_REALTIME_STATIC_COUNT !== undefined;
+  if (fixed && source.MULTITENANT_REALTIME_ROUTES !== undefined) throw new TypeError('REALTIME_ROUTE_PROFILE_CONFLICT');
+  const staticPlacement = fixed ? staticOwnership.load(source) : null;
   const resolver = await require('./ui-registry').open({ config, source });
   try {
-    const internal = require('../../lib/server/internal-api/listener-config').observer(source);
-    if (!source.MULTITENANT_REALTIME_ROUTES) throw new Error('Explicit admitted routing view required');
-    const placement = require('../../lib/realtime-placement').load({ ...source, MULTITENANT_REALTIME_PLACEMENT: source.MULTITENANT_REALTIME_ROUTES }, { internal });
+    const placement = staticPlacement || loadPlacement(source);
     const edge = create({ resolver, placement });
     edge.server.once('error', () => { void edge.close().catch(() => {}); process.exitCode = 1; });
     edge.server.listen(1343, '0.0.0.0');
