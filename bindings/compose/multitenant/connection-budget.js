@@ -80,7 +80,7 @@ function describe(docs, poolConfig) {
     } else if (role === 'realtime') {
       need(c.completedOutput && c.trustedWorker && c.changeFeed === undefined, 'CONNECTION_PLAN_MAINTAINED_REALTIME_REQUIRED');
       pool('nightscout-realtime-registry', 1); pool('nightscout-realtime-registry-lookup', 2); pool('nightscout-realtime-preview', poolConfig.pool('realtime', env, { connectionTimeoutMillis: c.operationTimeoutMs }).max);
-      if (env.MULTITENANT_REALTIME_PLACEMENT) pool('nightscout-realtime-owner', 1, 1);
+      pool('nightscout-realtime-owner', 1, 1); // Every static realtime worker holds its slice resource.
       direct('clinical-readiness'); direct('migration-direct');
     } else if (role === 'evaluator') {
       need(c.pgstream && c.trustedWorker && c.changeFeed === undefined, 'CONNECTION_PLAN_MAINTAINED_EVALUATOR_REQUIRED');
