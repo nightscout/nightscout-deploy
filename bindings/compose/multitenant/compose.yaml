@@ -84,7 +84,7 @@ services:
       # Fixed service instances; maintenance still addresses every exact instance.
       NS_API_REPLICAS: ${NS_API_REPLICAS:-1}
       NS_OPERATION_LEASE_SESSIONS: ${NS_OPERATION_LEASE_SESSIONS:-4}
-      # Bounded REST admission per api process (clinical-isolation.js; empty = binding default).
+      # Opt-in bounded REST admission per api process (clinical-isolation.js; empty = no limit).
       NS_API_REST_CONCURRENCY: ${NS_API_REST_CONCURRENCY:-}
       NS_API_REST_QUEUE: ${NS_API_REST_QUEUE:-}
       NS_API_REST_QUEUE_TIMEOUT_MS: ${NS_API_REST_QUEUE_TIMEOUT_MS:-}

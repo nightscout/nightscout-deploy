@@ -1,42 +1,64 @@
 'use strict';
-// Source-only checks of the clinical isolation selection: REST admission values
-// reach every api process environment, and the reserved-connection grants name
-// clinical roles only. The native reserve itself is measured by
+// Source-only checks of the clinical isolation selection: REST admission is opt-in
+// and only selected values reach every api process environment, and the
+// reserved-connection grants name clinical roles only. The native reserve itself is measured by
 // clinical-reserved-connections.integration.test.js.
 const test = require('node:test'), assert = require('node:assert/strict');
 const isolation = require('../clinical-isolation'), plan = require('../config');
 
-test('selection defaults, explicit values and refusals', () => {
-  assert.deepEqual({...isolation.selection({})}, {restConcurrency: 8, restQueue: 8, restQueueTimeoutMs: 1000, restRetryAfterSeconds: 2, maxConnections: 140, clinicalReserved: 40});
+test('REST admission is opt-in: unset or empty selects no limit; connection defaults, explicit values and refusals', () => {
+  const unset = {restConcurrency: null, restQueue: null, restQueueTimeoutMs: null, restRetryAfterSeconds: null, maxConnections: 140, clinicalReserved: 40};
+  assert.deepEqual({...isolation.selection({})}, unset);
+  assert.deepEqual({...isolation.selection({NS_API_REST_CONCURRENCY: '', NS_API_REST_QUEUE: '', NS_API_REST_QUEUE_TIMEOUT_MS: '', NS_API_REST_RETRY_AFTER_SECONDS: ''})}, unset);
   assert.deepEqual({...isolation.selection({NS_API_REST_CONCURRENCY: '16', NS_API_REST_QUEUE: '0', NS_POSTGRES_MAX_CONNECTIONS: '200', NS_POSTGRES_CLINICAL_RESERVED_CONNECTIONS: '60'})},
-    {restConcurrency: 16, restQueue: 0, restQueueTimeoutMs: 1000, restRetryAfterSeconds: 2, maxConnections: 200, clinicalReserved: 60});
-  for (const bad of [{NS_API_REST_CONCURRENCY: '0'}, {NS_API_REST_QUEUE: '-1'}, {NS_POSTGRES_CLINICAL_RESERVED_CONNECTIONS: '0'},
-    {NS_POSTGRES_MAX_CONNECTIONS: '40', NS_POSTGRES_CLINICAL_RESERVED_CONNECTIONS: '37'}, {NS_API_REST_RETRY_AFTER_SECONDS: 'soon'}]) {
+    {restConcurrency: 16, restQueue: 0, restQueueTimeoutMs: null, restRetryAfterSeconds: null, maxConnections: 200, clinicalReserved: 60});
+  for (const bad of [{NS_API_REST_CONCURRENCY: '0'}, {NS_API_REST_CONCURRENCY: '4', NS_API_REST_QUEUE: '-1'}, {NS_POSTGRES_CLINICAL_RESERVED_CONNECTIONS: '0'},
+    {NS_POSTGRES_MAX_CONNECTIONS: '40', NS_POSTGRES_CLINICAL_RESERVED_CONNECTIONS: '37'}, {NS_API_REST_CONCURRENCY: '4', NS_API_REST_RETRY_AFTER_SECONDS: 'soon'}]) {
     assert.throws(() => isolation.selection(bad), TypeError, JSON.stringify(bad));
   }
-  assert.equal(isolation.envLines(isolation.selection({})),
-    'NS_API_REST_CONCURRENCY=8\nNS_API_REST_QUEUE=8\nNS_API_REST_QUEUE_TIMEOUT_MS=1000\nNS_API_REST_RETRY_AFTER_SECONDS=2\nNS_POSTGRES_MAX_CONNECTIONS=140\nNS_POSTGRES_CLINICAL_RESERVED_CONNECTIONS=40\n');
+  // A partial REST selection is refused at preparation, as core refuses it at boot.
+  for (const stray of ['NS_API_REST_QUEUE', 'NS_API_REST_QUEUE_TIMEOUT_MS', 'NS_API_REST_RETRY_AFTER_SECONDS']) {
+    assert.throws(() => isolation.selection({[stray]: '5'}), new RegExp(stray + ' requires NS_API_REST_CONCURRENCY'));
+  }
+  // The default .env records the connection reserve and no REST admission value.
+  assert.equal(isolation.envLines(isolation.selection({})), 'NS_POSTGRES_MAX_CONNECTIONS=140\nNS_POSTGRES_CLINICAL_RESERVED_CONNECTIONS=40\n');
+  assert.equal(isolation.envLines(isolation.selection({NS_API_REST_CONCURRENCY: '64', NS_API_REST_QUEUE: '32', NS_API_REST_QUEUE_TIMEOUT_MS: '500', NS_API_REST_RETRY_AFTER_SECONDS: '3'})),
+    'NS_API_REST_CONCURRENCY=64\nNS_API_REST_QUEUE=32\nNS_API_REST_QUEUE_TIMEOUT_MS=500\nNS_API_REST_RETRY_AFTER_SECONDS=3\nNS_POSTGRES_MAX_CONNECTIONS=140\nNS_POSTGRES_CLINICAL_RESERVED_CONNECTIONS=40\n');
+  assert.deepEqual(isolation.apiEnvironment(isolation.selection({})), {});
   assert.deepEqual(isolation.postgresArguments(isolation.selection({})), ['-c', 'max_connections=140', '-c', 'reserved_connections=40']);
 });
 
-test('every api process environment selects REST admission that the core parser accepts', () => {
+test('api process environments: no limiter by default; only operator-selected values, which the core parser accepts', () => {
   const layout = plan.layout(), urls = Object.fromEntries(Object.keys(layout.roles).map(key => [key, 'postgres://' + layout.roles[key] + ':synthetic@postgres:5432/synthetic']));
-  const previous = process.env.NS_API_REPLICAS;
+  const coreSettings = require('../../../lib/server/serve/rest-admission').settings;
+  const names = Object.values(isolation.NAMES).filter(name => name.startsWith('NS_API_REST_'));
+  const previous = Object.fromEntries(['NS_API_REPLICAS', ...names].map(name => [name, process.env[name]]));
+  const restore = () => { for (const [name, value] of Object.entries(previous)) { if (value === undefined) delete process.env[name]; else process.env[name] = value; } };
+  const render = () => {
+    const docs = plan.documents({layout, urls, tokens: [], publicKeys: [], managementKeys: [], vaultAddress: 'https://vault:8200'});
+    return {docs, apis: Object.keys(docs.environments).filter(name => name === 'api' || /^api-\d+$/.test(name))};
+  };
   try {
     for (const replicas of ['1', '3']) {
       process.env.NS_API_REPLICAS = replicas;
-      const docs = plan.documents({layout, urls, tokens: [], publicKeys: [], managementKeys: [], vaultAddress: 'https://vault:8200'});
-      const apis = Object.keys(docs.environments).filter(name => name === 'api' || /^api-\d+$/.test(name));
+      for (const name of names) delete process.env[name];
+      let {docs, apis} = render();
       assert(apis.length >= Number(replicas));
       for (const name of apis) {
-        assert.deepEqual({...require('../../../lib/server/serve/rest-admission').settings(docs.environments[name])},
-          {concurrency: 8, queue: 8, queueTimeoutMs: 1000, retryAfterSeconds: 2}, name);
+        assert(!Object.keys(docs.environments[name]).some(key => key.startsWith('NS_API_REST_')), name + ' renders no REST admission value by default');
+        assert.equal(coreSettings(docs.environments[name]), null, name + ' is unbounded by default');
+      }
+      process.env.NS_API_REST_CONCURRENCY = '64'; process.env.NS_API_REST_QUEUE = '32';
+      ({docs, apis} = render());
+      for (const name of apis) {
+        assert.deepEqual(Object.keys(docs.environments[name]).filter(key => key.startsWith('NS_API_REST_')).sort(), ['NS_API_REST_CONCURRENCY', 'NS_API_REST_QUEUE'], name);
+        assert.deepEqual({...coreSettings(docs.environments[name])}, {concurrency: 64, queue: 32, queueTimeoutMs: 1000, retryAfterSeconds: 1}, name);
       }
       for (const name of ['realtime', 'evaluator', 'tenant-admin']) {
         assert(!Object.keys(docs.environments[name]).some(key => key.startsWith('NS_API_REST_')), name + ' is not REST-admission limited');
       }
     }
-  } finally { if (previous === undefined) delete process.env.NS_API_REPLICAS; else process.env.NS_API_REPLICAS = previous; }
+  } finally { restore(); }
 });
 
 test('reserved-connection grants name clinical roles and never a REST-serving or shared role', () => {

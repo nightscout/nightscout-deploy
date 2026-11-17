@@ -299,18 +299,25 @@ budgets; the capacity campaign must measure the resulting envelope.
 `clinical-isolation.js` keeps clinical delivery working when REST traffic exceeds
 what the API can serve. Values are selected for `demo.sh prepare` and recorded in `.env`.
 
+REST admission is opt-in. When `NS_API_REST_CONCURRENCY` is unset or empty, preparation
+renders no `NS_API_REST_*` value and each API process admits every REST request, as core
+does. A fixed small bound sheds normal traffic: at 180 requests/s with a p95 of about
+0.4 s, about 70 requests are in flight. Size a bound from measured traffic before you set
+one. Only the values you set are rendered; core supplies the defaults shown for the others.
+A queue, timeout or Retry-After value without a concurrency is refused at preparation.
+
 | Setting | Default | Effect |
 |---|---|---|
-| `NS_API_REST_CONCURRENCY` | 8 | REST requests one API process runs at once (core `lib/server/serve/rest-admission.js`) |
-| `NS_API_REST_QUEUE` | 8 | requests that may wait for a slot; others get 503 `REST_ADMISSION_REFUSED` |
-| `NS_API_REST_QUEUE_TIMEOUT_MS` | 1000 | longest wait for a slot before the 503 |
-| `NS_API_REST_RETRY_AFTER_SECONDS` | 2 | `Retry-After` on the 503 |
+| `NS_API_REST_CONCURRENCY` | unset (no limit) | REST requests one API process runs at once (core `lib/server/serve/rest-admission.js`) |
+| `NS_API_REST_QUEUE` | core: 0 | requests that may wait for a slot; others get 503 `REST_ADMISSION_REFUSED` |
+| `NS_API_REST_QUEUE_TIMEOUT_MS` | core: 1000 | longest wait for a slot before the 503 |
+| `NS_API_REST_RETRY_AFTER_SECONDS` | core: 1 | `Retry-After` on the 503 |
 | `NS_POSTGRES_MAX_CONNECTIONS` | 140 | PostgreSQL `max_connections` |
 | `NS_POSTGRES_CLINICAL_RESERVED_CONNECTIONS` | 40 | PostgreSQL `reserved_connections` |
 
-A refused request runs no handler, so a refused write has no storage effect. The
-limit counts only the API's public listener; `serve.internal` (socket authority for
-realtime, lifecycle status) and realtime sockets are not counted.
+When a limit is set, a refused request runs no handler, so a refused write has no
+storage effect. The limit counts only the API's public listener; `serve.internal`
+(socket authority for realtime, lifecycle status) and realtime sockets are not counted.
 
 Bootstrap grants `pg_use_reserved_connections` to the pgstream, evaluator, realtime,
 outbox, suppression and evaluator/realtime lifetime roles only. The API, admin, UI
