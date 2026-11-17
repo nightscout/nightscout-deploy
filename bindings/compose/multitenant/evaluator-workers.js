@@ -1,7 +1,7 @@
 'use strict';
 
 const PORT = 19913;
-const PROFILE = 'NS_PGSTREAM_EVALUATOR_PROCESSES';
+const PROFILE = 'NS_PGSTREAM_EVALUATOR_SLICE';
 
 function selection(source = process.env) {
   const raw = source.NS_EVALUATOR_WORKERS;
@@ -19,17 +19,13 @@ function roster(selected) {
   return services(selected).map((service, index) => ({
     service, id: 'evaluator-' + (index + 1), url: 'http://' + service + ':' + PORT + '/',
     socket: '/run/ns-ipc/evaluator-' + (index + 1) + '.sock'
-  })).sort((a, b) => a.url < b.url ? -1 : a.url > b.url ? 1 : 0);
+  }));
 }
 
-function assertSeed(selected, tenants) {
+function assertSeed(selected) {
   if (!selected) return;
-  if (typeof require('../../lib/pgstream/assigned-worker').processProfile !== 'function') {
-    throw new Error('PGSTREAM_EVALUATOR_PROCESS_SOURCE_REQUIRED');
-  }
-  const { bucket } = require('../../lib/pool-membership/slice');
-  const assigned = new Set(tenants.map(tenant => bucket(tenant, selected.workers)));
-  if (assigned.size !== selected.workers) throw new TypeError('NS_EVALUATOR_WORKERS requires a provisioned seed tenant in every evaluator slice');
+  if (typeof require('../../lib/pgstream/assigned-worker').processProfile !== 'function') throw new Error('PGSTREAM_EVALUATOR_PROCESS_SOURCE_REQUIRED');
+  // Idle ordinals are valid: registry live-add is not a topology change.
 }
 
 function expand(docs, selected) {
@@ -52,7 +48,7 @@ function expand(docs, selected) {
     docs.environments[service] = {
       ...baseEnvironment, NS_SERVE_INTERNAL_SOCKET: socket,
       NS_POOL_EVALUATOR_MAX: '4', NS_POOL_OPERATION_MAX: '8',
-      [PROFILE]: JSON.stringify({ ordinal, receivers })
+      [PROFILE]: JSON.stringify({ count: workers.length, ordinal, receivers })
     };
     docs.operations[service] = { ...operation, participantId: id };
   }
@@ -89,9 +85,9 @@ function compose(selected, composeFile, tenantCount) {
     '      NS_EVALUATOR_WORKERS: "' + selected.workers + '"',
     '      NS_DEMO_TENANTS: "' + tenantCount + '"', '  pgstream:', '    cpus: 1', '    mem_limit: 512m',
     '    depends_on:', ...workers.map(service => '      ' + service + ': {condition: service_started}'),
-    '  evaluator:', ...limits];
+    '    restart: unless-stopped', '  evaluator:', '    restart: unless-stopped', ...limits];
   for (const service of workers.slice(1)) lines.push('  ' + service + ':',
-    '    extends: {file: ' + JSON.stringify(composeFile) + ', service: evaluator}', ...limits,
+    '    extends: {file: ' + JSON.stringify(composeFile) + ', service: evaluator}', '    restart: unless-stopped', ...limits,
     '    volumes:', '      - ${NS_DEMO_STATE}/' + service + ':/run/ns-config:ro',
     '      - ${NS_DEMO_STATE}/ipc:/run/ns-ipc', '      - ${NS_DEMO_STATE}/tls/ca.crt:/run/ns-ca/ca.crt:ro');
   return lines.join('\n') + '\n';

@@ -1,37 +1,39 @@
 'use strict';
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const workers = require('./realtime-workers');
-test('sharding is opt-in with an explicit logical shard count independent of worker count', () => {
-  assert.equal(workers.selection({}), null);
-  for (const source of [{ NS_REALTIME_WORKERS: '2' }, { NS_REALTIME_SHARDS: '8' }, { NS_REALTIME_WORKERS: '17', NS_REALTIME_SHARDS: '8' }, { NS_REALTIME_WORKERS: '2', NS_REALTIME_SHARDS: '65537' }]) assert.throws(() => workers.selection(source));
-  assert.deepEqual(workers.selection({ NS_REALTIME_WORKERS: '2', NS_REALTIME_SHARDS: '8' }), { workers: 2, shards: 8 });
-  const one = workers.initial({ workers: 1, shards: 8 }), two = workers.initial({ workers: 2, shards: 8 });
-  assert.equal(one.shardCount, two.shardCount);
-  assert.equal(two.owners.length, 8);
-  assert.equal(new Set(two.workers.map(worker => worker.incarnation)).size, 2);
+const {test}=require('node:test');
+const assert=require('node:assert/strict');
+const workers=require('./realtime-workers');
+const {census}=require('../../lib/realtime-ownership');
+test('static realtime shape uses exactly K ordinals and refuses retired independent shard counts',()=>{
+  assert.equal(workers.selection({}),null);
+  for(const raw of ['0','9','2x','',2])assert.throws(()=>workers.selection({NS_REALTIME_WORKERS:raw}));
+  assert.throws(()=>workers.selection({NS_REALTIME_WORKERS:'2',NS_REALTIME_SHARDS:'16'}),/retired/);
+  const shape=workers.initial(workers.selection({NS_REALTIME_WORKERS:'3'}));
+  assert.equal(shape.rule,'sha256-modulo-v1');
+  assert.deepEqual(shape.realtime.map(row=>[row.service,row.ordinal]),[['realtime',0],['realtime-2',1],['realtime-3',2]]);
 });
-test('all fixed participants include idle workers and use exact private instances', () => {
-  const peer = { id: 'realtime', roles: ['realtime'], namespaces: ['clinical'], maxMessageBytes: 1024, timeoutMs: 1000 };
-  const other = { id: 'api', roles: ['api'], namespaces: ['clinical'], maxMessageBytes: 1024, timeoutMs: 1000 };
-  const map = workers.initial({ workers: 2, shards: 1 });
-  const configs = { api: {}, realtime: { consumer: 'stable-durable-consumer' } };
-  const docs = workers.expand({ configs, environments: { api: {}, realtime: {} }, operations: {
-    api: { participantId: 'api', participants: [other, peer] }, realtime: { participantId: 'realtime', participants: [other, peer] }
-  }, remote: [{ ...other, endpoint: {} }, { ...peer, endpoint: {} }] }, map);
-  assert.equal(docs.configs['realtime-2'].consumer, configs.realtime.consumer);
-  assert.deepEqual(docs.operations.api.participants.filter(row => row.worker).map(row => row.worker), ['realtime-1','realtime-2']);
-  assert.equal(docs.operations.realtime.participantId, 'realtime-1');
-  assert.equal(docs.environments['realtime-2'].REALTIME_WORKER_INCARNATION, map.workers[1].incarnation);
-  assert.equal(docs.remote.find(row => row.id === 'realtime-2').endpoint.socketPath, '/run/ns-ipc/realtime-2.sock');
-  assert.equal(docs.environments.api.MULTITENANT_REALTIME_PLACEMENT, '/run/ns-placement/backend.json');
-  assert.equal(docs.environments.api.MULTITENANT_REALTIME_ROUTES, '/run/ns-placement/routes.json');
+test('all static participants include idle ordinals and exact private addresses; missing or mixed census refuses',()=>{
+  const original={id:'realtime',roles:['realtime'],namespaces:['synthetic'],maxMessageBytes:1048576,timeoutMs:5000};
+  const operation={participantId:'realtime',participants:[{id:'api',roles:['api']},original]};
+  const docs={configs:{realtime:{}},operations:{realtime:operation},environments:{realtime:{},evaluator:{NS_REALTIME_INTERNAL_SOCKET:'/tmp/old.sock'}},remote:[{...original,endpoint:{socketPath:'/tmp/old.sock'}}]};
+  const selected=workers.initial({workers:3}),expanded=workers.expand(docs,selected);
+  const rows=expanded.operations.realtime.participants;
+  assert.deepEqual(census(rows),{count:3,rule:'sha256-modulo-v1'});
+  assert.throws(()=>census(rows.filter(row=>row.slice?.ordinal!==2)),/OWNERSHIP_REFUSED/);
+  assert.throws(()=>census(rows.map(row=>row.slice?.ordinal===2?{...row,slice:{count:4,ordinal:2}}:row)),/OWNERSHIP_REFUSED/);
+  assert.deepEqual(census(rows),{count:3,rule:'sha256-modulo-v1'});
+  assert.deepEqual(JSON.parse(expanded.environments.evaluator.NS_REALTIME_SLICE_PEERS),selected.realtime.map(row=>({socket:row.socketPath})));
+  for(const row of selected.realtime){
+    assert.deepEqual(JSON.parse(expanded.environments[row.service].NS_REALTIME_SLICE),{count:3,ordinal:row.ordinal});
+    assert.equal(expanded.operations[row.service].participantId,row.id);
+    assert.equal(expanded.remote.find(peer=>peer.id===row.id).endpoint.socketPath,row.socketPath);
+  }
+  assert.equal(expanded.environments.evaluator.NS_REALTIME_INTERNAL_SOCKET,undefined);
 });
-test('Compose wiring covers every API instance and routes public sockets through the registry edge', () => {
-  const yaml = workers.compose({ workers: 2, shards: 8 }, '/synthetic/compose.yaml', ['api','api-2']);
-  for (const service of ['bootstrap','api','api-2','realtime','realtime-2','evaluator','tenant-admin','demo','socket-edge','nginx']) assert.ok(yaml.includes('  ' + service + ':\n'), service);
-  const fs = require('node:fs'), edge = require('./edge');
-  const template = fs.readFileSync(__dirname + '/nginx.compose.conf', 'utf8');
-  assert.ok(edge.render(template, { realtime: true }).includes('server socket-edge:1343 resolve;'));
-  assert.ok(edge.render(template).includes('server realtime:1339 resolve;'));
+test('ordinary static rendering binds the canonical edge and stable restart identities without a placement mount',()=>{
+  const text=workers.compose({workers:2},'compose.yaml',['api','api-2']);
+  for(const service of ['realtime','realtime-2','socket-edge'])assert.match(text,new RegExp('  '+service+':'));
+  assert.match(text,/restart: unless-stopped/);
+  assert.match(text,/NS_REALTIME_STATIC_COUNT: "2"/);
+  assert.match(text,/NS_REALTIME_STATIC_ROUTE_MAP/);
+  assert.doesNotMatch(text,/NS_REALTIME_SHARDS|MULTITENANT_REALTIME_PLACEMENT|run\/ns-placement/);
 });

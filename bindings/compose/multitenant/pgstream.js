@@ -25,9 +25,9 @@ function receiverURL(config){
 }
 function descriptor(layout,selected){
  const workers=selected&&require('./evaluator-workers').roster(selected);
- const processAssignment=workers&&{ordinal:workers.findIndex(worker=>worker.service==='evaluator'),receivers:workers.map(worker=>worker.url)};
+ const processAssignment=workers&&{count:workers.length,ordinal:workers.findIndex(worker=>worker.service==='evaluator'),receivers:workers.map(worker=>worker.url)};
  return {...(processAssignment?{processAssignment}:{}),consumer:'evaluator-compose-demo',namespaces:{...Object.fromEntries(['entries','treatments','devicestatus','profile','food','activity'].map(domain=>[domain,layout.namespaces[domain]])),clock:layout.namespaces.clock,checkpoint:layout.namespaces.eval_checkpoint},trustedWorker:{settings:layout.namespaces.display_settings,operatorPolicy:layout.namespaces.operator_policy,activity:layout.namespaces.control},pgstream:configuration(layout)};}
-function wire(config,runtimeURL,{subscriptionsPort=19914,routes}={}){
+function wire(config,runtimeURL,{subscriptionsPort=19914,routes,assignment=config.processAssignment}={}){
  if(!Number.isSafeInteger(config.pgstream?.transactionRows)||config.pgstream.transactionRows<1||config.pgstream.transactionRows>1000000||!Number.isSafeInteger(config.pgstream?.receiver?.maxBytes??16777216)||(config.pgstream?.receiver?.maxBytes??16777216)<1)throw new TypeError('Explicit positive transaction row/byte bounds required');
  if(!Number.isSafeInteger(subscriptionsPort)||subscriptionsPort<1024||subscriptionsPort>65535)throw new TypeError('Explicit subscriptions port required');
  const selected=routes||require('../../lib/pgstream/evaluator').routes({...config,namespaces:config.postgres?.namespaces||config.namespaces});
@@ -37,7 +37,7 @@ function wire(config,runtimeURL,{subscriptionsPort=19914,routes}={}){
  // The runtime role can only read this fixed set; a stopped-worker change or
  // recovery starts a new cache with a synchronous upstream warm-up.
  return {source:{postgres:{url:runtimeURL,mode:'replication',replication:{replication_slot:config.pgstream.slot,plugin:{include_xids:true,include_transactions:true,add_tables:selected.map(row=>row.schema+'.'+row.table).join(',')}}}},
-   target:{webhooks:{subscriptions:{store:{url:storeURL.href,cache:{enabled:true,refresh_interval:60}},server:{address:'127.0.0.1:'+subscriptionsPort}},notifier:{worker_count:1,strict_mode:true,transaction_batch:{max_rows:config.pgstream.transactionRows,max_bytes:config.pgstream?.receiver?.maxBytes??16777216},client_timeout:2000,backoff:{constant:{max_retries:1,interval:50}}}}}};
+   target:{webhooks:{subscriptions:{store:{url:storeURL.href,cache:{enabled:true,refresh_interval:60}},server:{address:'127.0.0.1:'+subscriptionsPort}},notifier:{worker_count:1,strict_mode:true,transaction_batch:{max_rows:config.pgstream.transactionRows,max_bytes:config.pgstream?.receiver?.maxBytes??16777216,...(assignment?{slice_receivers:require('../../lib/pgstream/assigned-worker').processProfile(JSON.stringify(assignment),config.pgstream.receiver).receivers.map(url=>new URL('pgstream',url).href)}:{})},client_timeout:2000,backoff:{constant:{max_retries:1,interval:50}}}}}};
 }
 async function init({admin,adminURL,layout,config,binary='/usr/local/bin/pgstream',binarySha256,routes,workColumns,realtimeColumns,realtimeConsumers=['realtime-compose-demo']}){
  const normalized={...config,namespaces:config.postgres?.namespaces||config.namespaces};

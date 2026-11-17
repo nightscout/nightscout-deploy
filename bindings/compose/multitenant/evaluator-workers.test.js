@@ -63,11 +63,12 @@ function validateFiles(docs) {
   }
 }
 
-test('opt-in evaluator processes require an explicit bounded count and a nonempty seed in every slice', () => {
+test('opt-in evaluator processes require an explicit bounded count and allow idle registry slices', () => {
   assert.equal(workers.selection({}), null);
   for (const raw of ['0', '9', '17', '2x', '', 2]) assert.throws(() => workers.selection({NS_EVALUATOR_WORKERS:raw}));
   assert.deepEqual(workers.services(workers.selection({NS_EVALUATOR_WORKERS:'3'})), ['evaluator','evaluator-2','evaluator-3']);
-  assert.throws(() => workers.assertSeed({ workers: 2 }, [plan.A]), /every evaluator slice/);
+  assert.doesNotThrow(() => workers.assertSeed({ workers: 2 }, []));
+  assert.doesNotThrow(() => workers.assertSeed({ workers: 2 }, [plan.A]));
   workers.assertSeed({ workers: 2 }, [plan.A, plan.B]);
 });
 
@@ -82,7 +83,7 @@ test('standalone, K1 and K2 compose documents pass the exact core plan and deplo
     const roster = workers.roster(selected);
     const descriptor = binding.descriptor(layout, selected);
     const receivers = roster.map(worker => worker.url);
-    assert.deepEqual(receivers, [...receivers].sort());
+    assert.deepEqual(receivers, workers.services(selected).map(service => 'http://' + service + ':19913/'));
     assert.equal(docs.configs.realtime.completedOutput.consumer, docs.configs.evaluator.consumer);
     for (const [ordinal, {service, id, url, socket}] of roster.entries()) {
       const env = docs.environments[service], cfg = docs.configs[service], op = docs.operations[service];
@@ -90,14 +91,14 @@ test('standalone, K1 and K2 compose documents pass the exact core plan and deplo
       assert.equal(cfg.pgstream.generation, docs.configs.evaluator.pgstream.generation);
       assert.equal(cfg.pgstream.slot, descriptor.pgstream.slot);
       assert.equal(cfg.consumer, descriptor.consumer);
-      const raw = env.NS_PGSTREAM_EVALUATOR_PROCESSES;
+      const raw = env.NS_PGSTREAM_EVALUATOR_SLICE;
       if (!selected) {
         assert.equal(raw, undefined);
         assert.equal(op.participantId, 'evaluator');
         assert.equal(descriptor.processAssignment, undefined);
         continue;
       }
-      assert.deepEqual(JSON.parse(raw), {ordinal, receivers});
+      assert.deepEqual(JSON.parse(raw), {count: roster.length, ordinal, receivers});
       assert.deepEqual(descriptor.processAssignment.receivers, receivers);
       assert.equal(op.participantId, id);
       assert.equal(env.NS_SERVE_INTERNAL_SOCKET, socket);
@@ -116,8 +117,8 @@ test('wrong ordinal, missing participant and divergent generation fail before de
   const baseline = generated(2).docs;
   const badOrdinal = structuredClone(baseline);
   const env = badOrdinal.environments.evaluator;
-  const configured = JSON.parse(env.NS_PGSTREAM_EVALUATOR_PROCESSES);
-  env.NS_PGSTREAM_EVALUATOR_PROCESSES = JSON.stringify({...configured, ordinal: 1 - configured.ordinal});
+  const configured = JSON.parse(env.NS_PGSTREAM_EVALUATOR_SLICE);
+  env.NS_PGSTREAM_EVALUATOR_SLICE = JSON.stringify({...configured, ordinal: 1 - configured.ordinal});
   const result = checkCore(documentSet(badOrdinal));
   assert.equal(result.status, 1, JSON.stringify(result.report));
   const reports = result.report.processes.filter(process => !process.ok);

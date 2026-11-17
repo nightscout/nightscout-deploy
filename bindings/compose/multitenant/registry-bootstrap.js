@@ -23,15 +23,15 @@ async function finish({ options, request, rootToken, layout, roleURLs, writePriv
   const ownerCredentialToken=await token('owner-credentials',[rule('decrypt/tenant-data-*',['update'])]);
   const managementToken = await token('management-issuer', [rule('keys/tenant-management-*', ['read']), rule('sign/tenant-management-*', ['update'])]);
   const provisioningToken = await token('provisioner', [rule('keys/tenant-*', ['create','read','update']), rule('encrypt/tenant-data-*', ['update'])]);
-  const realtimePlacement = require('./realtime-workers').selection() ? JSON.parse(fs.readFileSync(path.join(output, 'placement/backend.json'), 'utf8')) : null;
-  const docs = plan.documents({ layout: l, urls: roleURLs, tokens: [], publicKeys: [], managementKeys: [], vaultAddress: options.vault.origin, registryMode: true, realtimePlacement });
+  const realtimeOwnership = require('./realtime-workers').initial(require('./realtime-workers').selection());
+  const docs = plan.documents({ layout: l, urls: roleURLs, tokens: [], publicKeys: [], managementKeys: [], vaultAddress: options.vault.origin, registryMode: true, realtimeOwnership });
   if(options.connectionBudgetProfile)for(const env of [...Object.values(docs.environments),docs.admin.environment,docs.uiEnvironment])env.NS_SOURCE_COMMIT=sourceCommit;
   for (const role of Object.keys(docs.configs)) {
     const dir = path.join(output, role);
     writePrivate(path.join(dir, 'env.json'), docs.environments[role], own, compact);
     writePrivate(path.join(dir, 'config.json'), docs.configs[role], own, compact);
     if(role==='tenant-admin')writeToken(path.join(dir,'vault-token'),ownerCredentialToken);
-    if(role==='evaluator'&&docs.configs[role].pgstream)writePrivate(path.join(output,'pgstream','pgstream.yaml'),require('./pgstream').wire(docs.configs[role],roleURLs.pgstream),own,compact);
+    if(role==='evaluator'&&docs.configs[role].pgstream)writePrivate(path.join(output,'pgstream','pgstream.yaml'),require('./pgstream').wire(docs.configs[role],roleURLs.pgstream,{assignment:docs.environments[role].NS_PGSTREAM_EVALUATOR_SLICE===undefined?undefined:JSON.parse(docs.environments[role].NS_PGSTREAM_EVALUATOR_SLICE)}),own,compact);
     writePrivate(path.join(dir, 'operation.json'), docs.operations[role], own, compact);
     if (role === 'api' || role.startsWith('api-')) {
       writeToken(path.join(dir, 'vault-token'), servingToken);
@@ -55,9 +55,8 @@ async function finish({ options, request, rootToken, layout, roleURLs, writePriv
     tenants: ids.map((id, i) => ({ id, host: plan.tenantAlias(i), tokenEnv: i === 0 ? 'NS_DEMO_TOKEN_A' : i === 1 ? 'NS_DEMO_TOKEN_B' : 'NS_DEMO_TOKEN_' + i })),
     apiOrigin: docs.apiOrigin || 'http://api:1337', control: { namespace: l.namespaces.control, registry: { namespace: l.namespaces.registry }, locks: docs.locks, participants: docs.remote }, ...lifecycle }, own);
   writePrivate(path.join(output, 'ops', 'env.json'), { NS_OPERATOR_PG: roleURLs.operator, NS_AUTH_AUDIT_PG:roleURLs.api, NS_SOURCE_COMMIT: sourceCommit,
-    ...(realtimePlacement ? { MULTITENANT_REALTIME_PLACEMENT: '/run/ns-placement/backend.json' } : {}) }, own);
+     }, own);
   writeToken(path.join(output,'ops','vault-token'), servingToken);
-  if (realtimePlacement) writePrivate(path.join(output, 'placement-operator', 'env.json'), { NS_PLACEMENT_PG: roleURLs.placement_publisher, NS_ACTIVITY_PG: roleURLs.activity_reader, NS_SOURCE_COMMIT: sourceCommit, MULTITENANT_REALTIME_PLACEMENT: '/run/ns-placement/backend.json' }, own);
   if(options.controlRecoveryPrincipals)require('./control-recovery-bootstrap').files({options,docs,layout:l,roleURLs,writePrivate});
   if(options.connectionBudgetProfile) require('./connection-budget-bootstrap').prepare({options,docs,writePrivate});
   writePrivate(path.join(output, 'bootstrap', 'layout.json'), l);

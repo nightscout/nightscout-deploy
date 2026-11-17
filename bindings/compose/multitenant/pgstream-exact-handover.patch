@@ -93,7 +93,7 @@ index 1bce6e3..b736884 100644
      servers: ["localhost:9092"]
      topic:
 diff --git a/docs/configuration.md b/docs/configuration.md
-index f76aad4..53b9617 100644
+index f76aad4..ec73342 100644
 --- a/docs/configuration.md
 +++ b/docs/configuration.md
 @@ -69,6 +69,7 @@ source:
@@ -104,7 +104,7 @@ index f76aad4..53b9617 100644
          add_tables: "public.*" # comma-separated list of tables to include in the wal2json output. Supports wildcards. Filters at the source decode level. Defaults to all tables.
          filter_tables: "pipelines.*,private.*" # comma-separated list of tables to exclude from the wal2json output. Supports wildcards. Filters at the source decode level. Defaults to empty.
      retry_policy: # retry policy for postgres connections, one of exponential or constant or disable_retries
-@@ -549,3 +550,40 @@ Schemas themselves are never filtered out, since the remaining objects need thei
+@@ -549,3 +550,73 @@ Schemas themselves are never filtered out, since the remaining objects need thei
  For DDL replication, a single statement can create objects of several types at once (`CREATE TABLE` with a primary key produces both a table and an index). Such an event is only skipped when *all* of its objects belong to excluded categories.
  
  > ⚠️ Filtering does not resolve dependencies between object types. Excluding a category that surviving objects depend on (for example excluding `types` while keeping tables with columns of those types) will make the snapshot or the DDL replay fail. Use this with a good understanding of your schema.
@@ -120,8 +120,8 @@ index f76aad4..53b9617 100644
 +available.
 +
 +Subscribe once with empty schema/table and event types `B`, `C`, `M`, alongside
-+the required row subscriptions. The selected receiver must see every exposed
-+event exactly once before it can validate a transaction. A begin has
++the required row subscriptions. In unsliced mode, the selected receiver sees every
++exposed event exactly once before it can validate a transaction. A begin has
 +`transaction_index: 0`; subsequent events have consecutive indices starting at
 +one. A commit has index `N+1`, `transaction_count: N`, and native `nextlsn`. The
 +count excludes suppressed internal pgstream DML and includes logical messages.
@@ -139,14 +139,47 @@ index f76aad4..53b9617 100644
 +transaction from its begin. Receivers must durably retain accepted partial
 +input before returning success and publish only validated complete transactions.
 +
-+The connector keeps constant-size framing state instead of buffering a whole
-+transaction. Receiver bounds, recoverable overflow, and atomic application
-+publication remain receiver responsibilities. Empty filtered transactions may
++Without `target.webhooks.notifier.transaction_batch`, the connector keeps
++constant-size framing state. The optional transaction batch buffers one complete
++cohort under explicit `max_rows` and `max_bytes` bounds before any HTTP delivery.
++Receiver bounds, recoverable overflow, and atomic application publication remain
++receiver responsibilities. Empty filtered transactions may
 +produce begin/commit pairs; a receiver must avoid writing receipt state for an
 +empty transaction if those writes are in the same source database. Such writes
 +would otherwise create an input feedback loop.
++
++#### Static tenant slices for transaction webhooks
++
++The optional `target.webhooks.notifier.transaction_batch.slice_receivers` is an ordered
++array of distinct private `http://host:port/pgstream` instance URLs (1–1024 entries).
++Index zero is ordinal zero. Every routed table and B/C/M subscription must cover
++exactly this set. Subscription query order does not change the ordinal ordering.
++The receiver count and order are immutable until every old owner has stopped.
++
++The producer validates the complete original native transaction before splitting it.
++For each I/U/D row, the lower-case canonical `tenant_id` UUID selects the receiver:
++SHA-256 over UTF-8, unsigned first eight digest bytes in big-endian order, modulo the
++receiver count (`sha256-modulo-v1`). Missing, malformed, duplicate or changing tenant
++identities refuse the original transaction. A native `pgstream.ddl` M marker reaches
++every receiver; unsupported control markers and tenantless T events refuse.
++
++A receiver gets `{"Slice":{"count":K,"ordinal":i},"Transaction":[B,...,C]}`.
++B and C are unchanged, including their source identity and commit position. DML rows
++only reach their selected ordinal. M markers retain their order in every projection.
++Original transaction indices retain gaps and C retains the original complete count;
++receivers must explicitly validate this sliced contract. Empty slices receive no
++B/C-only callback. An empty original cohort keeps the existing no-webhook checkpoint.
++
++`max_rows` and `max_bytes` still bound the original cohort. Each projected body must
++fit `max_bytes`, including the Slice envelope; aggregate projected bodies must fit
++the existing sender queue budget. Projection adds no checkpoint or delivery queue.
++Strict mode advances the shared source position only after every selected receiver
++accepts its body. A refused or uncertain delivery stops the producer; restarting
++replays the original position and identical projected bodies. A failed receiver can
++therefore pause later intake on healthy slices until platform replacement and
++producer restart/reconnect complete. This option does not introduce peer takeover.
 diff --git a/pkg/stream/config.go b/pkg/stream/config.go
-index cfbe55e..9b7a506 100644
+index cfbe55e..7ad56ba 100644
 --- a/pkg/stream/config.go
 +++ b/pkg/stream/config.go
 @@ -99,6 +99,19 @@ func (c *Config) IsValid() error {
@@ -162,7 +195,7 @@ index cfbe55e..9b7a506 100644
 +	}
 +	if w := c.Processor.Webhook; w != nil && w.Notifier.TransactionBatch != nil {
 +		b := w.Notifier.TransactionBatch
-+		if c.Listener.Postgres == nil || !c.Listener.Postgres.Replication.PluginArguments.IncludeTransactions || !w.Notifier.StrictMode || b.MaxRows == 0 || b.MaxBytes <= 0 {
++		if c.Listener.Postgres == nil || !c.Listener.Postgres.Replication.PluginArguments.IncludeTransactions || !w.Notifier.StrictMode || b.Validate() != nil {
 +			return errors.New("transaction batching requires framed strict webhooks and explicit positive row/byte bounds")
 +		}
 +	}
@@ -262,10 +295,10 @@ index ff35964..df598d2 100644
  	}
 diff --git a/pkg/stream/transaction_batch_test.go b/pkg/stream/transaction_batch_test.go
 new file mode 100644
-index 0000000..28cea22
+index 0000000..8c28f8c
 --- /dev/null
 +++ b/pkg/stream/transaction_batch_test.go
-@@ -0,0 +1,21 @@
+@@ -0,0 +1,36 @@
 +// SPDX-License-Identifier: Apache-2.0
 +package stream
 +
@@ -286,6 +319,21 @@ index 0000000..28cea22
 +	c.Listener.Postgres.Replication.PluginArguments.IncludeTransactions = true
 +	c.Processor.Webhook.Notifier.TransactionBatch.MaxBytes = 0
 +	require.ErrorContains(t, c.IsValid(), "transaction batching requires")
++}
++
++func TestStaticSliceRosterRequiresNativeFramedPipeline(t *testing.T) {
++	c := &Config{Listener: ListenerConfig{Postgres: &PostgresListenerConfig{}}, Processor: ProcessorConfig{Webhook: &WebhookProcessorConfig{}}}
++	c.Listener.Postgres.Replication.PluginArguments.IncludeTransactions = true
++	c.Processor.Webhook.Notifier.StrictMode = true
++	b := &notifier.TransactionBatchConfig{MaxRows: 128, MaxBytes: 1024 * 1024, SliceReceivers: []string{"http://evaluator:19913/pgstream", "http://evaluator-2:19913/pgstream"}}
++	c.Processor.Webhook.Notifier.TransactionBatch = b
++	require.NoError(t, c.IsValid())
++	b.SliceReceivers = []string{}
++	require.Error(t, c.IsValid(), "explicit empty roster refuses before starting the source")
++	b.SliceReceivers = []string{"http://evaluator:19913/pgstream", "http://evaluator:19913/pgstream"}
++	require.Error(t, c.IsValid(), "duplicate receiver refuses")
++	b.SliceReceivers = []string{"http://evaluator:19913/pgstream"}
++	require.NoError(t, c.IsValid())
 +}
 diff --git a/pkg/stream/transaction_framing_test.go b/pkg/stream/transaction_framing_test.go
 new file mode 100644
@@ -460,10 +508,21 @@ index 461afee..655c7c7 100644
  }
  
 diff --git a/pkg/wal/processor/webhook/notifier/config.go b/pkg/wal/processor/webhook/notifier/config.go
-index 4d3a650..11c8775 100644
+index 4d3a650..4ea82eb 100644
 --- a/pkg/wal/processor/webhook/notifier/config.go
 +++ b/pkg/wal/processor/webhook/notifier/config.go
-@@ -19,11 +19,12 @@ const (
+@@ -3,6 +3,10 @@
+ package notifier
+ 
+ import (
++	"errors"
++	"net/url"
++	"strconv"
++	"strings"
+ 	"time"
+ 
+ 	"github.com/xataio/pgstream/pkg/backoff"
+@@ -19,11 +23,12 @@ const (
  )
  
  type Config struct {
@@ -481,7 +540,7 @@ index 4d3a650..11c8775 100644
  }
  
  func (c *Config) maxQueueBytes() int64 {
-@@ -82,3 +83,10 @@ func (c *Config) backoffConfig() *backoff.Config {
+@@ -82,3 +87,38 @@ func (c *Config) backoffConfig() *backoff.Config {
  		},
  	}
  }
@@ -489,23 +548,56 @@ index 4d3a650..11c8775 100644
 +// TransactionBatchConfig bounds one complete native transaction envelope. A
 +// refused transaction retains its source WAL checkpoint for explicit recovery.
 +type TransactionBatchConfig struct {
-+	MaxRows  uint64 `mapstructure:"max_rows" yaml:"max_rows"`
-+	MaxBytes int64  `mapstructure:"max_bytes" yaml:"max_bytes"`
++	MaxRows        uint64   `mapstructure:"max_rows" yaml:"max_rows"`
++	MaxBytes       int64    `mapstructure:"max_bytes" yaml:"max_bytes"`
++	SliceReceivers []string `mapstructure:"slice_receivers" yaml:"slice_receivers"`
++}
++
++// Validate checks the opt-in ordered instance roster before starting a source.
++// Absence preserves the established unsliced transaction envelope.
++func (c *TransactionBatchConfig) Validate() error {
++	if c.MaxRows == 0 || c.MaxBytes <= 0 {
++		return errors.New("transaction batch requires positive row/byte bounds")
++	}
++	if c.SliceReceivers == nil {
++		return nil
++	}
++	if len(c.SliceReceivers) < 1 || len(c.SliceReceivers) > 1024 {
++		return errors.New("slice receivers require 1 to 1024 ordered instances")
++	}
++	seen := make(map[string]bool, len(c.SliceReceivers))
++	for _, address := range c.SliceReceivers {
++		u, err := url.Parse(address)
++		if err != nil || u.Scheme != "http" || u.Hostname() == "" || u.User != nil || u.Path != "/pgstream" || u.RawPath != "" || u.RawQuery != "" || u.ForceQuery || strings.ToLower(u.Host) != u.Host || u.Fragment != "" || u.String() != address {
++			return errors.New("slice receiver must be an explicit http instance /pgstream URL")
++		}
++		port, err := strconv.Atoi(u.Port())
++		if err != nil || port < 1024 || port > 65535 || strconv.Itoa(port) != u.Port() || seen[address] {
++			return errors.New("slice receivers require distinct explicit instance ports/addresses")
++		}
++		seen[address] = true
++	}
++	return nil
 +}
 diff --git a/pkg/wal/processor/webhook/notifier/transaction_batch.go b/pkg/wal/processor/webhook/notifier/transaction_batch.go
 new file mode 100644
-index 0000000..d236cce
+index 0000000..e2be070
 --- /dev/null
 +++ b/pkg/wal/processor/webhook/notifier/transaction_batch.go
-@@ -0,0 +1,107 @@
+@@ -0,0 +1,224 @@
 +// SPDX-License-Identifier: Apache-2.0
 +package notifier
 +
 +import (
 +	"bytes"
++	"crypto/sha256"
++	"encoding/binary"
++	"encoding/json"
 +	"errors"
 +	"fmt"
++	"regexp"
 +	"slices"
++	"strings"
 +
 +	"github.com/xataio/pgstream/pkg/wal"
 +	"github.com/xataio/pgstream/pkg/wal/processor/webhook/subscription"
@@ -516,12 +608,14 @@ index 0000000..d236cce
 +// envelope enters the sender queue, so neither partial HTTP success nor source
 +// checkpoint advancement is possible. At most one bounded envelope is retained.
 +type transactionBuffer struct {
-+	payload bytes.Buffer
-+	xid     int64
-+	rows    uint64
-+	source  wal.SourceIdentity
-+	nextLSN string
-+	urls    []string
++	payload   bytes.Buffer
++	xid       int64
++	rows      uint64
++	source    wal.SourceIdentity
++	nextLSN   string
++	urls      []string
++	slices    []string
++	projected []projectedData
 +}
 +
 +func destinations(subscriptions []*subscription.Subscription) []string {
@@ -546,13 +640,23 @@ index 0000000..d236cce
 +		return fail("native transaction index required")
 +	}
 +	urls := destinations(subscriptions)
++	if d.Action == "B" && n.transactionBatch.SliceReceivers != nil {
++		if err := n.transactionBatch.Validate(); err != nil {
++			return fail(err.Error())
++		}
++		expected := slices.Clone(n.transactionBatch.SliceReceivers)
++		slices.Sort(expected)
++		if !slices.Equal(urls, expected) {
++			return fail("subscriptions do not cover exact slice receiver roster")
++		}
++	}
 +	if d.Action == "B" {
 +		if *d.TransactionIndex != 0 || d.XID == 0 || d.SourceIdentity == nil || d.NextLSN == "" || event.CommitPosition != "" {
 +			return fail("invalid begin")
 +		}
 +		// A reconnect replays B from the last complete checkpoint. Discard only the
 +		// unacknowledged memory buffer; the source still owns every retained row.
-+		n.batch = &transactionBuffer{xid: d.XID, source: *d.SourceIdentity, nextLSN: d.NextLSN, urls: urls}
++		n.batch = &transactionBuffer{xid: d.XID, source: *d.SourceIdentity, nextLSN: d.NextLSN, urls: urls, slices: slices.Clone(n.transactionBatch.SliceReceivers)}
 +		n.batch.payload.WriteString(`{"Transaction":[`)
 +	} else {
 +		if n.batch == nil || d.XID != n.batch.xid || *d.TransactionIndex != n.batch.rows+1 {
@@ -567,6 +671,9 @@ index 0000000..d236cce
 +				return fail("incomplete or mismatched commit")
 +			}
 +		case "I", "U", "D", "M", "T":
++			if d.Action == "T" && n.batch.slices != nil {
++				return fail("truncate has no tenant slice")
++			}
 +			if event.CommitPosition != "" {
 +				return fail("partial event has checkpoint")
 +			}
@@ -588,6 +695,19 @@ index 0000000..d236cce
 +	if int64(n.batch.payload.Len()+len(raw)+2) > n.transactionBatch.MaxBytes {
 +		return fail("byte bound exceeded; recovery required")
 +	}
++	if n.batch.slices != nil {
++		ordinal := -1
++		if d.Action == "I" || d.Action == "U" || d.Action == "D" {
++			tenant, err := tenantID(d)
++			if err != nil {
++				return fail(err.Error())
++			}
++			ordinal = tenantBucket(tenant, len(n.batch.slices))
++		} else if d.Action == "M" && d.Prefix != "pgstream.ddl" {
++			return fail("unsupported sliced control marker")
++		}
++		n.batch.projected = append(n.batch.projected, projectedData{raw: raw, ordinal: ordinal})
++	}
 +	n.batch.payload.Write(raw)
 +	if d.Action != "C" {
 +		return nil, nil
@@ -602,8 +722,92 @@ index 0000000..d236cce
 +	if len(b.urls) == 0 {
 +		return fail("nonempty transaction has no destination")
 +	}
++	if b.slices != nil {
++		return n.projectTransaction(b, d.NextLSN, event.CommitPosition)
++	}
 +	b.payload.WriteString("]}")
 +	return &notifyMsg{urls: b.urls, payload: b.payload.Bytes(), lsn: d.NextLSN, commitPosition: event.CommitPosition}, nil
++}
++
++// Source indices and C's original count remain unchanged. The receiver admits
++// the gaps only through this explicit slice envelope; this producer validated
++// the original complete cohort before projection.
++type projectedData struct {
++	raw     json.RawMessage
++	ordinal int
++}
++
++var canonicalTenant = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
++
++func tenantID(d *wal.Data) (string, error) {
++	tenant := ""
++	for _, columns := range [][]wal.Column{d.Identity, d.Columns} {
++		found := false
++		for _, column := range columns {
++			if column.Name == "tenant_id" {
++				value, ok := column.Value.(string)
++				if found || !ok || !canonicalTenant.MatchString(value) || value == "00000000-0000-0000-0000-000000000000" || tenant != "" && tenant != value {
++					return "", errors.New("invalid or changing tenant_id")
++				}
++				found = true
++				tenant = value
++			}
++		}
++	}
++	if tenant == "" {
++		return "", errors.New("missing tenant_id")
++	}
++	return tenant, nil
++}
++func tenantBucket(tenant string, count int) int {
++	digest := sha256.Sum256([]byte(tenant))
++	return int(binary.BigEndian.Uint64(digest[:8]) % uint64(count))
++}
++func (n *Notifier) projectTransaction(b *transactionBuffer, lsn string, position wal.CommitPosition) (*notifyMsg, error) {
++	msg := &notifyMsg{payloads: make(map[string][]byte), lsn: lsn, commitPosition: position}
++	total := int64(0)
++	for ordinal, address := range b.slices {
++		changes := false
++		rows := make([]json.RawMessage, 0, len(b.projected))
++		for index, data := range b.projected {
++			if data.ordinal == -1 || data.ordinal == ordinal {
++				rows = append(rows, data.raw)
++				if index > 0 && index < len(b.projected)-1 {
++					changes = true
++				}
++			}
++		}
++		if !changes {
++			continue
++		}
++		prefix := fmt.Sprintf(`{"Slice":{"count":%d,"ordinal":%d},"Transaction":[`, len(b.slices), ordinal)
++		size := int64(len(prefix) + 2 + len(address) + max(0, len(rows)-1))
++		for _, raw := range rows {
++			size += int64(len(raw))
++		}
++		// Refuse before allocating a fanout that exceeds the existing sender budget.
++		// No extra delivery queue or checkpoint is created by slice projection.
++		if size-int64(len(address)) > n.transactionBatch.MaxBytes || total+size > n.queueLimit {
++			return nil, errors.New("transaction slice exceeds byte/queue bound; recovery required")
++		}
++		var out strings.Builder
++		out.Grow(int(size) - len(address))
++		out.WriteString(prefix)
++		for i, raw := range rows {
++			if i != 0 {
++				out.WriteByte(',')
++			}
++			out.Write(raw)
++		}
++		out.WriteString("]}")
++		msg.urls = append(msg.urls, address)
++		msg.payloads[address] = []byte(out.String())
++		total += size
++	}
++	if len(msg.urls) == 0 {
++		return nil, errors.New("nonempty transaction has no selected slice")
++	}
++	return msg, nil
 +}
 diff --git a/pkg/wal/processor/webhook/notifier/transaction_batch_test.go b/pkg/wal/processor/webhook/notifier/transaction_batch_test.go
 new file mode 100644
@@ -746,11 +950,343 @@ index 0000000..7c8c9f1
 +	require.NoError(t, n.notify(t.Context(), &notifyMsg{commitPosition: "0/100"}))
 +	require.Equal(t, []wal.CommitPosition{"0/100"}, saved)
 +}
+diff --git a/pkg/wal/processor/webhook/notifier/transaction_slice_test.go b/pkg/wal/processor/webhook/notifier/transaction_slice_test.go
+new file mode 100644
+index 0000000..4929f8a
+--- /dev/null
++++ b/pkg/wal/processor/webhook/notifier/transaction_slice_test.go
+@@ -0,0 +1,318 @@
++// SPDX-License-Identifier: Apache-2.0
++package notifier
++
++import (
++	"context"
++	"encoding/json"
++	"fmt"
++	"io"
++	"net/http"
++	"net/http/httptest"
++	"slices"
++	"sync"
++	"sync/atomic"
++	"testing"
++
++	"github.com/stretchr/testify/require"
++	"github.com/xataio/pgstream/pkg/backoff"
++	"github.com/xataio/pgstream/pkg/wal"
++	"github.com/xataio/pgstream/pkg/wal/processor/webhook/subscription"
++)
++
++var sliceTenants = []string{"11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222", "33333333-3333-4333-8333-333333333333", "01234567-89ab-cdef-0123-456789abcdef"}
++
++func TestTransactionSliceHashConformance(t *testing.T) {
++	// These vectors use the exact unsigned 64-bit big-endian prefix, independently
++	// calculated from the application's sha256-modulo-v1 rule. K3/K7 catch a
++	// truncated 32-bit prefix that power-of-two configurations can conceal.
++	for i, expected := range [][2]int{{1, 0}, {0, 0}, {1, 3}, {0, 6}} {
++		require.Equal(t, expected[0], tenantBucket(sliceTenants[i], 3), "K3 exact 64-bit prefix")
++		require.Equal(t, expected[1], tenantBucket(sliceTenants[i], 7), "K7 exact 64-bit prefix")
++	}
++}
++func sliceFixture(k int) (*Notifier, []*subscription.Subscription, func(string, uint64) *wal.Event) {
++	n, _, event := batchFixture()
++	n.transactionBatch.MaxRows = 10
++	n.transactionBatch.MaxBytes = 16384
++	urls := make([]string, k)
++	subs := make([]*subscription.Subscription, k)
++	for i := range urls {
++		urls[i] = fmt.Sprintf("http://worker-%d:19913/pgstream", k-i)
++		subs[i] = &subscription.Subscription{URL: urls[i]}
++	}
++	n.transactionBatch.SliceReceivers = urls
++	return n, subs, event
++}
++func tenantEvent(event func(string, uint64) *wal.Event, action string, index uint64, tenant string) *wal.Event {
++	e := event(action, index)
++	e.Data.Schema = "clinical"
++	e.Data.Table = "entries"
++	e.Data.Columns = []wal.Column{{Name: "tenant_id", Type: "uuid", Value: tenant}, {Name: "doc", Type: "jsonb", Value: map[string]any{"synthetic": true}}}
++	if action == "D" {
++		e.Data.Identity = e.Data.Columns
++		e.Data.Columns = nil
++	}
++	return e
++}
++func completeSlice(t *testing.T, n *Notifier, subs []*subscription.Subscription, events []*wal.Event) *notifyMsg {
++	t.Helper()
++	var msg *notifyMsg
++	for index, e := range events {
++		var err error
++		msg, err = n.batchTransaction(e, subs)
++		require.NoError(t, err)
++		if index < len(events)-1 {
++			require.Nil(t, msg, "partial cohort never enters sender")
++		}
++	}
++	require.NotNil(t, msg)
++	return msg
++}
++
++type sliceEnvelope struct {
++	Slice struct {
++		Count   int `json:"count"`
++		Ordinal int `json:"ordinal"`
++	}
++	Transaction []json.RawMessage
++}
++
++func TestTransactionSliceWholeCohortAndMarkers(t *testing.T) {
++	n, subs, event := sliceFixture(3)
++	marker := event("M", 2)
++	marker.Data.Prefix = "pgstream.ddl"
++	marker.Data.Content = `{"schema_name":"clinical","objects":[]}`
++	original := []*wal.Event{event("B", 0), tenantEvent(event, "I", 1, sliceTenants[0]), marker, tenantEvent(event, "D", 3, sliceTenants[1]), tenantEvent(event, "U", 4, sliceTenants[0]), event("C", 5)}
++	msg := completeSlice(t, n, subs, original)
++	require.Equal(t, n.transactionBatch.SliceReceivers, msg.urls, "ordinal order does not sort URLs")
++	require.Empty(t, msg.payload)
++	require.Equal(t, wal.CommitPosition("0/200"), msg.commitPosition)
++	for ordinal, address := range msg.urls {
++		var envelope sliceEnvelope
++		require.NoError(t, json.Unmarshal(msg.payloads[address], &envelope))
++		require.Equal(t, 3, envelope.Slice.Count)
++		require.Equal(t, ordinal, envelope.Slice.Ordinal)
++		var want []uint64
++		switch ordinal {
++		case 0:
++			want = []uint64{0, 2, 3, 5}
++		case 1:
++			want = []uint64{0, 1, 2, 4, 5}
++		case 2:
++			want = []uint64{0, 2, 5}
++		}
++		var got []uint64
++		for _, raw := range envelope.Transaction {
++			var d wal.Data
++			require.NoError(t, json.Unmarshal(raw, &d))
++			got = append(got, *d.TransactionIndex)
++			if d.Action == "C" {
++				require.Equal(t, uint64(4), *d.TransactionCount, "original source count is retained despite projection gaps")
++				require.Equal(t, original[0].Data.SourceIdentity, d.SourceIdentity)
++			}
++		}
++		require.Equal(t, want, got)
++		begin, _ := n.serialiser(original[0].Data)
++		commit, _ := n.serialiser(original[len(original)-1].Data)
++		require.JSONEq(t, string(begin), string(envelope.Transaction[0]))
++		require.JSONEq(t, string(commit), string(envelope.Transaction[len(envelope.Transaction)-1]))
++	}
++	require.Equal(t, len(msg.payloads[msg.urls[0]])+len(msg.payloads[msg.urls[1]])+len(msg.payloads[msg.urls[2]])+len(msg.urls[0])+len(msg.urls[1])+len(msg.urls[2]), msg.size())
++}
++func TestTransactionSliceK1ParityAndSilentSlices(t *testing.T) {
++	for _, k := range []int{1, 3, 7} {
++		t.Run(fmt.Sprint(k), func(t *testing.T) {
++			n, subs, event := sliceFixture(k)
++			original := []*wal.Event{event("B", 0), tenantEvent(event, "I", 1, sliceTenants[0]), event("C", 2)}
++			msg := completeSlice(t, n, subs, original)
++			ordinal := tenantBucket(sliceTenants[0], k)
++			require.Equal(t, []string{n.transactionBatch.SliceReceivers[ordinal]}, msg.urls, "idle slices receive no B/C-only feedback")
++			var envelope sliceEnvelope
++			require.NoError(t, json.Unmarshal(msg.payloads[msg.urls[0]], &envelope))
++			require.Equal(t, ordinal, envelope.Slice.Ordinal)
++			require.Len(t, envelope.Transaction, len(original))
++			for i, e := range original {
++				raw, err := n.serialiser(e.Data)
++				require.NoError(t, err)
++				require.JSONEq(t, string(raw), string(envelope.Transaction[i]))
++			}
++		})
++	}
++	n, subs, event := sliceFixture(3)
++	msg := completeSlice(t, n, subs, []*wal.Event{event("B", 0), event("C", 1)})
++	require.Empty(t, msg.urls)
++	require.Empty(t, msg.payloads)
++	require.Equal(t, wal.CommitPosition("0/200"), msg.commitPosition)
++}
++func TestTransactionSliceRefusals(t *testing.T) {
++	scenarios := []string{"missing-tenant", "uppercase-tenant", "changing-tenant", "duplicate-column", "invalid-tenant", "truncate", "unknown-marker", "roster", "rows", "bytes", "count", "index", "source", "partial-checkpoint"}
++	for _, scenario := range scenarios {
++		t.Run(scenario, func(t *testing.T) {
++			n, subs, event := sliceFixture(3)
++			_, err := n.batchTransaction(event("B", 0), subs)
++			require.NoError(t, err)
++			row := tenantEvent(event, "I", 1, sliceTenants[0])
++			switch scenario {
++			case "missing-tenant":
++				row.Data.Columns = nil
++			case "uppercase-tenant":
++				row.Data.Columns[0].Value = "ABCDEF01-1111-4111-8111-111111111111"
++			case "changing-tenant":
++				row.Data.Identity = []wal.Column{{Name: "tenant_id", Value: sliceTenants[1]}}
++			case "duplicate-column":
++				row.Data.Columns = append(row.Data.Columns, row.Data.Columns[0])
++			case "invalid-tenant":
++				row.Data.Columns[0].Value = 123
++			case "truncate":
++				row.Data.Action = "T"
++			case "unknown-marker":
++				row.Data.Action = "M"
++				row.Data.Prefix = "arbitrary"
++			case "roster":
++				subs = subs[:2]
++			case "rows":
++				n.transactionBatch.MaxRows = 0
++			case "bytes":
++				n.transactionBatch.MaxBytes = 1
++			case "index":
++				*row.Data.TransactionIndex = 2
++			case "partial-checkpoint":
++				row.CommitPosition = "0/200"
++			}
++			msg, err := n.batchTransaction(row, subs)
++			if scenario == "count" || scenario == "source" {
++				require.NoError(t, err)
++				require.Nil(t, msg)
++				commit := event("C", 2)
++				if scenario == "count" {
++					*commit.Data.TransactionCount = 0
++				} else {
++					changed := *commit.Data.SourceIdentity
++					changed.Slot = "other"
++					commit.Data.SourceIdentity = &changed
++				}
++				msg, err = n.batchTransaction(commit, subs)
++			}
++			require.Error(t, err)
++			require.Nil(t, msg)
++			require.Nil(t, n.batch)
++		})
++	}
++}
++func TestTransactionSliceEnvelopeAndQueueBounds(t *testing.T) {
++	n, subs, event := sliceFixture(3)
++	original := []*wal.Event{event("B", 0), tenantEvent(event, "I", 1, sliceTenants[0]), event("C", 2)}
++	msg := completeSlice(t, n, subs, original)
++	originalBytes, _ := json.Marshal(map[string]any{"Transaction": []*wal.Data{original[0].Data, original[1].Data, original[2].Data}})
++	require.Greater(t, len(msg.payloads[msg.urls[0]]), len(originalBytes))
++	n.transactionBatch.MaxBytes = int64(len(originalBytes))
++	_, err := n.batchTransaction(original[0], subs)
++	require.NoError(t, err)
++	_, err = n.batchTransaction(original[1], subs)
++	require.NoError(t, err)
++	failed, err := n.batchTransaction(original[2], subs)
++	require.ErrorContains(t, err, "slice exceeds byte/queue bound")
++	require.Nil(t, failed)
++	n.transactionBatch.MaxBytes = 16384
++	n.queueLimit = 1000
++	marker := event("M", 1)
++	marker.Data.Prefix = "pgstream.ddl"
++	marker.Data.Content = `{"schema_name":"clinical","objects":[]}`
++	_, err = n.batchTransaction(event("B", 0), subs)
++	require.NoError(t, err)
++	_, err = n.batchTransaction(marker, subs)
++	require.NoError(t, err)
++	failed, err = n.batchTransaction(event("C", 2), subs)
++	require.ErrorContains(t, err, "slice exceeds byte/queue bound")
++	require.Nil(t, failed)
++}
++func TestTransactionSliceStrictAcceptanceAndReplay(t *testing.T) {
++	for _, failure := range []string{"refusal", "lost-reply"} {
++		t.Run(failure, func(t *testing.T) {
++			var unavailable atomic.Bool
++			unavailable.Store(true)
++			var mu sync.Mutex
++			bodies := map[int][][]byte{}
++			var positions []wal.CommitPosition
++			server := func(ordinal int) *httptest.Server {
++				return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++					raw, err := io.ReadAll(r.Body)
++					require.NoError(t, err)
++					mu.Lock()
++					bodies[ordinal] = append(bodies[ordinal], raw)
++					mu.Unlock()
++					require.Equal(t, "0/200", r.Header.Get("X-Pgstream-LSN"))
++					require.Equal(t, "0/200", r.Header.Get("Idempotency-Key"))
++					if ordinal == 1 && unavailable.Load() {
++						if failure == "lost-reply" {
++							conn, _, err := w.(http.Hijacker).Hijack()
++							require.NoError(t, err)
++							require.NoError(t, conn.Close())
++							return
++						}
++						w.WriteHeader(http.StatusServiceUnavailable)
++						return
++					}
++					w.WriteHeader(http.StatusNoContent)
++				}))
++			}
++			a, b := server(0), server(1)
++			defer a.Close()
++			defer b.Close()
++			n, _, event := sliceFixture(2)
++			n.transactionBatch.SliceReceivers = []string{a.URL + "/pgstream", b.URL + "/pgstream"}
++			n.backoffProvider = backoff.NewProvider(&backoff.Config{DisableRetries: true})
++			n.checkpointer = func(_ context.Context, values []wal.CommitPosition) error {
++				positions = append(positions, values...)
++				return nil
++			}
++			subs := []*subscription.Subscription{{URL: n.transactionBatch.SliceReceivers[1]}, {URL: n.transactionBatch.SliceReceivers[0]}}
++			marker := event("M", 1)
++			marker.Data.Prefix = "pgstream.ddl"
++			marker.Data.Content = `{"schema_name":"clinical","objects":[]}`
++			original := []*wal.Event{event("B", 0), marker, event("C", 2)}
++			msg := completeSlice(t, n, subs, original)
++			require.Error(t, n.notify(t.Context(), msg))
++			require.Empty(t, positions, "one failed receiver retains the shared source checkpoint")
++			mu.Lock()
++			require.Len(t, bodies[0], 1)
++			require.Len(t, bodies[1], 1)
++			mu.Unlock()
++			unavailable.Store(false)
++			// Reconnect can discard an unaccepted partial buffer, then replay the exact
++			// complete source position. Every emitted per-URL body is byte-identical.
++			_, err := n.batchTransaction(event("B", 0), subs)
++			require.NoError(t, err)
++			replay := completeSlice(t, n, subs, original)
++			require.Equal(t, msg.payloads, replay.payloads)
++			require.NoError(t, n.notify(t.Context(), replay))
++			require.Equal(t, []wal.CommitPosition{"0/200"}, positions)
++			mu.Lock()
++			defer mu.Unlock()
++			for _, seen := range bodies {
++				require.Len(t, seen, 2)
++				require.Equal(t, seen[0], seen[1])
++			}
++			require.True(t, slices.Equal(msg.urls, replay.urls))
++		})
++	}
++}
++func TestTransactionSliceRosterConfiguration(t *testing.T) {
++	valid := []string{"http://evaluator:19913/pgstream", "http://evaluator-2:19913/pgstream"}
++	for _, urls := range [][]string{nil, valid} {
++		require.NoError(t, (&TransactionBatchConfig{MaxRows: 1, MaxBytes: 1024, SliceReceivers: urls}).Validate())
++	}
++	for _, urls := range [][]string{{}, {valid[0], valid[0]}, {"https://evaluator:19913/pgstream"}, {"http://evaluator/pgstream"}, {"http://evaluator:19913/"}, {"http://user:pass@evaluator:19913/pgstream"}, {"http://evaluator:19913/pgstream?x=1"}} {
++		require.Error(t, (&TransactionBatchConfig{MaxRows: 1, MaxBytes: 1024, SliceReceivers: urls}).Validate())
++	}
++}
++
++func TestTransactionSliceConfigurationIsImmutable(t *testing.T) {
++	selected := []string{"http://worker-1:19913/pgstream", "http://worker-2:19913/pgstream"}
++	cfg := &Config{StrictMode: true, TransactionBatch: &TransactionBatchConfig{MaxRows: 10, MaxBytes: 4096, SliceReceivers: selected}}
++	n := New(cfg, nil)
++	selected[0] = "http://other:19913/pgstream"
++	cfg.TransactionBatch.MaxBytes = 1
++	require.Equal(t, "http://worker-1:19913/pgstream", n.transactionBatch.SliceReceivers[0])
++	require.Equal(t, int64(4096), n.transactionBatch.MaxBytes)
++}
 diff --git a/pkg/wal/processor/webhook/notifier/webhook_notifier.go b/pkg/wal/processor/webhook/notifier/webhook_notifier.go
-index 98dc872..51085db 100644
+index 98dc872..410a376 100644
 --- a/pkg/wal/processor/webhook/notifier/webhook_notifier.go
 +++ b/pkg/wal/processor/webhook/notifier/webhook_notifier.go
-@@ -29,17 +29,21 @@ const maxResponseBodyBytes = 4 * 1024
+@@ -10,6 +10,7 @@ import (
+ 	"io"
+ 	"net/http"
+ 	"runtime/debug"
++	"slices"
+ 	"sync"
+ 	"time"
+ 
+@@ -29,17 +30,21 @@ const maxResponseBodyBytes = 4 * 1024
  var errNotifyStopped = errors.New("stop processing, notify has stopped")
  
  type Notifier struct {
@@ -777,11 +1313,24 @@ index 98dc872..51085db 100644
  	// notifyChan never closes, avoids send panic
  	shutdownCh chan struct{}
  	notifyDone chan struct{}
-@@ -64,13 +68,15 @@ func New(cfg *Config, store subscriptionRetriever, opts ...Option) *Notifier {
+@@ -54,6 +59,12 @@ type subscriptionRetriever interface {
+ type Option func(*Notifier)
+ 
+ func New(cfg *Config, store subscriptionRetriever, opts ...Option) *Notifier {
++	transactionBatch := cfg.TransactionBatch
++	if transactionBatch != nil {
++		value := *transactionBatch
++		value.SliceReceivers = slices.Clone(transactionBatch.SliceReceivers)
++		transactionBatch = &value
++	}
+ 	n := &Notifier{
+ 		logger: loglib.NewNoopLogger(),
+ 		client: &http.Client{
+@@ -64,13 +75,15 @@ func New(cfg *Config, store subscriptionRetriever, opts ...Option) *Notifier {
  		workerCount:       cfg.workerCount(),
  		backoffProvider:   backoff.NewProvider(cfg.backoffConfig()),
  		strictMode:        cfg.StrictMode,
-+		transactionBatch:  cfg.TransactionBatch,
++		transactionBatch:  transactionBatch,
  		serialiser:        json.Marshal,
  		shutdownCh:        make(chan struct{}),
  		notifyDone:        make(chan struct{}),
@@ -794,7 +1343,7 @@ index 98dc872..51085db 100644
  
  	for _, opt := range opts {
  		opt(n)
-@@ -120,13 +126,29 @@ func (n *Notifier) ProcessWALEvent(ctx context.Context, walEvent *wal.Event) (er
+@@ -120,13 +133,29 @@ func (n *Notifier) ProcessWALEvent(ctx context.Context, walEvent *wal.Event) (er
  		n.logger.Debug("matching subscriptions", loglib.Fields{"subscriptions": subscriptions})
  	}
  
@@ -825,7 +1374,16 @@ index 98dc872..51085db 100644
  	if !n.queueBytesSema.TryAcquire(msgSize) {
  		n.logger.Warn(nil, "webhook notifier: max queue bytes reached, processing blocked")
  		if err := n.queueBytesSema.Acquire(ctx, msgSize); err != nil {
-@@ -228,7 +250,7 @@ func (n *Notifier) notify(ctx context.Context, msg *notifyMsg) error {
+@@ -203,7 +232,7 @@ func (n *Notifier) notify(ctx context.Context, msg *notifyMsg) error {
+ 		wg := &sync.WaitGroup{}
+ 		for i := 0; i < int(n.workerCount); i++ {
+ 			wg.Add(1)
+-			go n.webhookWorker(ctx, wg, msg.payload, msg.lsn, urlChan, errChan)
++			go n.webhookWorker(ctx, wg, msg, urlChan, errChan)
+ 		}
+ 
+ 		for _, url := range msg.urls {
+@@ -228,7 +257,7 @@ func (n *Notifier) notify(ctx context.Context, msg *notifyMsg) error {
  		}
  	}
  
@@ -834,6 +1392,51 @@ index 98dc872..51085db 100644
  		if err := n.checkpointer(ctx, []wal.CommitPosition{msg.commitPosition}); err != nil {
  			return fmt.Errorf("checkpointing commit position: %w", err)
  		}
+@@ -237,10 +266,19 @@ func (n *Notifier) notify(ctx context.Context, msg *notifyMsg) error {
+ 	return nil
+ }
+ 
+-func (n *Notifier) webhookWorker(ctx context.Context, wg *sync.WaitGroup, payload []byte, lsn string, urls <-chan string, errChan chan<- error) {
++func (n *Notifier) webhookWorker(ctx context.Context, wg *sync.WaitGroup, msg *notifyMsg, urls <-chan string, errChan chan<- error) {
+ 	defer wg.Done()
+ 	for url := range urls {
+-		if err := n.sendWebhook(ctx, payload, lsn, url); err != nil {
++		payload := msg.payload
++		if msg.payloads != nil {
++			var found bool
++			payload, found = msg.payloads[url]
++			if !found {
++				errChan <- errors.New("slice payload missing for selected receiver")
++				continue
++			}
++		}
++		if err := n.sendWebhook(ctx, payload, msg.lsn, url); err != nil {
+ 			errChan <- fmt.Errorf("webhook url %s: %w", url, err)
+ 		}
+ 	}
+diff --git a/pkg/wal/processor/webhook/notifier/webhook_notify_msg.go b/pkg/wal/processor/webhook/notifier/webhook_notify_msg.go
+index 242f734..a8609ed 100644
+--- a/pkg/wal/processor/webhook/notifier/webhook_notify_msg.go
++++ b/pkg/wal/processor/webhook/notifier/webhook_notify_msg.go
+@@ -13,6 +13,7 @@ import (
+ type notifyMsg struct {
+ 	urls           []string
+ 	payload        []byte
++	payloads       map[string][]byte
+ 	lsn            string
+ 	commitPosition wal.CommitPosition
+ }
+@@ -49,5 +50,9 @@ func (m *notifyMsg) size() int {
+ 	for _, url := range m.urls {
+ 		urlSize += len(url)
+ 	}
+-	return len(m.payload) + urlSize
++	size := len(m.payload) + urlSize
++	for _, payload := range m.payloads {
++		size += len(payload)
++	}
++	return size
+ }
 diff --git a/pkg/wal/replication/postgres/pg_replication_handler.go b/pkg/wal/replication/postgres/pg_replication_handler.go
 index 0abf017..e06c74c 100644
 --- a/pkg/wal/replication/postgres/pg_replication_handler.go

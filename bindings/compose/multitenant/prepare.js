@@ -40,6 +40,7 @@ function prepare (args) {
   const realtime = require('./realtime-workers'), selectedRealtime = realtime.selection();
   const diagnostics = require('./diagnostics').selection();
   const evaluator = require('./evaluator-workers'), selectedEvaluator = evaluator.selection();
+  if (selectedRealtime && selectedEvaluator && selectedRealtime.workers !== selectedEvaluator.workers) throw new TypeError('Static role counts must agree');
   const evaluatorSeed = selectedEvaluator && require('./config').tenantIds();
   if (selectedEvaluator) evaluator.assertSeed(selectedEvaluator, evaluatorSeed);
   const leaseSessions = require('./registry-plan').leaseSessions();
@@ -80,10 +81,7 @@ function prepare (args) {
   write(path.join(state, 'vault/demo.hcl'), 'disable_mlock = true\nui = false\napi_addr = "https://vault:8200"\nstorage "file" { path = "/vault/file" }\nlistener "tcp" {\n  address = "0.0.0.0:8200"\n  tls_cert_file = "/run/ns-tls/server.crt"\n  tls_key_file = "/run/ns-tls/server.key"\n}\n');
   fs.chmodSync(path.join(state, 'vault/demo.hcl'), 0o644);
   if (selectedRealtime) {
-    fs.mkdirSync(path.join(state, 'placement'), { mode: 0o700 });
-    const map = realtime.initial(selectedRealtime);
-    write(path.join(state, 'placement/backend.json'), JSON.stringify(map) + '\n');
-    write(path.join(state, 'placement/routes.json'), JSON.stringify(map) + '\n');
+    for (const service of realtime.services(selectedRealtime).filter(name => name.startsWith('realtime-'))) fs.mkdirSync(path.join(state, service), {mode: 0o700});
     write(path.join(state, 'compose.realtime.yaml'), realtime.compose(selectedRealtime, path.join(base, 'compose.yaml'), replicas.instances(apiReplicas).map(node => node.service)));
   }
   if (selectedEvaluator) {
@@ -93,7 +91,7 @@ function prepare (args) {
   write(path.join(state, 'edge/nginx.conf'), require('./edge').render(fs.readFileSync(path.join(base, 'nginx.compose.conf'), 'utf8'), { replicas: apiReplicas, realtime: !!selectedRealtime }));
   write(path.join(state, 'compose.replicas.yaml'), replicas.compose(apiReplicas, path.join(base, 'compose.yaml'))+require('./networks').render(selectedNetworks));
   write(path.join(base, '.env'), 'NS_PGSTREAM='+(require('./pgstream').enabled()?'1':'0')+'\nNS_DEPLOY_COMMIT=' + deployCommit + '\nNS_DEMO_PROJECT=' + options.project + '\nNS_API_REPLICAS=' + apiReplicas + '\n' +
-    (selectedRealtime ? 'NS_REALTIME_WORKERS=' + selectedRealtime.workers + '\nNS_REALTIME_SHARDS=' + selectedRealtime.shards + '\n' : '') +
+    (selectedRealtime ? 'NS_REALTIME_WORKERS=' + selectedRealtime.workers + '\n' : '') +
     (selectedEvaluator ? 'NS_EVALUATOR_WORKERS=' + selectedEvaluator.workers + '\nNS_PGSTREAM_WAL_SENDERS=' + Math.max(4, selectedEvaluator.workers + 2) + '\n' : '') +
     (connectionBudget?'NS_CONNECTION_BUDGET=1\n':'') + 'NS_M7_DIAGNOSTICS=' + diagnostics.enabled + '\nNS_M7_DIAGNOSTICS_INTERVAL_MS=' + diagnostics.interval + '\n' +
     require('./clinical-isolation').envLines(clinicalIsolation) +

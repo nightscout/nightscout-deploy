@@ -98,7 +98,7 @@ test('K2 installs one strict producer with every receiver, route and transaction
  const f=fixture();
  try{
   const receivers=['http://synthetic-intake-2:19913/','http://synthetic-intake:19913/'];
-  f.options.config.processAssignment={ordinal:1,receivers};
+  f.options.config.processAssignment={count:2,ordinal:1,receivers};
   await f.binding.init(f.options);
   const inserts=f.sql.filter(row=>row.text.startsWith('INSERT INTO pgstream.webhook_subscriptions')).map(row=>row.values);
   const expected=receivers.flatMap(url=>[

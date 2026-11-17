@@ -60,7 +60,7 @@ function layout(prefix = 'nsdemo') {
     roles:Object.fromEntries(names.map(name=>[name,prefix+'_'+name])),mount:prefix+'_transit'};
 }
 const { insertionGrants, grants } = require('../../lib/server/ordinary-deployment-grants');
-function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress,registryMode=true,realtimePlacement=null}) {
+function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress,registryMode=true,realtimeOwnership=null}) {
   if(!registryMode)throw new TypeError('STATIC_PRODUCT_CONFIGURATION_RETIRED');
   const ns=l.namespaces, base='/run/ns-config',ipc='/run/ns-ipc';
   const domainNamespaces=Object.fromEntries(clinical.map(name=>[name,ns[name]]));
@@ -111,7 +111,7 @@ function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress,
   let docs = {configs,environments,operations,admission,remote,locks,ui:{version:1,tenants:aliases.map(aliases=>({aliases,theme:'default'}))}};
   docs = require('./registry-plan').expand(docs,{layout:l,urls,vaultAddress});
   const evaluatorWorkers = require('./evaluator-workers');
-  return evaluatorWorkers.expand(require('./realtime-workers').expand(require('./replicas').expand(docs), realtimePlacement), evaluatorWorkers.selection());
+  return evaluatorWorkers.expand(require('./realtime-workers').expand(require('./replicas').expand(docs), realtimeOwnership), evaluatorWorkers.selection());
 }
 function lifecycle(l) {
   const aliases={rt_checkpoint:'checkpoint',eval_checkpoint:'evaluator_checkpoint',alarm:'alarm_suppression',outbox:'notification_outbox',display_settings:'tenant_settings'};
@@ -137,18 +137,15 @@ function validateFiles(directory, docs) {
   const namespaces=require('../../lib/server/serve/operation-cohort').protectedNamespaces;
   for(const role of Object.keys(docs.configs)){
     const productRole = role.startsWith('api-') ? 'api' : role.startsWith('realtime-') ? 'realtime' : role.startsWith('evaluator-') ? 'evaluator' : role;
-    const env=Object.fromEntries(Object.entries(docs.environments[role]).map(([key,value])=>[key,typeof value==='string'?value.replace('/run/ns-config',path.join(directory,role)).replace('/run/ns-placement',path.join(directory,'placement')):value]));
+    const env=Object.fromEntries(Object.entries(docs.environments[role]).map(([key,value])=>[key,typeof value==='string'?value.replace('/run/ns-config',path.join(directory,role)):value]));
     const internal=require('../../lib/server/internal-api/listener-config').resolve([productRole],env);
     const parsed=parsers[productRole](env,internal),operation=require('../../lib/server/serve/operation-cohort-config').load(env,internal);
     const participant=operation.participants.find(row=>row.id===operation.participantId);
     require('./evaluator-workers').validate(docs, role, parsed, operation);
     if(JSON.stringify(namespaces(parsed).filter(name => name !== operation.namespace).sort())!==JSON.stringify(participant.namespaces))throw new TypeError('Deployment participant namespace mismatch');
-    if (operation.placement) {
-      const map = operation.placement.current(), peers = operation.participants.filter(row => row.roles.includes('realtime'));
-      const key = require('../../lib/server/internal-api/listener-config').key;
-      if (peers.length !== map.workers.size || new Set(peers.map(row => row.worker)).size !== peers.length ||
-          peers.some(row => !map.workers.has(row.worker) || key(row.endpoint) !== key(map.workers.get(row.worker).endpoint))) throw new TypeError('Deployment realtime placement coverage mismatch');
-    }
+    require('../../lib/realtime-ownership').census(operation.participants);
+    if (productRole === 'realtime' && (participant.slice.count !== parsed.ownership.count || participant.slice.ordinal !== parsed.ownership.ordinal)) throw new TypeError('Deployment realtime ordinal mismatch');
+
   }
   // The ui's own parser (tenant ceiling, aliases), on the written file when there is one, so a
   // refusal surfaces at bootstrap instead of when the ui starts.
