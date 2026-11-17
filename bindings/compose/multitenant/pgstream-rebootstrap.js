@@ -115,13 +115,13 @@ async function run(p,{docker=platform(),routes}={}){
  plan(p);const envFile=p.environmentFile||path.join(p.deploymentDirectory,'.env'),env=Object.fromEntries(read(envFile).trim().split('\n').map(line=>{const at=line.indexOf('=');return [line.slice(0,at),line.slice(at+1)];}));
  need(env.NS_DEMO_PROJECT===p.project&&env.NS_DEMO_STATE===p.stateDirectory&&env.NS_SOURCE_COMMIT===p.source.coreCommit&&env.NS_PGSTREAM==='1','PGSTREAM_REBOOTSTRAP_PREPARATION');
  const complete=JSON.parse(read(path.join(p.stateDirectory,'bootstrap/complete.json')));need(complete.sourceCommit===p.source.coreCommit&&complete.deployCommit===p.source.deployCommit,'PGSTREAM_REBOOTSTRAP_PREPARATION_SOURCE');
- need(path.dirname(p.evaluatorConfig)===path.join(p.stateDirectory,'evaluator'),'PGSTREAM_REBOOTSTRAP_CONFIG_PATH');const c=JSON.parse(read(p.evaluatorConfig));need(c.pgstream?.slot===p.slot&&c.postgres&&SHA.test(p.evaluatorConfigSha256)&&hash(read(p.evaluatorConfig))===p.evaluatorConfigSha256,'PGSTREAM_REBOOTSTRAP_CONFIG');
+ need(path.dirname(p.evaluatorConfig)===path.join(p.stateDirectory,'evaluator'),'PGSTREAM_REBOOTSTRAP_CONFIG_PATH');const c=JSON.parse(read(p.evaluatorConfig));need(c.pgstream?.slot===p.slot&&/^[a-f0-9]{32}$/.test(c.pgstream.generation)&&c.postgres&&SHA.test(p.evaluatorConfigSha256)&&hash(read(p.evaluatorConfig))===p.evaluatorConfigSha256,'PGSTREAM_REBOOTSTRAP_CONFIG');
  routes=routes||require('../../lib/pgstream/evaluator').routes({...c,namespaces:c.postgres.namespaces});
  const wireFile=path.join(p.stateDirectory,'pgstream','pgstream.yaml'),wireText=read(wireFile);need(SHA.test(p.wireConfigSha256)&&hash(wireText)===p.wireConfigSha256,'PGSTREAM_REBOOTSTRAP_WIRE_CONFIG');
  const wire=JSON.parse(wireText),source=wire.source?.postgres,target=wire.target?.webhooks;
  // Recovery admits both historical uncached and current cached wire. The
  // stopped worker discards its cache; exact stored subscriptions are checked below.
- need(source?.mode==='replication'&&source.replication?.replication_slot===p.slot&&new URL(source.url).username===c.pgstream.streamRole&&decodeURIComponent(new URL(source.url).pathname)==='/'+p.database.name&&source.replication.plugin.add_tables.split(',').sort().join(',')===routes.map(row=>row.schema+'.'+row.table).sort().join(',')&&target?.notifier?.strict_mode===true,'PGSTREAM_REBOOTSTRAP_WIRE_CONFIG');
+ need(source?.mode==='replication'&&source.replication?.replication_slot===p.slot&&new URL(source.url).username===c.pgstream.streamRole&&decodeURIComponent(new URL(source.url).pathname)==='/'+p.database.name&&source.replication.plugin.add_tables.split(',').sort().join(',')===routes.map(row=>row.schema+'.'+row.table).sort().join(',')&&source.replication.plugin.include_xids===true&&source.replication.plugin.include_transactions===true&&target?.notifier?.strict_mode===true&&target.notifier.transaction_batch?.max_rows===(c.maxRows??10000)&&target.notifier.transaction_batch?.max_bytes===c.pgstream.receiver.maxBytes,'PGSTREAM_REBOOTSTRAP_WIRE_CONFIG');
  const composeArgs=files=>['compose','--project-name',p.project,'--project-directory',p.deploymentDirectory,'--env-file',envFile,...files.flatMap(file=>['-f',file])];
  const verifyFiles=()=>{for(const file of p.approvedHistoricalComposeFiles)need(hash(read(file.path))===file.sha256,'PGSTREAM_REBOOTSTRAP_APPROVED_FILE_CHANGED');};
  const snapshot=()=>{
@@ -150,7 +150,7 @@ async function run(p,{docker=platform(),routes}={}){
   // A PostgreSQL slot name is reusable. Rotate the deployment incarnation
   // before replacing it so durable clinical/raw coverage cannot adopt a new
   // slot under the previous generation. Every effect-serving role is stopped.
-  if(c.pgstream.generation!==undefined){
+  {
    need(/^[a-f0-9]{32}$/.test(c.pgstream.generation),'PGSTREAM_REBOOTSTRAP_STREAM_GENERATION');
    const next={...c,pgstream:{...c.pgstream,generation:require('node:crypto').randomBytes(16).toString('hex')}};
    const temporary=p.evaluatorConfig+'.rebootstrap-'+process.pid;

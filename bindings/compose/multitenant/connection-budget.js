@@ -156,6 +156,12 @@ function compile(profile, docs, { source, poolConfig }) {
         capabilities[key] = { ...selected, metadata: { source: described.source, configurationSource: 'explicit-profile' } };
       }
     }
+    // One serialized recovery overlaps lock+exporter+one transient cancel.
+    if (capabilities['snapshot-export'] || capabilities['snapshot-lock']) {
+      need(capabilities['snapshot-export'] && capabilities['snapshot-lock'], 'CONNECTION_PLAN_RECOVERY_COVERAGE');
+      const exporter=capabilities['snapshot-export'].directGroup, lock=capabilities['snapshot-lock'].directGroup;
+      need(exporter===lock ? given.directGroups[exporter]>=3 : given.directGroups[exporter]>=2 && given.directGroups[lock]>=2, 'CONNECTION_PLAN_RECOVERY_CONCURRENCY');
+    }
     const usedGroups = new Set(Object.values(capabilities).filter(x => x.kind === 'client').map(x => x.directGroup));
     need(equal([...usedGroups].sort(), Object.keys(given.directGroups).sort()), 'CONNECTION_PLAN_DIRECT_UNKNOWN');
     cost += Object.values(given.directGroups).reduce((a, b) => a + b, 0);

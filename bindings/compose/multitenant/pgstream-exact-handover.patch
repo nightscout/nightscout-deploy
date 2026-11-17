@@ -1,0 +1,1081 @@
+diff --git a/cmd/config/config_env.go b/cmd/config/config_env.go
+index ca13c70..3fb9333 100644
+--- a/cmd/config/config_env.go
++++ b/cmd/config/config_env.go
+@@ -64,6 +64,7 @@ func bindEnvVars() {
+ 	viper.BindEnv("PGSTREAM_POSTGRES_LISTENER_DISABLE_RETRIES")
+ 	viper.BindEnv("PGSTREAM_POSTGRES_REPLICATION_SLOT_NAME")
+ 	viper.BindEnv("PGSTREAM_POSTGRES_REPLICATION_PLUGIN_INCLUDE_XIDS")
++	viper.BindEnv("PGSTREAM_POSTGRES_REPLICATION_PLUGIN_INCLUDE_TRANSACTIONS")
+ 	viper.BindEnv("PGSTREAM_POSTGRES_REPLICATION_PLUGIN_ADD_TABLES")
+ 	viper.BindEnv("PGSTREAM_POSTGRES_REPLICATION_PLUGIN_FILTER_TABLES")
+ 
+@@ -283,9 +284,10 @@ func parsePostgresListenerConfig() (*stream.PostgresListenerConfig, error) {
+ 			PostgresURL:         pgURL,
+ 			ReplicationSlotName: viper.GetString("PGSTREAM_POSTGRES_REPLICATION_SLOT_NAME"),
+ 			PluginArguments: pgreplication.PluginArguments{
+-				IncludeXIDs:  viper.GetBool("PGSTREAM_POSTGRES_REPLICATION_PLUGIN_INCLUDE_XIDS"),
+-				AddTables:    viper.GetString("PGSTREAM_POSTGRES_REPLICATION_PLUGIN_ADD_TABLES"),
+-				FilterTables: viper.GetString("PGSTREAM_POSTGRES_REPLICATION_PLUGIN_FILTER_TABLES"),
++				IncludeTransactions: viper.GetBool("PGSTREAM_POSTGRES_REPLICATION_PLUGIN_INCLUDE_TRANSACTIONS"),
++				IncludeXIDs:         viper.GetBool("PGSTREAM_POSTGRES_REPLICATION_PLUGIN_INCLUDE_XIDS"),
++				AddTables:           viper.GetString("PGSTREAM_POSTGRES_REPLICATION_PLUGIN_ADD_TABLES"),
++				FilterTables:        viper.GetString("PGSTREAM_POSTGRES_REPLICATION_PLUGIN_FILTER_TABLES"),
+ 			},
+ 		},
+ 		RetryPolicy: parseBackoffConfig("PGSTREAM_POSTGRES_LISTENER"),
+diff --git a/cmd/config/config_yaml.go b/cmd/config/config_yaml.go
+index 1004d3a..8e91d36 100644
+--- a/cmd/config/config_yaml.go
++++ b/cmd/config/config_yaml.go
+@@ -149,9 +149,10 @@ type ReplicationConfig struct {
+ }
+ 
+ type PluginConfig struct {
+-	IncludeXIDs  bool   `mapstructure:"include_xids" yaml:"include_xids"`
+-	AddTables    string `mapstructure:"add_tables" yaml:"add_tables"`
+-	FilterTables string `mapstructure:"filter_tables" yaml:"filter_tables"`
++	IncludeTransactions bool   `mapstructure:"include_transactions" yaml:"include_transactions"`
++	IncludeXIDs         bool   `mapstructure:"include_xids" yaml:"include_xids"`
++	AddTables           string `mapstructure:"add_tables" yaml:"add_tables"`
++	FilterTables        string `mapstructure:"filter_tables" yaml:"filter_tables"`
+ }
+ 
+ type KafkaConfig struct {
+@@ -306,10 +307,11 @@ type WebhookServerConfig struct {
+ }
+ 
+ type WebhookNotifierConfig struct {
+-	WorkerCount   int            `mapstructure:"worker_count" yaml:"worker_count"`
+-	ClientTimeout int            `mapstructure:"client_timeout" yaml:"client_timeout"`
+-	Backoff       *BackoffConfig `mapstructure:"backoff" yaml:"backoff"`
+-	StrictMode    bool           `mapstructure:"strict_mode" yaml:"strict_mode"`
++	TransactionBatch *notifier.TransactionBatchConfig `mapstructure:"transaction_batch" yaml:"transaction_batch"`
++	WorkerCount      int                              `mapstructure:"worker_count" yaml:"worker_count"`
++	ClientTimeout    int                              `mapstructure:"client_timeout" yaml:"client_timeout"`
++	Backoff          *BackoffConfig                   `mapstructure:"backoff" yaml:"backoff"`
++	StrictMode       bool                             `mapstructure:"strict_mode" yaml:"strict_mode"`
+ }
+ 
+ type SanitizeConfig struct {
+@@ -542,6 +544,7 @@ func (c *YAMLConfig) parsePostgresListenerConfig() (*stream.PostgresListenerConf
+ 		if c.Source.Postgres.Replication != nil {
+ 			replicationSlotName = c.Source.Postgres.Replication.ReplicationSlot
+ 			if c.Source.Postgres.Replication.Plugin != nil {
++				pluginArgs.IncludeTransactions = c.Source.Postgres.Replication.Plugin.IncludeTransactions
+ 				pluginArgs.IncludeXIDs = c.Source.Postgres.Replication.Plugin.IncludeXIDs
+ 				pluginArgs.AddTables = c.Source.Postgres.Replication.Plugin.AddTables
+ 				pluginArgs.FilterTables = c.Source.Postgres.Replication.Plugin.FilterTables
+@@ -818,9 +821,10 @@ func (c *YAMLConfig) parseWebhookProcessorConfig() *stream.WebhookProcessorConfi
+ 			URL: c.Target.Webhooks.Subscriptions.Store.URL,
+ 		},
+ 		Notifier: notifier.Config{
+-			URLWorkerCount: uint(c.Target.Webhooks.Notifier.WorkerCount),
+-			ClientTimeout:  time.Duration(c.Target.Webhooks.Notifier.ClientTimeout) * time.Millisecond,
+-			StrictMode:     c.Target.Webhooks.Notifier.StrictMode,
++			URLWorkerCount:   uint(c.Target.Webhooks.Notifier.WorkerCount),
++			ClientTimeout:    time.Duration(c.Target.Webhooks.Notifier.ClientTimeout) * time.Millisecond,
++			StrictMode:       c.Target.Webhooks.Notifier.StrictMode,
++			TransactionBatch: c.Target.Webhooks.Notifier.TransactionBatch,
+ 		},
+ 		SubscriptionServer: server.Config{
+ 			Address:      c.Target.Webhooks.Subscriptions.Server.Address,
+diff --git a/config_template.yaml b/config_template.yaml
+index 1bce6e3..b736884 100644
+--- a/config_template.yaml
++++ b/config_template.yaml
+@@ -64,6 +64,7 @@ source:
+       replication_slot: "pgstream_mydatabase_slot"
+       plugin:
+         include_xids: false # whether to include transaction IDs in the replication stream events. Defaults to false.
++        include_transactions: false # opt-in complete-transaction webhooks; replication-only, strict mode, no row modifiers. Also enables XIDs.
+   kafka:
+     servers: ["localhost:9092"]
+     topic:
+diff --git a/docs/configuration.md b/docs/configuration.md
+index f76aad4..53b9617 100644
+--- a/docs/configuration.md
++++ b/docs/configuration.md
+@@ -69,6 +69,7 @@ source:
+       replication_slot: "pgstream_mydatabase_slot"
+       plugin:
+         include_xids: false # whether to include transaction IDs in the replication stream events. Defaults to false.
++        include_transactions: false # opt-in complete-transaction webhooks; replication-only, strict mode, no row modifiers. Also enables XIDs.
+         add_tables: "public.*" # comma-separated list of tables to include in the wal2json output. Supports wildcards. Filters at the source decode level. Defaults to all tables.
+         filter_tables: "pipelines.*,private.*" # comma-separated list of tables to exclude from the wal2json output. Supports wildcards. Filters at the source decode level. Defaults to empty.
+     retry_policy: # retry policy for postgres connections, one of exponential or constant or disable_retries
+@@ -549,3 +550,40 @@ Schemas themselves are never filtered out, since the remaining objects need thei
+ For DDL replication, a single statement can create objects of several types at once (`CREATE TABLE` with a primary key produces both a table and an index). Such an event is only skipped when *all* of its objects belong to excluded categories.
+ 
+ > ⚠️ Filtering does not resolve dependencies between object types. Excluding a category that surviving objects depend on (for example excluding `types` while keeping tables with columns of those types) will make the snapshot or the DDL replay fail. Use this with a good understanding of your schema.
++
++
++### Transaction-framed webhooks
++
++`source.postgres.replication.plugin.include_transactions: true` (or
++`PGSTREAM_POSTGRES_REPLICATION_PLUGIN_INCLUDE_TRANSACTIONS=true`) preserves
++wal2json begin (`B`) and commit (`C`) events. This opt-in mode requires a strict,
++replication-only webhook target without row modifiers. Other configurations are
++refused before streaming. Source-level `add_tables` and `filter_tables` remain
++available.
++
++Subscribe once with empty schema/table and event types `B`, `C`, `M`, alongside
++the required row subscriptions. The selected receiver must see every exposed
++event exactly once before it can validate a transaction. A begin has
++`transaction_index: 0`; subsequent events have consecutive indices starting at
++one. A commit has index `N+1`, `transaction_count: N`, and native `nextlsn`. The
++count excludes suppressed internal pgstream DML and includes logical messages.
++Distinct rows can share an LSN; use the transaction index to distinguish them.
++
++Begin and commit also carry `source_identity` with `system_id`, `timeline`,
++`database`, and `slot`, read through PostgreSQL `IDENTIFY_SYSTEM` and refreshed
++on reconnect. This source identity is separate from an application's restore
++generation. Neither XID nor an LSN alone is a source identity.
++
++The connector checkpoints only a commit's `nextlsn`, after successful delivery
++of that commit. Accepted rows and begins never advance the checkpoint. Idle
++keepalive responses repeat the last acknowledged position; they do not advance
++to the server's observed WAL end. Restart therefore replays an incomplete
++transaction from its begin. Receivers must durably retain accepted partial
++input before returning success and publish only validated complete transactions.
++
++The connector keeps constant-size framing state instead of buffering a whole
++transaction. Receiver bounds, recoverable overflow, and atomic application
++publication remain receiver responsibilities. Empty filtered transactions may
++produce begin/commit pairs; a receiver must avoid writing receipt state for an
++empty transaction if those writes are in the same source database. Such writes
++would otherwise create an input feedback loop.
+diff --git a/pkg/stream/config.go b/pkg/stream/config.go
+index cfbe55e..9b7a506 100644
+--- a/pkg/stream/config.go
++++ b/pkg/stream/config.go
+@@ -99,6 +99,19 @@ func (c *Config) IsValid() error {
+ 	if err := c.Processor.IsValid(); err != nil {
+ 		return err
+ 	}
++	if pg := c.Listener.Postgres; pg != nil && pg.Replication.PluginArguments.IncludeTransactions {
++		// Framing counts must not be changed after the listener. This narrow
++		// mode deliberately accepts only the serial, strict webhook pipeline.
++		if c.Processor.Webhook == nil || !c.Processor.Webhook.Notifier.StrictMode || pg.Snapshot != nil || c.Processor.Filter != nil || c.Processor.Injector != nil || c.Processor.Transformer != nil || c.Processor.Sanitize != nil {
++			return errors.New("transaction framing requires strict replication-only webhooks without row modifiers")
++		}
++	}
++	if w := c.Processor.Webhook; w != nil && w.Notifier.TransactionBatch != nil {
++		b := w.Notifier.TransactionBatch
++		if c.Listener.Postgres == nil || !c.Listener.Postgres.Replication.PluginArguments.IncludeTransactions || !w.Notifier.StrictMode || b.MaxRows == 0 || b.MaxBytes <= 0 {
++			return errors.New("transaction batching requires framed strict webhooks and explicit positive row/byte bounds")
++		}
++	}
+ 	return c.validateTableSelections()
+ }
+ 
+diff --git a/pkg/stream/stream.go b/pkg/stream/stream.go
+index 4faf570..d472f7c 100644
+--- a/pkg/stream/stream.go
++++ b/pkg/stream/stream.go
+@@ -40,7 +40,7 @@ const (
+ 	processorTypeSnapshot
+ )
+ 
+-func buildProcessor(ctx context.Context, logger loglib.Logger, config *ProcessorConfig, checkpoint checkpointer.Checkpoint, processorType processorType, instrumentation *otel.Instrumentation) (processor.Processor, error) {
++func buildProcessor(ctx context.Context, logger loglib.Logger, config *ProcessorConfig, checkpoint checkpointer.Checkpoint, processorType processorType, instrumentation *otel.Instrumentation, onFailure ...func(error)) (processor.Processor, error) {
+ 	var processor processor.Processor
+ 	switch {
+ 	case config.Kafka != nil:
+@@ -142,6 +142,15 @@ func buildProcessor(ctx context.Context, logger loglib.Logger, config *Processor
+ 			logger.Info("running webhook notifier...")
+ 			if err := notifier.Notify(ctx); err != nil {
+ 				logger.Error(err, "shutting down webhook notifier")
++				// The source can be idle after this failed commit. Wake the run owner
++				// immediately rather than waiting for a later row to notice notifyDone.
++				if !errors.Is(err, context.Canceled) {
++					for _, fail := range onFailure {
++						if fail != nil {
++							fail(fmt.Errorf("webhook notifier stopped: %w", err))
++						}
++					}
++				}
+ 			}
+ 		}()
+ 
+diff --git a/pkg/stream/stream_run.go b/pkg/stream/stream_run.go
+index ff35964..df598d2 100644
+--- a/pkg/stream/stream_run.go
++++ b/pkg/stream/stream_run.go
+@@ -46,7 +46,9 @@ func Run(ctx context.Context, logger loglib.Logger, config *Config, init bool, i
+ 		}
+ 	}
+ 
+-	eg, ctx := errgroup.WithContext(ctx)
++	eg, groupCtx := errgroup.WithContext(ctx)
++	ctx, cancelPipeline := context.WithCancelCause(groupCtx)
++	defer cancelPipeline(nil)
+ 
+ 	var replicationHandler replication.Handler
+ 	if config.Listener.Postgres != nil && config.Listener.Postgres.Replication.PostgresURL != "" {
+@@ -118,7 +120,7 @@ func Run(ctx context.Context, logger loglib.Logger, config *Config, init bool, i
+ 
+ 	// Processor
+ 
+-	replicationChain, closer, err := newProcessor(ctx, logger, config, checkpoint, processorTypeReplication, instrumentation)
++	replicationChain, closer, err := newProcessor(ctx, logger, config, checkpoint, processorTypeReplication, instrumentation, func(err error) { cancelPipeline(err) })
+ 	defer closer()
+ 	if err != nil {
+ 		return err
+@@ -134,12 +136,15 @@ func Run(ctx context.Context, logger loglib.Logger, config *Config, init bool, i
+ 			pglistener.WithLogger(logger),
+ 			pglistener.WithPhaseTracker(phaseTracker),
+ 		}
++		if config.Listener.Postgres.Replication.PluginArguments.IncludeTransactions {
++			opts = append(opts, pglistener.WithTransactionFraming())
++		}
+ 		if config.Listener.Postgres.Snapshot != nil {
+ 			logger.Info("initial snapshot enabled")
+ 			// use a dedicated processor for the snapshot phase, to be able to
+ 			// close it and make sure the snapshot is complete before starting
+ 			// to process the WAL replication events.
+-			snapshotChain, snapshotCloser, err := newProcessor(ctx, logger, config, checkpoint, processorTypeSnapshot, instrumentation)
++			snapshotChain, snapshotCloser, err := newProcessor(ctx, logger, config, checkpoint, processorTypeSnapshot, instrumentation, func(err error) { cancelPipeline(err) })
+ 			defer snapshotCloser()
+ 			if err != nil {
+ 				return fmt.Errorf("error creating snapshot processor: %w", err)
+@@ -186,6 +191,9 @@ func Run(ctx context.Context, logger loglib.Logger, config *Config, init bool, i
+ 	})
+ 
+ 	if err := eg.Wait(); err != nil {
++		if cause := context.Cause(ctx); cause != nil && !errors.Is(cause, context.Canceled) {
++			return cause
++		}
+ 		if !errors.Is(err, context.Canceled) {
+ 			return err
+ 		}
+@@ -198,8 +206,8 @@ var noopCloser func() error = func() error {
+ 	return nil
+ }
+ 
+-func newProcessor(ctx context.Context, logger loglib.Logger, config *Config, checkpoint checkpointer.Checkpoint, processorType processorType, instrumentation *otel.Instrumentation) (*processorChain, closerFn, error) {
+-	target, err := buildProcessor(ctx, logger, &config.Processor, checkpoint, processorType, instrumentation)
++func newProcessor(ctx context.Context, logger loglib.Logger, config *Config, checkpoint checkpointer.Checkpoint, processorType processorType, instrumentation *otel.Instrumentation, onFailure ...func(error)) (*processorChain, closerFn, error) {
++	target, err := buildProcessor(ctx, logger, &config.Processor, checkpoint, processorType, instrumentation, onFailure...)
+ 	if err != nil {
+ 		return nil, noopCloser, err
+ 	}
+diff --git a/pkg/stream/transaction_batch_test.go b/pkg/stream/transaction_batch_test.go
+new file mode 100644
+index 0000000..28cea22
+--- /dev/null
++++ b/pkg/stream/transaction_batch_test.go
+@@ -0,0 +1,21 @@
++// SPDX-License-Identifier: Apache-2.0
++package stream
++
++import (
++	"github.com/stretchr/testify/require"
++	"github.com/xataio/pgstream/pkg/wal/processor/webhook/notifier"
++	"testing"
++)
++
++func TestBoundedTransactionBatchRequiresNativeFramedPipeline(t *testing.T) {
++	c := &Config{Listener: ListenerConfig{Postgres: &PostgresListenerConfig{}}, Processor: ProcessorConfig{Webhook: &WebhookProcessorConfig{}}}
++	c.Listener.Postgres.Replication.PluginArguments.IncludeTransactions = true
++	c.Processor.Webhook.Notifier.StrictMode = true
++	c.Processor.Webhook.Notifier.TransactionBatch = &notifier.TransactionBatchConfig{MaxRows: 128, MaxBytes: 1024 * 1024}
++	require.NoError(t, c.IsValid())
++	c.Listener.Postgres.Replication.PluginArguments.IncludeTransactions = false
++	require.ErrorContains(t, c.IsValid(), "transaction batching requires")
++	c.Listener.Postgres.Replication.PluginArguments.IncludeTransactions = true
++	c.Processor.Webhook.Notifier.TransactionBatch.MaxBytes = 0
++	require.ErrorContains(t, c.IsValid(), "transaction batching requires")
++}
+diff --git a/pkg/stream/transaction_framing_test.go b/pkg/stream/transaction_framing_test.go
+new file mode 100644
+index 0000000..a7fa8ca
+--- /dev/null
++++ b/pkg/stream/transaction_framing_test.go
+@@ -0,0 +1,25 @@
++// SPDX-License-Identifier: Apache-2.0
++package stream
++
++import (
++	"github.com/stretchr/testify/require"
++	"github.com/xataio/pgstream/pkg/wal/processor/filter"
++	"github.com/xataio/pgstream/pkg/wal/processor/injector"
++	"github.com/xataio/pgstream/pkg/wal/processor/transformer"
++	"testing"
++)
++
++func TestTransactionFramingRejectsLossyPipeline(t *testing.T) {
++	makeConfig := func() *Config {
++		c := &Config{Listener: ListenerConfig{Postgres: &PostgresListenerConfig{}}, Processor: ProcessorConfig{Webhook: &WebhookProcessorConfig{}}}
++		c.Listener.Postgres.Replication.PluginArguments.IncludeTransactions = true
++		c.Processor.Webhook.Notifier.StrictMode = true
++		return c
++	}
++	require.NoError(t, makeConfig().IsValid())
++	for _, change := range []func(*Config){func(c *Config) { c.Processor.Webhook.Notifier.StrictMode = false }, func(c *Config) { c.Processor.Filter = &filter.Config{} }, func(c *Config) { c.Processor.Injector = &injector.Config{} }, func(c *Config) { c.Processor.Transformer = &transformer.Config{} }, func(c *Config) { c.Processor.Sanitize = &SanitizeConfig{} }} {
++		c := makeConfig()
++		change(c)
++		require.ErrorContains(t, c.IsValid(), "transaction framing requires")
++	}
++}
+diff --git a/pkg/wal/listener/postgres/transaction_framing_test.go b/pkg/wal/listener/postgres/transaction_framing_test.go
+new file mode 100644
+index 0000000..c0d87f2
+--- /dev/null
++++ b/pkg/wal/listener/postgres/transaction_framing_test.go
+@@ -0,0 +1,60 @@
++// SPDX-License-Identifier: Apache-2.0
++package postgres
++
++import (
++	"context"
++	"github.com/stretchr/testify/require"
++	"github.com/xataio/pgstream/pkg/wal"
++	"github.com/xataio/pgstream/pkg/wal/replication"
++	pgreplication "github.com/xataio/pgstream/pkg/wal/replication/postgres"
++	"testing"
++)
++
++func TestTransactionFramingOnlyCompleteCommitAdvances(t *testing.T) {
++	var events []*wal.Event
++	h := newMockReplicationHandler()
++	h.GetLSNParserFn = func() replication.LSNParser { return pgreplication.NewLSNParser() }
++	l := New(h, func(_ context.Context, e *wal.Event) error { events = append(events, e); return nil }, WithTransactionFraming())
++	send := func(data string) {
++		require.NoError(t, l.processWALEvent(t.Context(), &replication.Message{LSN: 999, Data: []byte(data)}))
++	}
++	send(`{"action":"B","xid":7,"nextlsn":"0/100"}`)
++	send(`{"action":"I","xid":7,"lsn":"0/50","schema":"public","table":"items"}`)
++	require.NoError(t, l.processWALEvent(t.Context(), &replication.Message{LSN: 99999, ReplyRequested: true}))
++	send(`{"action":"I","xid":7,"lsn":"0/50","schema":"public","table":"items"}`)
++	send(`{"action":"U","xid":7,"lsn":"0/60","schema":"pgstream","table":"internal"}`)
++	send(`{"action":"C","xid":7,"lsn":"0/90","nextlsn":"0/100"}`)
++	require.Len(t, events, 4, "internal rows and keepalive must not alter exposed transaction coverage")
++	for i, e := range events {
++		require.Equal(t, uint64(i), *e.Data.TransactionIndex)
++		if i < 3 {
++			require.Empty(t, e.CommitPosition, "no partial-cohort checkpoint")
++		}
++	}
++	require.Equal(t, uint64(2), *events[3].Data.TransactionCount)
++	require.Equal(t, wal.CommitPosition("0/100"), events[3].CommitPosition)
++}
++
++func TestTransactionFramingReconnectReplaysFromBegin(t *testing.T) {
++	var indices []uint64
++	l := New(newMockReplicationHandler(), func(_ context.Context, e *wal.Event) error {
++		indices = append(indices, *e.Data.TransactionIndex)
++		return nil
++	}, WithTransactionFraming())
++	for _, data := range []string{`{"action":"B","xid":7}`, `{"action":"I","xid":7}`, `{"action":"B","xid":7}`, `{"action":"I","xid":7}`, `{"action":"C","xid":7,"nextlsn":"0/100"}`} {
++		require.NoError(t, l.processWALEvent(t.Context(), &replication.Message{Data: []byte(data)}))
++	}
++	require.Equal(t, []uint64{0, 1, 0, 1, 2}, indices)
++}
++
++func TestTransactionFramingRefusesUnboundedBoundary(t *testing.T) {
++	for _, data := range []string{`{"action":"I","xid":7}`, `{"action":"C","xid":7,"nextlsn":"0/100"}`, `{"action":"B"}`} {
++		l := New(newMockReplicationHandler(), func(context.Context, *wal.Event) error { t.Fatal("invalid framing reached consumer"); return nil }, WithTransactionFraming())
++		require.Error(t, l.processWALEvent(t.Context(), &replication.Message{Data: []byte(data)}))
++	}
++	for _, data := range []string{`{"action":"I","xid":8}`, `{"action":"C","xid":7}`, `{"action":"C","xid":8,"nextlsn":"0/100"}`} {
++		l := New(newMockReplicationHandler(), func(context.Context, *wal.Event) error { return nil }, WithTransactionFraming())
++		require.NoError(t, l.processWALEvent(t.Context(), &replication.Message{Data: []byte(`{"action":"B","xid":7}`)}))
++		require.Error(t, l.processWALEvent(t.Context(), &replication.Message{Data: []byte(data)}))
++	}
++}
+diff --git a/pkg/wal/listener/postgres/wal_pg_listener.go b/pkg/wal/listener/postgres/wal_pg_listener.go
+index 461afee..655c7c7 100644
+--- a/pkg/wal/listener/postgres/wal_pg_listener.go
++++ b/pkg/wal/listener/postgres/wal_pg_listener.go
+@@ -22,6 +22,10 @@ type Listener struct {
+ 	lsnParser          replication.LSNParser
+ 	snapshotGenerator  snapshotGenerator
+ 	phaseTracker       *phase.Tracker
++	transactionFraming bool
++	transactionOpen    bool
++	transactionXID     int64
++	transactionIndex   uint64
+ 
+ 	// Function called for processing WAL events.
+ 	processEvent listenerProcessWalEvent
+@@ -87,6 +91,12 @@ func WithPhaseTracker(t *phase.Tracker) Option {
+ 	}
+ }
+ 
++// WithTransactionFraming preserves wal2json committed transaction boundaries.
++// No row or keepalive advances the replication checkpoint in this mode.
++func WithTransactionFraming() Option {
++	return func(l *Listener) { l.transactionFraming = true }
++}
++
+ // Listen starts the subscription process to listen for updates from PG.
+ func (l *Listener) Listen(ctx context.Context) error {
+ 	if l.snapshotGenerator != nil {
+@@ -194,6 +204,46 @@ func (l *Listener) processWALEvent(ctx context.Context, msg *replication.Message
+ 		event.Data = nil
+ 	}
+ 
++	if l.transactionFraming {
++		if event.Data == nil {
++			return nil
++		}
++		event.CommitPosition = ""
++		data := event.Data
++		if data.Action == "B" || data.Action == "C" {
++			data.SourceIdentity = msg.SourceIdentity
++		}
++		switch data.Action {
++		case "B":
++			// A reconnect starts again at the last complete C. Replayed B resets
++			// only this constant-size framing state; consumers own durable staging.
++			if data.XID == 0 {
++				return errors.New("transaction begin missing xid")
++			}
++			l.transactionOpen = true
++			l.transactionXID = data.XID
++			l.transactionIndex = 0
++		case "C":
++			if !l.transactionOpen || data.XID != l.transactionXID || data.NextLSN == "" {
++				return errors.New("transaction commit missing matching begin or nextlsn")
++			}
++			if _, err := l.lsnParser.FromString(data.NextLSN); err != nil {
++				return fmt.Errorf("transaction nextlsn: %w", err)
++			}
++			count := l.transactionIndex
++			data.TransactionCount = &count
++			l.transactionIndex++
++			event.CommitPosition = wal.CommitPosition(data.NextLSN)
++			l.transactionOpen = false
++		default:
++			if !l.transactionOpen || data.XID != l.transactionXID {
++				return errors.New("transaction row missing matching begin")
++			}
++			l.transactionIndex++
++		}
++		index := l.transactionIndex
++		data.TransactionIndex = &index
++	}
+ 	return l.processEvent(ctx, event)
+ }
+ 
+diff --git a/pkg/wal/processor/webhook/notifier/config.go b/pkg/wal/processor/webhook/notifier/config.go
+index 4d3a650..11c8775 100644
+--- a/pkg/wal/processor/webhook/notifier/config.go
++++ b/pkg/wal/processor/webhook/notifier/config.go
+@@ -19,11 +19,12 @@ const (
+ )
+ 
+ type Config struct {
+-	MaxQueueBytes  int64
+-	URLWorkerCount uint
+-	ClientTimeout  time.Duration
+-	Backoff        backoff.Config
+-	StrictMode     bool
++	MaxQueueBytes    int64
++	URLWorkerCount   uint
++	ClientTimeout    time.Duration
++	Backoff          backoff.Config
++	StrictMode       bool
++	TransactionBatch *TransactionBatchConfig
+ }
+ 
+ func (c *Config) maxQueueBytes() int64 {
+@@ -82,3 +83,10 @@ func (c *Config) backoffConfig() *backoff.Config {
+ 		},
+ 	}
+ }
++
++// TransactionBatchConfig bounds one complete native transaction envelope. A
++// refused transaction retains its source WAL checkpoint for explicit recovery.
++type TransactionBatchConfig struct {
++	MaxRows  uint64 `mapstructure:"max_rows" yaml:"max_rows"`
++	MaxBytes int64  `mapstructure:"max_bytes" yaml:"max_bytes"`
++}
+diff --git a/pkg/wal/processor/webhook/notifier/transaction_batch.go b/pkg/wal/processor/webhook/notifier/transaction_batch.go
+new file mode 100644
+index 0000000..d236cce
+--- /dev/null
++++ b/pkg/wal/processor/webhook/notifier/transaction_batch.go
+@@ -0,0 +1,107 @@
++// SPDX-License-Identifier: Apache-2.0
++package notifier
++
++import (
++	"bytes"
++	"errors"
++	"fmt"
++	"slices"
++
++	"github.com/xataio/pgstream/pkg/wal"
++	"github.com/xataio/pgstream/pkg/wal/processor/webhook/subscription"
++)
++
++// The listener is serial in framed mode. This additional lock keeps this
++// opt-in processor's advertised concurrent-call contract explicit. No partial
++// envelope enters the sender queue, so neither partial HTTP success nor source
++// checkpoint advancement is possible. At most one bounded envelope is retained.
++type transactionBuffer struct {
++	payload bytes.Buffer
++	xid     int64
++	rows    uint64
++	source  wal.SourceIdentity
++	nextLSN string
++	urls    []string
++}
++
++func destinations(subscriptions []*subscription.Subscription) []string {
++	urls := make([]string, 0, len(subscriptions))
++	for _, s := range subscriptions {
++		urls = append(urls, s.URL)
++	}
++	slices.Sort(urls)
++	return slices.Compact(urls)
++}
++
++func (n *Notifier) batchTransaction(event *wal.Event, subscriptions []*subscription.Subscription) (*notifyMsg, error) {
++	fail := func(reason string) (*notifyMsg, error) {
++		n.batch = nil
++		return nil, errors.New("transaction batch: " + reason)
++	}
++	d := event.Data
++	if d == nil {
++		return fail("native framed data required")
++	}
++	if d.TransactionIndex == nil {
++		return fail("native transaction index required")
++	}
++	urls := destinations(subscriptions)
++	if d.Action == "B" {
++		if *d.TransactionIndex != 0 || d.XID == 0 || d.SourceIdentity == nil || d.NextLSN == "" || event.CommitPosition != "" {
++			return fail("invalid begin")
++		}
++		// A reconnect replays B from the last complete checkpoint. Discard only the
++		// unacknowledged memory buffer; the source still owns every retained row.
++		n.batch = &transactionBuffer{xid: d.XID, source: *d.SourceIdentity, nextLSN: d.NextLSN, urls: urls}
++		n.batch.payload.WriteString(`{"Transaction":[`)
++	} else {
++		if n.batch == nil || d.XID != n.batch.xid || *d.TransactionIndex != n.batch.rows+1 {
++			return fail("nonconsecutive or mismatched transaction")
++		}
++		if !slices.Equal(urls, n.batch.urls) {
++			return fail("all transaction events require identical destinations")
++		}
++		switch d.Action {
++		case "C":
++			if d.TransactionCount == nil || *d.TransactionCount != n.batch.rows || d.NextLSN != n.batch.nextLSN || d.SourceIdentity == nil || *d.SourceIdentity != n.batch.source || event.CommitPosition != wal.CommitPosition(d.NextLSN) {
++				return fail("incomplete or mismatched commit")
++			}
++		case "I", "U", "D", "M", "T":
++			if event.CommitPosition != "" {
++				return fail("partial event has checkpoint")
++			}
++			n.batch.rows++
++			if n.batch.rows > n.transactionBatch.MaxRows {
++				return fail("row bound exceeded; recovery required")
++			}
++		default:
++			return fail("unsupported native action")
++		}
++		n.batch.payload.WriteByte(',')
++	}
++	raw, err := n.serialiser(d)
++	if err != nil {
++		n.batch = nil
++		return nil, fmt.Errorf("transaction batch serialise: %w", err)
++	}
++	// Include the final array/object delimiters in every bound measurement.
++	if int64(n.batch.payload.Len()+len(raw)+2) > n.transactionBatch.MaxBytes {
++		return fail("byte bound exceeded; recovery required")
++	}
++	n.batch.payload.Write(raw)
++	if d.Action != "C" {
++		return nil, nil
++	}
++	b := n.batch
++	n.batch = nil
++	if b.rows == 0 {
++		// Receiver writes would generate further empty filtered transactions. This
++		// complete empty cohort is safe to checkpoint without invoking any webhook.
++		return &notifyMsg{commitPosition: event.CommitPosition}, nil
++	}
++	if len(b.urls) == 0 {
++		return fail("nonempty transaction has no destination")
++	}
++	b.payload.WriteString("]}")
++	return &notifyMsg{urls: b.urls, payload: b.payload.Bytes(), lsn: d.NextLSN, commitPosition: event.CommitPosition}, nil
++}
+diff --git a/pkg/wal/processor/webhook/notifier/transaction_batch_test.go b/pkg/wal/processor/webhook/notifier/transaction_batch_test.go
+new file mode 100644
+index 0000000..5875d4e
+--- /dev/null
++++ b/pkg/wal/processor/webhook/notifier/transaction_batch_test.go
+@@ -0,0 +1,111 @@
++// SPDX-License-Identifier: Apache-2.0
++package notifier
++
++import (
++	"encoding/json"
++	"testing"
++
++	"github.com/stretchr/testify/require"
++	"github.com/xataio/pgstream/pkg/wal"
++	"github.com/xataio/pgstream/pkg/wal/processor/webhook/subscription"
++)
++
++func batchFixture() (*Notifier, []*subscription.Subscription, func(string, uint64) *wal.Event) {
++	n := New(&Config{StrictMode: true, TransactionBatch: &TransactionBatchConfig{MaxRows: 2, MaxBytes: 4096}}, nil)
++	subs := []*subscription.Subscription{{URL: "http://receiver/"}}
++	source := &wal.SourceIdentity{SystemID: "native-source", Timeline: 1, Database: "clinical", Slot: "deployment"}
++	event := func(action string, index uint64) *wal.Event {
++		d := &wal.Data{Action: action, XID: 123, LSN: "0/100", TransactionIndex: &index}
++		e := &wal.Event{Data: d}
++		if action == "B" || action == "C" {
++			d.SourceIdentity = source
++			d.NextLSN = "0/200"
++		}
++		if action == "C" {
++			count := index - 1
++			d.TransactionCount = &count
++			e.CommitPosition = "0/200"
++		}
++		return e
++	}
++	return n, subs, event
++}
++func TestTransactionBatchOnlyCompleteEnvelopeCanBeSent(t *testing.T) {
++	n, subs, event := batchFixture()
++	for _, e := range []*wal.Event{event("B", 0), event("I", 1), event("U", 2)} {
++		msg, err := n.batchTransaction(e, subs)
++		require.NoError(t, err)
++		require.Nil(t, msg, "partial input cannot enter HTTP queue")
++	}
++	msg, err := n.batchTransaction(event("C", 3), subs)
++	require.NoError(t, err)
++	require.Equal(t, wal.CommitPosition("0/200"), msg.commitPosition)
++	var payload struct{ Transaction []*wal.Data }
++	require.NoError(t, json.Unmarshal(msg.payload, &payload))
++	require.Len(t, payload.Transaction, 4)
++	require.Equal(t, []string{"B", "I", "U", "C"}, []string{payload.Transaction[0].Action, payload.Transaction[1].Action, payload.Transaction[2].Action, payload.Transaction[3].Action})
++	require.Equal(t, []string{"http://receiver/"}, msg.urls)
++	require.Nil(t, n.batch)
++}
++func TestTransactionBatchRefusesUnrecoverablePartialAcceptance(t *testing.T) {
++	for _, scenario := range []string{"rows", "bytes", "count", "index", "source", "destinations", "partial-checkpoint"} {
++		t.Run(scenario, func(t *testing.T) {
++			n, subs, event := batchFixture()
++			_, err := n.batchTransaction(event("B", 0), subs)
++			require.NoError(t, err)
++			row := event("I", 1)
++			switch scenario {
++			case "rows":
++				n.transactionBatch.MaxRows = 0
++			case "bytes":
++				n.transactionBatch.MaxBytes = 1
++			case "index":
++				*row.Data.TransactionIndex = 2
++			case "destinations":
++				subs = []*subscription.Subscription{{URL: "http://other/"}}
++			case "partial-checkpoint":
++				row.CommitPosition = "0/200"
++			}
++			msg, err := n.batchTransaction(row, subs)
++			if scenario == "count" || scenario == "source" {
++				require.NoError(t, err)
++				require.Nil(t, msg)
++				c := event("C", 2)
++				if scenario == "count" {
++					*c.Data.TransactionCount = 0
++				} else {
++					changed := *c.Data.SourceIdentity
++					changed.Timeline = 2
++					c.Data.SourceIdentity = &changed
++				}
++				msg, err = n.batchTransaction(c, subs)
++			}
++			require.Error(t, err)
++			require.Nil(t, msg)
++			require.Nil(t, n.batch, "failed partial input must remain solely source-owned")
++		})
++	}
++}
++func TestTransactionBatchEmptyCohortCannotCreateReceiverFeedback(t *testing.T) {
++	n, subs, event := batchFixture()
++	_, err := n.batchTransaction(event("B", 0), subs)
++	require.NoError(t, err)
++	msg, err := n.batchTransaction(event("C", 1), subs)
++	require.NoError(t, err)
++	require.Empty(t, msg.urls)
++	require.Empty(t, msg.payload)
++	require.Equal(t, wal.CommitPosition("0/200"), msg.commitPosition)
++}
++func TestTransactionBatchReconnectReplaysWholeCohort(t *testing.T) {
++	n, subs, event := batchFixture()
++	for _, e := range []*wal.Event{event("B", 0), event("I", 1), event("B", 0), event("I", 1)} {
++		m, err := n.batchTransaction(e, subs)
++		require.NoError(t, err)
++		require.Nil(t, m)
++	}
++	msg, err := n.batchTransaction(event("C", 2), subs)
++	require.NoError(t, err)
++	var payload struct{ Transaction []*wal.Data }
++	require.NoError(t, json.Unmarshal(msg.payload, &payload))
++	require.Len(t, payload.Transaction, 3)
++}
+diff --git a/pkg/wal/processor/webhook/notifier/transaction_framing_test.go b/pkg/wal/processor/webhook/notifier/transaction_framing_test.go
+new file mode 100644
+index 0000000..7c8c9f1
+--- /dev/null
++++ b/pkg/wal/processor/webhook/notifier/transaction_framing_test.go
+@@ -0,0 +1,18 @@
++// SPDX-License-Identifier: Apache-2.0
++package notifier
++
++import (
++	"context"
++	"github.com/stretchr/testify/require"
++	"github.com/xataio/pgstream/pkg/wal"
++	"testing"
++)
++
++func TestTransactionFramingUncommittedMessagesDoNotCheckpoint(t *testing.T) {
++	var saved []wal.CommitPosition
++	n := New(&Config{}, nil, WithCheckpoint(func(_ context.Context, p []wal.CommitPosition) error { saved = append(saved, p...); return nil }))
++	require.NoError(t, n.notify(t.Context(), &notifyMsg{}))
++	require.Empty(t, saved, "durable row acceptance must not checkpoint incomplete transaction")
++	require.NoError(t, n.notify(t.Context(), &notifyMsg{commitPosition: "0/100"}))
++	require.Equal(t, []wal.CommitPosition{"0/100"}, saved)
++}
+diff --git a/pkg/wal/processor/webhook/notifier/webhook_notifier.go b/pkg/wal/processor/webhook/notifier/webhook_notifier.go
+index 98dc872..51085db 100644
+--- a/pkg/wal/processor/webhook/notifier/webhook_notifier.go
++++ b/pkg/wal/processor/webhook/notifier/webhook_notifier.go
+@@ -29,17 +29,21 @@ const maxResponseBodyBytes = 4 * 1024
+ var errNotifyStopped = errors.New("stop processing, notify has stopped")
+ 
+ type Notifier struct {
++	queueLimit        int64
+ 	client            httplib.Client
+ 	logger            loglib.Logger
+ 	checkpointer      checkpointer.Checkpoint
+ 	subscriptionStore subscriptionRetriever
+ 	serialiser        serialiser
+ 	// bounds memory used by inflight msgs
+-	queueBytesSema  synclib.WeightedSemaphore
+-	notifyChan      chan *notifyMsg
+-	workerCount     uint
+-	backoffProvider backoff.Provider
+-	strictMode      bool
++	queueBytesSema   synclib.WeightedSemaphore
++	notifyChan       chan *notifyMsg
++	workerCount      uint
++	backoffProvider  backoff.Provider
++	strictMode       bool
++	transactionBatch *TransactionBatchConfig
++	batchMutex       sync.Mutex
++	batch            *transactionBuffer
+ 	// notifyChan never closes, avoids send panic
+ 	shutdownCh chan struct{}
+ 	notifyDone chan struct{}
+@@ -64,13 +68,15 @@ func New(cfg *Config, store subscriptionRetriever, opts ...Option) *Notifier {
+ 		workerCount:       cfg.workerCount(),
+ 		backoffProvider:   backoff.NewProvider(cfg.backoffConfig()),
+ 		strictMode:        cfg.StrictMode,
++		transactionBatch:  cfg.TransactionBatch,
+ 		serialiser:        json.Marshal,
+ 		shutdownCh:        make(chan struct{}),
+ 		notifyDone:        make(chan struct{}),
+ 		once:              &sync.Once{},
+ 	}
+ 
+-	n.queueBytesSema = synclib.NewWeightedSemaphore(cfg.maxQueueBytes())
++	n.queueLimit = cfg.maxQueueBytes()
++	n.queueBytesSema = synclib.NewWeightedSemaphore(n.queueLimit)
+ 
+ 	for _, opt := range opts {
+ 		opt(n)
+@@ -120,13 +126,29 @@ func (n *Notifier) ProcessWALEvent(ctx context.Context, walEvent *wal.Event) (er
+ 		n.logger.Debug("matching subscriptions", loglib.Fields{"subscriptions": subscriptions})
+ 	}
+ 
+-	msg, err := newNotifyMsg(walEvent, subscriptions, n.serialiser)
++	var msg *notifyMsg
++	if n.transactionBatch != nil {
++		n.batchMutex.Lock()
++		msg, err = n.batchTransaction(walEvent, subscriptions)
++		n.batchMutex.Unlock()
++		if err != nil {
++			return err
++		}
++		if msg == nil {
++			return nil
++		}
++	} else {
++		msg, err = newNotifyMsg(walEvent, subscriptions, n.serialiser)
++	}
+ 	if err != nil {
+ 		return err
+ 	}
+ 
+ 	// blocks until queue has room
+ 	msgSize := int64(msg.size())
++	if n.transactionBatch != nil && msgSize > n.queueLimit {
++		return errors.New("transaction batch exceeds sender queue byte bound; recovery required")
++	}
+ 	if !n.queueBytesSema.TryAcquire(msgSize) {
+ 		n.logger.Warn(nil, "webhook notifier: max queue bytes reached, processing blocked")
+ 		if err := n.queueBytesSema.Acquire(ctx, msgSize); err != nil {
+@@ -228,7 +250,7 @@ func (n *Notifier) notify(ctx context.Context, msg *notifyMsg) error {
+ 		}
+ 	}
+ 
+-	if n.checkpointer != nil {
++	if n.checkpointer != nil && msg.commitPosition != "" {
+ 		if err := n.checkpointer(ctx, []wal.CommitPosition{msg.commitPosition}); err != nil {
+ 			return fmt.Errorf("checkpointing commit position: %w", err)
+ 		}
+diff --git a/pkg/wal/replication/postgres/pg_replication_handler.go b/pkg/wal/replication/postgres/pg_replication_handler.go
+index 0abf017..e06c74c 100644
+--- a/pkg/wal/replication/postgres/pg_replication_handler.go
++++ b/pkg/wal/replication/postgres/pg_replication_handler.go
+@@ -6,8 +6,10 @@ import (
+ 	"context"
+ 	"errors"
+ 	"fmt"
++	"github.com/xataio/pgstream/pkg/wal"
+ 	"regexp"
+ 	"strings"
++	"sync"
+ 
+ 	pglib "github.com/xataio/pgstream/internal/postgres"
+ 	loglib "github.com/xataio/pgstream/pkg/log"
+@@ -30,7 +32,11 @@ type Handler struct {
+ 
+ 	lsnParser replication.LSNParser
+ 
+-	pluginArguments []string
++	pluginArguments    []string
++	transactionFraming bool
++	sourceIdentity     *wal.SourceIdentity
++	ackMutex           sync.Mutex
++	lastAcknowledged   replication.LSN
+ }
+ 
+ type Config struct {
+@@ -53,9 +59,10 @@ type Config struct {
+ }
+ 
+ type PluginArguments struct {
+-	IncludeXIDs  bool
+-	AddTables    string // wal2json add-tables option (e.g., "public.*")
+-	FilterTables string // wal2json filter-tables option (e.g., "pipelines.*,private.*")
++	IncludeTransactions bool
++	IncludeXIDs         bool
++	AddTables           string // wal2json add-tables option (e.g., "public.*")
++	FilterTables        string // wal2json filter-tables option (e.g., "pipelines.*,private.*")
+ }
+ 
+ type Option func(h *Handler)
+@@ -119,10 +126,17 @@ func NewHandler(ctx context.Context, cfg Config, opts ...Option) (*Handler, erro
+ 			logSlotName:    replicationSlotName,
+ 			logLSNPosition: sysID.XLogPos,
+ 		},
+-		pluginArguments: defaultPluginArguments,
++		pluginArguments:    defaultPluginArguments,
++		transactionFraming: cfg.PluginArguments.IncludeTransactions,
++		sourceIdentity:     &wal.SourceIdentity{SystemID: sysID.SystemID, Timeline: sysID.Timeline, Database: sysID.DBName, Slot: replicationSlotName},
+ 	}
+ 
+-	if cfg.PluginArguments.IncludeXIDs {
++	// Copy before modifying so one handler cannot change another handler's defaults.
++	h.pluginArguments = append([]string(nil), defaultPluginArguments...)
++	if cfg.PluginArguments.IncludeTransactions {
++		h.pluginArguments[len(h.pluginArguments)-1] = `"include-transaction" '1'`
++	}
++	if cfg.PluginArguments.IncludeXIDs || cfg.PluginArguments.IncludeTransactions {
+ 		h.pluginArguments = append(h.pluginArguments, `"include-xids" '1'`)
+ 	}
+ 	if cfg.PluginArguments.AddTables != "" {
+@@ -237,7 +251,21 @@ func (h *Handler) ReceiveMessage(ctx context.Context) (*replication.Message, err
+ 		}
+ 	}
+ 
++	if h.transactionFraming && pgMsg.WALData == nil && pgMsg.ReplyRequested {
++		// Keep the sender alive without acknowledging any newly observed WAL.
++		h.ackMutex.Lock()
++		err := h.pgReplicationConn.SendStandbyStatusUpdate(ctx, uint64(h.lastAcknowledged))
++		h.ackMutex.Unlock()
++		if err != nil {
++			return nil, fmt.Errorf("reply with completed transaction checkpoint: %w", err)
++		}
++	}
++	var source *wal.SourceIdentity
++	if h.transactionFraming {
++		source = h.sourceIdentity
++	}
+ 	return &replication.Message{
++		SourceIdentity: source,
+ 		LSN:            replication.LSN(pgMsg.LSN),
+ 		Data:           pgMsg.WALData,
+ 		ServerTime:     pgMsg.ServerTime,
+@@ -247,10 +275,13 @@ func (h *Handler) ReceiveMessage(ctx context.Context) (*replication.Message, err
+ 
+ // SyncLSN notifies Postgres how far we have processed in the WAL.
+ func (h *Handler) SyncLSN(ctx context.Context, lsn replication.LSN) error {
++	h.ackMutex.Lock()
++	defer h.ackMutex.Unlock()
+ 	err := h.pgReplicationConn.SendStandbyStatusUpdate(ctx, uint64(lsn))
+ 	if err != nil {
+ 		return fmt.Errorf("syncLSN: send status update: %w", err)
+ 	}
++	h.lastAcknowledged = lsn
+ 	h.logger.Trace("stored new LSN position", loglib.Fields{
+ 		logLSNPosition: h.lsnParser.ToString(lsn),
+ 	})
+@@ -300,6 +331,14 @@ func (h *Handler) ResetConnection(ctx context.Context) error {
+ 	if err != nil {
+ 		return err
+ 	}
++	if h.transactionFraming {
++		identity, err := conn.IdentifySystem(ctx)
++		if err != nil {
++			conn.Close(ctx)
++			return fmt.Errorf("identify reconnected source: %w", err)
++		}
++		h.sourceIdentity = &wal.SourceIdentity{SystemID: identity.SystemID, Timeline: identity.Timeline, Database: identity.DBName, Slot: h.pgReplicationSlotName}
++	}
+ 	if h.pgReplicationConn != nil {
+ 		h.pgReplicationConn.Close(ctx)
+ 	}
+diff --git a/pkg/wal/replication/postgres/transaction_framing_test.go b/pkg/wal/replication/postgres/transaction_framing_test.go
+new file mode 100644
+index 0000000..f12dc9a
+--- /dev/null
++++ b/pkg/wal/replication/postgres/transaction_framing_test.go
+@@ -0,0 +1,62 @@
++// SPDX-License-Identifier: Apache-2.0
++package postgres
++
++import (
++	"context"
++	"errors"
++	"github.com/stretchr/testify/require"
++	pglib "github.com/xataio/pgstream/internal/postgres"
++	pgmocks "github.com/xataio/pgstream/internal/postgres/mocks"
++	loglib "github.com/xataio/pgstream/pkg/log"
++	"github.com/xataio/pgstream/pkg/wal"
++	"github.com/xataio/pgstream/pkg/wal/replication"
++	"testing"
++)
++
++func TestTransactionFramingKeepaliveRepeatsOnlyAcknowledgedCommit(t *testing.T) {
++	identity := &wal.SourceIdentity{SystemID: "100", Timeline: 2, Database: "synthetic", Slot: "framing"}
++	var acknowledgements []uint64
++	h := &Handler{logger: loglib.NewNoopLogger(), logFields: loglib.Fields{}, lsnParser: NewLSNParser(), transactionFraming: true, sourceIdentity: identity, pgReplicationConn: &pgmocks.ReplicationConn{
++		ReceiveMessageFn: func(context.Context) (*pglib.ReplicationMessage, error) {
++			return &pglib.ReplicationMessage{LSN: 99999, ReplyRequested: true}, nil
++		},
++		SendStandbyStatusUpdateFn: func(_ context.Context, lsn uint64) error {
++			acknowledgements = append(acknowledgements, lsn)
++			return nil
++		},
++	}}
++	require.NoError(t, h.SyncLSN(t.Context(), replication.LSN(100)))
++	message, err := h.ReceiveMessage(t.Context())
++	require.NoError(t, err)
++	require.Equal(t, []uint64{100, 100}, acknowledgements, "server WAL end is not complete transaction coverage")
++	require.Same(t, identity, message.SourceIdentity)
++}
++func TestTransactionFramingFailedAckDoesNotBecomeCoverage(t *testing.T) {
++	failure := errors.New("synthetic ACK failure")
++	h := &Handler{logger: loglib.NewNoopLogger(), logFields: loglib.Fields{}, lsnParser: NewLSNParser(), transactionFraming: true, lastAcknowledged: 100, pgReplicationConn: &pgmocks.ReplicationConn{SendStandbyStatusUpdateFn: func(context.Context, uint64) error { return failure }}}
++	require.ErrorIs(t, h.SyncLSN(t.Context(), 200), failure)
++	require.Equal(t, replication.LSN(100), h.lastAcknowledged)
++}
++
++func TestTransactionFramingReconnectRefreshesSourceIdentity(t *testing.T) {
++	replacement := &pgmocks.ReplicationConn{
++		IdentifySystemFn: func(context.Context) (pglib.IdentifySystemResult, error) {
++			return pglib.IdentifySystemResult{SystemID: "replacement", Timeline: 2, DBName: "synthetic"}, nil
++		},
++		StartReplicationFn:        func(context.Context, pglib.ReplicationConfig) error { return nil },
++		SendStandbyStatusUpdateFn: func(context.Context, uint64) error { return nil },
++		ReceiveMessageFn: func(context.Context) (*pglib.ReplicationMessage, error) {
++			return &pglib.ReplicationMessage{WALData: []byte(`{"action":"B","xid":7}`)}, nil
++		},
++	}
++	h := &Handler{logger: loglib.NewNoopLogger(), logFields: loglib.Fields{}, lsnParser: NewLSNParser(), transactionFraming: true, pgReplicationSlotName: "framing", sourceIdentity: &wal.SourceIdentity{SystemID: "original", Timeline: 1, Database: "synthetic", Slot: "framing"}, pgReplicationConn: &pgmocks.ReplicationConn{CloseFn: func(context.Context) error { return nil }}, pgReplicationConnBuilder: func() (pglib.ReplicationQuerier, error) { return replacement, nil }, pgConnBuilder: func() (pglib.Querier, error) {
++		return &pgmocks.Querier{QueryRowFn: func(_ context.Context, dest []any, _ string, _ ...any) error {
++			*dest[0].(*string) = "0/100"
++			return nil
++		}, CloseFn: func(context.Context) error { return nil }}, nil
++	}}
++	require.NoError(t, h.ResetConnection(t.Context()))
++	message, err := h.ReceiveMessage(t.Context())
++	require.NoError(t, err)
++	require.Equal(t, &wal.SourceIdentity{SystemID: "replacement", Timeline: 2, Database: "synthetic", Slot: "framing"}, message.SourceIdentity)
++}
+diff --git a/pkg/wal/replication/replication_handler.go b/pkg/wal/replication/replication_handler.go
+index 70356df..7d93a1a 100644
+--- a/pkg/wal/replication/replication_handler.go
++++ b/pkg/wal/replication/replication_handler.go
+@@ -5,6 +5,7 @@ package replication
+ import (
+ 	"context"
+ 	"errors"
++	"github.com/xataio/pgstream/pkg/wal"
+ 	"time"
+ )
+ 
+@@ -24,6 +25,7 @@ type Handler interface {
+ 
+ // Message contains the replication data
+ type Message struct {
++	SourceIdentity *wal.SourceIdentity
+ 	LSN            LSN
+ 	Data           []byte
+ 	ServerTime     time.Time
+diff --git a/pkg/wal/wal_data.go b/pkg/wal/wal_data.go
+index 2d5f9c7..f9a5f80 100644
+--- a/pkg/wal/wal_data.go
++++ b/pkg/wal/wal_data.go
+@@ -19,16 +19,31 @@ type Event struct {
+ 	CommitPosition CommitPosition
+ }
+ 
++// SourceIdentity identifies the PostgreSQL source and slot, independently of XID.
++// It does not identify an application restore generation.
++type SourceIdentity struct {
++	SystemID string `json:"system_id"`
++	Timeline int32  `json:"timeline"`
++	Database string `json:"database"`
++	Slot     string `json:"slot"`
++}
++
+ // Data contains the wal data properties identifying the table operation.
+ type Data struct {
+-	Action    string   `json:"action"`    // "I" -- insert, "U" -- update, "D" -- delete, "T" -- truncate, "M" -- logical message
+-	Timestamp string   `json:"timestamp"` // ISO8601, i.e. 2019-12-29 04:58:34.806671
+-	LSN       string   `json:"lsn"`
+-	Schema    string   `json:"schema"`
+-	Table     string   `json:"table"`
+-	Columns   []Column `json:"columns"`
+-	Identity  []Column `json:"identity"`
+-	XID       int64    `json:"xid,omitempty"`
++	SourceIdentity *SourceIdentity `json:"source_identity,omitempty"`
++	// Transaction framing is opt-in. Indices count exposed source events after
++	// internal pgstream DML suppression; C carries the complete event count.
++	NextLSN          string   `json:"nextlsn,omitempty"`
++	TransactionIndex *uint64  `json:"transaction_index,omitempty"`
++	TransactionCount *uint64  `json:"transaction_count,omitempty"`
++	Action           string   `json:"action"`    // "I" insert, "U" update, "D" delete, "T" truncate, "M" message; opt-in "B" begin and "C" commit
++	Timestamp        string   `json:"timestamp"` // ISO8601, i.e. 2019-12-29 04:58:34.806671
++	LSN              string   `json:"lsn"`
++	Schema           string   `json:"schema"`
++	Table            string   `json:"table"`
++	Columns          []Column `json:"columns"`
++	Identity         []Column `json:"identity"`
++	XID              int64    `json:"xid,omitempty"`
+ 	// For logical messages (when Action == "M")
+ 	Prefix  string `json:"prefix,omitempty"`
+ 	Content string `json:"content,omitempty"`
