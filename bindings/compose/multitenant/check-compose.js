@@ -82,8 +82,19 @@ function checkStream(config) {
   assert(!Object.keys(evaluator.environment||{}).some(key=>['NS_PGSTREAM_BINARY','NS_PGSTREAM_CONFIG'].includes(key)),'Evaluator has no stream process configuration');
   return true;
 }
+// PostgreSQL keeps reserved_connections slots for the clinical roles bootstrap
+// grants pg_use_reserved_connections (clinical-isolation.js).
+function checkClinicalReserve (config) {
+  const command = config.services.postgres.command || [];
+  const value = name => { const row = command.find(item => typeof item === 'string' && item.startsWith(name + '=')); return row ? Number(row.slice(name.length + 1)) : NaN; };
+  const max = value('max_connections'), reserved = value('reserved_connections');
+  assert(Number.isSafeInteger(reserved) && reserved >= 1, 'PostgreSQL must reserve connection slots for clinical roles');
+  assert(Number.isSafeInteger(max) && max - require('./clinical-isolation').SUPERUSER_RESERVED - reserved >= 1, 'PostgreSQL reserved_connections must leave general slots');
+  return true;
+}
 function check (config) {
   checkNetworks(config);
+  checkClinicalReserve(config);
   checkPublisher(config);
   checkStream(config);
   const runtime = ['pgstream', 'api', 'realtime', 'evaluator', 'tenant-admin', 'ui', 'nginx', 'admin', ...Object.keys(config.services).filter(name => /^api-\d+$/.test(name))];
@@ -121,6 +132,9 @@ if (require.main === module) {
         NS_SOURCE_COMMIT: process.env.NS_SOURCE_COMMIT || '0'.repeat(40), NS_DEPLOY_COMMIT: process.env.NS_DEPLOY_COMMIT || '0'.repeat(40)}
     });
     const config = JSON.parse(bytes); check(config);
+    const unreserved = structuredClone(config);
+    unreserved.services.postgres.command = unreserved.services.postgres.command.filter(item => !String(item).startsWith('reserved_connections='));
+    assert.throws(() => check(unreserved), /reserve connection slots for clinical roles/, 'Clinical connection reserve control must fail');
     const broken = structuredClone(config);
     broken.services.ui.volumes.push({type: 'bind', source: '/tmp/state/ops', target: '/state'});
     assert.throws(() => check(broken), /privileged directory/, 'Credential-exposure control must fail');
@@ -146,10 +160,10 @@ if (require.main === module) {
     assert.throws(() => checkEdgeResolve(nginx.replace('server api:1337 resolve;', 'server api:1337;')), /upstream api must re-resolve/, 'Edge re-resolve control must fail');
     assert.throws(() => checkEdgeSame(shared, nginx.replace("proxy_set_header Cookie '';", '')), /must equal nginx.conf/, 'Edge drift control must fail');
     check(config);
-    process.stdout.write('Compose boundaries, start order, edge re-resolution and edge equivalence pass; credential, private-listener, ingress-network, start-order, edge-gating, re-resolve and edge-drift controls rejected; restored configuration passes. Runtime UNMEASURED.\n');
+    process.stdout.write('Compose boundaries, start order, edge re-resolution and edge equivalence pass; credential, private-listener, ingress-network, start-order, edge-gating, re-resolve, edge-drift and clinical-reserve controls rejected; restored configuration passes. Runtime UNMEASURED.\n');
   } catch (error) {
     // Authored assertion messages name only a service/property, never values.
     process.stderr.write('Compose boundary check failed: ' + (error.code === 'ERR_ASSERTION' ? error.message : error.code || 'configuration expansion') + '\n'); process.exitCode = 1;
   }
 }
-module.exports = {checkStream, check, checkPublisher, checkNetworks, checkOrder, checkEdgeResolve, checkEdgeSame};
+module.exports = {checkStream, check, checkClinicalReserve, checkPublisher, checkNetworks, checkOrder, checkEdgeResolve, checkEdgeSame};

@@ -294,6 +294,33 @@ This replaces the template's fixed 1,024-slot renderer input, which could bound
 viewer capacity before the per-IP policy. These are synthetic reference resource
 budgets; the capacity campaign must measure the resulting envelope.
 
+## Clinical isolation from REST saturation
+
+`clinical-isolation.js` keeps clinical delivery working when REST traffic exceeds
+what the API can serve. Values are selected for `demo.sh prepare` and recorded in `.env`.
+
+| Setting | Default | Effect |
+|---|---|---|
+| `NS_API_REST_CONCURRENCY` | 8 | REST requests one API process runs at once (core `lib/server/serve/rest-admission.js`) |
+| `NS_API_REST_QUEUE` | 8 | requests that may wait for a slot; others get 503 `REST_ADMISSION_REFUSED` |
+| `NS_API_REST_QUEUE_TIMEOUT_MS` | 1000 | longest wait for a slot before the 503 |
+| `NS_API_REST_RETRY_AFTER_SECONDS` | 2 | `Retry-After` on the 503 |
+| `NS_POSTGRES_MAX_CONNECTIONS` | 140 | PostgreSQL `max_connections` |
+| `NS_POSTGRES_CLINICAL_RESERVED_CONNECTIONS` | 40 | PostgreSQL `reserved_connections` |
+
+A refused request runs no handler, so a refused write has no storage effect. The
+limit counts only the API's public listener; `serve.internal` (socket authority for
+realtime, lifecycle status) and realtime sockets are not counted.
+
+Bootstrap grants `pg_use_reserved_connections` to the pgstream, evaluator, realtime,
+outbox, suppression and evaluator/realtime lifetime roles only. The API, admin, UI
+and the shared display/activity reader roles cannot use the reserved slots. The
+defaults keep the 97 general slots of PostgreSQL's default configuration and add 40
+clinical slots. They are synthetic reference values derived from declared pool
+sizes, not measured capacity; size the reserve for realtime/evaluator worker
+overlays. The opt-in connection-budget overlay replaces the PostgreSQL command and
+does not keep `reserved_connections`.
+
 Generated edge and replica files live in private deployment state. Their input
 policy changes take effect through explicit preparation rather than mutating running
 role authority or silently changing the fixed maintenance census.

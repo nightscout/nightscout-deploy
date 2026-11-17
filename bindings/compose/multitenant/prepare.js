@@ -42,6 +42,7 @@ function prepare (args) {
   const evaluator = require('./evaluator-workers'), selectedEvaluator = evaluator.selection();
   const leaseSessions = require('./registry-plan').leaseSessions();
   require('./edge').policy();
+  const clinicalIsolation = require('./clinical-isolation').selection();
   const source = selectedSource?.coreCommit || require('./build').assertCleanSource(path.join(base, '../..'));
   const deployCommit = selectedSource?.deployCommit || require('./build').overlay(path.join(base, '../..'))?.deployCommit || source;
   if (!/^[a-f0-9]{40}$/.test(source)) throw new Error('Source commit unavailable');
@@ -93,6 +94,7 @@ function prepare (args) {
     (selectedRealtime ? 'NS_REALTIME_WORKERS=' + selectedRealtime.workers + '\nNS_REALTIME_SHARDS=' + selectedRealtime.shards + '\n' : '') +
     (selectedEvaluator ? 'NS_EVALUATOR_WORKERS=' + selectedEvaluator.workers + '\n' : '') +
     (connectionBudget?'NS_CONNECTION_BUDGET=1\n':'') + 'NS_M7_DIAGNOSTICS=' + diagnostics.enabled + '\nNS_M7_DIAGNOSTICS_INTERVAL_MS=' + diagnostics.interval + '\n' +
+    require('./clinical-isolation').envLines(clinicalIsolation) +
     'NS_OPERATION_LEASE_SESSIONS=' + leaseSessions + '\nNS_DEMO_STATE=' + state + '\nNS_DEMO_BIND=' + options.bind + '\nNS_DEMO_PORT=' + options.port + '\nNS_SOURCE_COMMIT=' + source + '\n');
   if(connectionBudget){const configFile=path.join(state,'connection-budget/controller-config.json'),c=require('./connection-budget-files').read(configFile);c.fileDigests=Object.fromEntries([...c.composeFiles,path.join(base,'.env'),path.join(state,'connection-budget/postgres-ready.sh')].map(file=>[file,crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')]));require('./connection-budget-files').write(configFile,c);}
   process.stdout.write('Prepared private synthetic deployment state. Run the explicit bootstrap before starting roles.\n');

@@ -106,6 +106,9 @@ async function bootstrap(options) {
       const password=random();await admin.query('CREATE ROLE '+q(role)+" LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD '"+password+"'");
       const url=new URL(pg);url.username=role;url.password=password;roleURLs[kind]=url.toString();
     }
+    // Clinical output producers/deliverers may use PostgreSQL's reserved_connections
+    // slots; REST-serving roles may not (clinical-isolation.js).
+    for(const sql of require('./clinical-isolation').grants(l))await admin.query(sql);
     // Setup-only exception: fixed commissioner, no membership/inheritance or
     // application ownership. Runtime verifies its complete effective allowlist.
     if(freshControl)await admin.query('ALTER ROLE '+q(l.roles.restore_commissioner)+' BYPASSRLS NOINHERIT');

@@ -29,7 +29,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.postgres
-    command: [postgres, -c, wal_level=logical, -c, max_replication_slots=4, -c, max_wal_senders=4, -c, max_slot_wal_keep_size=256MB, -c, output_plugin_libraries=wal2json]
+    # max_connections/reserved_connections: clinical roles (evaluator, realtime, pgstream and their
+    # consumers) may use the reserved slots; REST-serving roles may not (clinical-isolation.js).
+    command: [postgres, -c, wal_level=logical, -c, max_replication_slots=4, -c, max_wal_senders=4, -c, max_slot_wal_keep_size=256MB, -c, output_plugin_libraries=wal2json,
+      -c, "max_connections=${NS_POSTGRES_MAX_CONNECTIONS:-140}", -c, "reserved_connections=${NS_POSTGRES_CLINICAL_RESERVED_CONNECTIONS:-40}"]
     environment:
       POSTGRES_DB: nightscout_compose_test
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password
@@ -78,6 +81,11 @@ services:
       # Fixed service instances; maintenance still addresses every exact instance.
       NS_API_REPLICAS: ${NS_API_REPLICAS:-1}
       NS_OPERATION_LEASE_SESSIONS: ${NS_OPERATION_LEASE_SESSIONS:-4}
+      # Bounded REST admission per api process (clinical-isolation.js; empty = binding default).
+      NS_API_REST_CONCURRENCY: ${NS_API_REST_CONCURRENCY:-}
+      NS_API_REST_QUEUE: ${NS_API_REST_QUEUE:-}
+      NS_API_REST_QUEUE_TIMEOUT_MS: ${NS_API_REST_QUEUE_TIMEOUT_MS:-}
+      NS_API_REST_RETRY_AFTER_SECONDS: ${NS_API_REST_RETRY_AFTER_SECONDS:-}
       # Off when empty. Healthy feed rotation period for evaluator and realtime (registry-plan.js).
       # Off when empty. Large tenant counts only: see bootstrap.js input().
       NS_BOOTSTRAP_CONFIG_MAX_BYTES: ${NS_BOOTSTRAP_CONFIG_MAX_BYTES:-}
