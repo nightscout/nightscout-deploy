@@ -52,7 +52,8 @@ both (`org.opencontainers.image.revision`, `org.nightscout.deploy.revision`).
 `bootstrap` prepares infrastructure only: schemas, grants, role configurations,
 the private admin service and maintained pgstream capture metadata. `up` starts the private admin,
 provisions the seed through its versioned API, explicitly commissions the private
-restore operator for that synthetic cohort, starts the API instances, and runs
+restore operator for that synthetic cohort, verifies platform state through the
+private admin API, starts the API instances, and runs
 a separate lab-priming API client before starting realtime/evaluator and ingress.
 The primer has no PostgreSQL or Vault credential. `commission-restore.js` is a
 separate private DDL-operator step: it provisions current role-OID restore authority
@@ -70,6 +71,29 @@ over the private service boundary. Clinical reads stay on the evaluator's
 registered storage connection; realtime reads typed completed output and current
 presentation/control metadata. Partial setup is refused; source
 and deployment revision changes require fresh synthetic state.
+
+The admin service owns platform schema, catalogue and privilege verification.
+`platform-startup.js` writes the selected verification namespace and role into
+serving configuration and copies each role's exact configuration, environment
+and operation context into admin's private mount. The verification writer
+credential stays there. Before starting the API, `up` runs
+`node deploy/multitenant/platform-verify.js` in the primer container. That job
+sends `{}` to the private `POST /v1/platform-verification` operation. A Job or
+controller can call the same operation through its private network access.
+The job records the selected-operation hash and verified role generations in
+`primer/platform-verification.json`; a refused or incomplete verification
+stops startup. Serving roles perform their identity and verified-state admission
+against that recorded generation. The generated admin selection records a
+300-second verified lifetime and a
+60-second refresh interval. Its refresh timer begins after the first successful
+explicit operation and runs the same verification. A failed scan revokes the
+previous result; expired state refuses serving admission. Drift is detected by
+those admin checks. An unexpired certificate remains valid during a read-only
+refresh. Before a known schema or grant change, the platform sends `{}` to
+private `DELETE /v1/platform-verification`; that operation revokes admission
+and fences any older in-flight verifier. The platform then changes the schema
+or grants and invokes verification again. Serving admission checks the current
+verified record and identity; it does not scan database catalogues.
 
 nginx waits only for the services it routes to, including each API instance.
 An unhealthy evaluator or tenant-admin does not keep ingress down. Preparation
@@ -126,6 +150,14 @@ The primer keeps each tenant's existing authorized API sequence serial. Its
 optional worker count overlaps independent tenants; the default remains one.
 It receives no PostgreSQL or Vault credentials and does not bypass public DATA
 or private ownership/session authorization.
+
+Primer failures retain an allowlisted connection cause and request class.
+They omit request URLs, tenant identities, headers and bodies. The first
+successful role-list read emits one `first-useful-response` event with a wall
+clock timestamp; full priming emits a separate `completed` event. Process
+readiness, first useful service and completed lab priming therefore remain
+separate observations. Only the existing explicit `TENANT_WARMING` read retry
+is automatic; an uncertain entry write keeps its reconciliation fence.
 
 Within the existing primer environment, a bounded chunk is:
 

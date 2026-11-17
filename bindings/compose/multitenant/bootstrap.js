@@ -129,6 +129,7 @@ async function bootstrap(options) {
     if(freshControl)for(const sql of require('./control-recovery-bootstrap').grants(l))await admin.query(sql);
     const managementGrants=require('../../lib/management-sessions/authority').grants({namespaces:{registry:l.namespaces.registry,authorization:l.namespaces.authorization,access:l.namespaces.access,control:l.namespaces.control},issuer:l.roles.management_issuer,authorityOwner:l.managementAuthorityOwner});
     for(const sql of [...managementGrants.authorityOwner,...managementGrants.issuer])await admin.query(sql);
+    await require('./platform-startup').install(admin,l);
     await require('./pgstream').init({admin,adminURL:pg.toString(),layout:l,config:require('./pgstream').descriptor(l)});
     if(options.connectionBudgetProfile&&require('./connection-budget-files').read(options.connectionBudgetProfile).version===2){
       const database=(await admin.query('SELECT current_database() AS database,(SELECT oid::text FROM pg_database WHERE datname=current_database()) AS "databaseOid"')).rows;

@@ -60,6 +60,7 @@ case "${1:-}" in
     "${compose[@]}" --profile ops run --rm primer node deploy/multitenant/prime.js provision
     "${compose[@]}" --profile ops run --rm --no-deps bootstrap node deploy/multitenant/commission-restore.js
     "${compose[@]}" --profile ops run --rm --no-deps primer node deploy/multitenant/evaluator-pool.js initialize
+    "${compose[@]}" --profile ops run --rm --no-deps primer node deploy/multitenant/platform-verify.js
     replicas=$(node -e 'const fs=require("node:fs"),lines=fs.readFileSync(".env","utf8").split("\n");const n=Number((lines.find(x=>x.startsWith("NS_API_REPLICAS="))||"NS_API_REPLICAS=1").slice(16));if(!Number.isSafeInteger(n)||n<1||n>16)process.exit(1);console.log(Array.from({length:n},(_,i)=>i?"api-"+(i+1):"api").join(" "));')
     "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 900 $replicas
     "${compose[@]}" --profile ops run --rm --no-deps primer node deploy/multitenant/prime.js prime

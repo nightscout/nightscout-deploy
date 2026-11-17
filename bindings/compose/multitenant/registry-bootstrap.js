@@ -38,6 +38,7 @@ async function finish({ options, request, rootToken, layout, roleURLs, writePriv
       writePrivate(path.join(dir, 'evaluator-metadata.json'), docs.configs.evaluator, own, compact);
     }
   }
+  require('./platform-startup').files({ output, docs, writePrivate, own, compact });
   writePrivate(path.join(output, 'admin', 'env.json'), docs.admin.environment, own, compact);
   writePrivate(path.join(output, 'admin', 'config.json'), docs.admin.config, own, compact);
   writeToken(path.join(output, 'admin', 'vault-token'), provisioningToken);
@@ -49,7 +50,7 @@ async function finish({ options, request, rootToken, layout, roleURLs, writePriv
   require('../../lib/server/serve/admin-config').parse(docs.admin.config, docs.admin.environment);
   const ids = plan.tenantIds();
   const seed = ids.map((id, index) => ({ id, hosts: [plan.tenantAlias(index)], issueRootSecret: true }));
-  writePrivate(path.join(output, 'primer', 'config.json'), { version: 1, adminOrigin: 'http://admin:1342', apiOrigin: docs.apiOrigin || 'http://api:1337', ownerConsumer: docs.configs['tenant-admin'].management.consumer, ...(docs.evaluatorPool ? {evaluatorPool:docs.evaluatorPool} : {}), seed }, own);
+  writePrivate(path.join(output, 'primer', 'config.json'), { version: 1, adminOrigin: 'http://admin:1342', apiOrigin: docs.apiOrigin || 'http://api:1337', ownerConsumer: docs.configs['tenant-admin'].management.consumer, platformVerification: require('./platform-startup').selection(docs), ...(docs.evaluatorPool ? {evaluatorPool:docs.evaluatorPool} : {}), seed }, own);
   const lifecycle = plan.lifecycle(l);
   writePrivate(path.join(output, 'ops', 'config.json'), { version: 1, drainTimeoutMs: 10000,
     tenants: ids.map((id, i) => ({ id, host: plan.tenantAlias(i), tokenEnv: i === 0 ? 'NS_DEMO_TOKEN_A' : i === 1 ? 'NS_DEMO_TOKEN_B' : 'NS_DEMO_TOKEN_' + i })),
