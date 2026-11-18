@@ -29,7 +29,7 @@ function input(env=process.env) {
   if(capRaw&&(!/^[1-9][0-9]{0,9}$/.test(capRaw)||Number(capRaw)<65536||Number(capRaw)>67108864))throw fail('BOOTSTRAP_CONFIG_MAX_BYTES_INVALID');
   const deployCommit=env.NS_DEPLOY_COMMIT||env.NS_SOURCE_COMMIT;
   if(!/^[a-f0-9]{40}$/.test(deployCommit))throw fail('BOOTSTRAP_DEPLOY_IDENTITY_INVALID');
-  return {connectionBudgetProfile:env.NS_CONNECTION_BUDGET_PROFILE_FILE||undefined,deployCommit,pg,vault,output:path.resolve(env.NS_BOOTSTRAP_OUTPUT),sourceCommit:env.NS_SOURCE_COMMIT,uid,gid,configMaxBytes:capRaw?Number(capRaw):undefined};
+  return {deployCommit,pg,vault,output:path.resolve(env.NS_BOOTSTRAP_OUTPUT),sourceCommit:env.NS_SOURCE_COMMIT,uid,gid,configMaxBytes:capRaw?Number(capRaw):undefined};
 }
 // Generated machine documents (role config, env, admission) are written compact: about a third
 // smaller, which matters against the configuration byte cap at large tenant counts. Bootstrap
@@ -40,24 +40,9 @@ function writePrivate(filename,value,{uid,gid}={},{compact=false}={}) {
   if(uid!==undefined){fs.chownSync(path.dirname(filename),uid,gid);fs.chownSync(filename,uid,gid);}
 }
 async function bootstrap(options) {
-  // Validate the complete selection before vault, SQL, credentials or files.
-  let selected;
-  if(options.connectionBudgetProfile){
-    const F=require('./connection-budget-files');selected=F.read(options.connectionBudgetProfile);
-    if(![1,2].includes(selected.version))throw fail('LIFECYCLE_OPERATOR_SELECTION');
-    const marker=path.join(path.dirname(options.connectionBudgetProfile),'operator-enabled.json');
-    if(selected.version===2)require('./connection-budget-bootstrap').selection(options,selected,true);
-    else if(fs.existsSync(marker)){
-      const value=F.read(marker);
-      if(!require('node:util').isDeepStrictEqual(value,{version:selected.version,kind:'fresh-lifecycle-operator'}))throw fail('LIFECYCLE_OPERATOR_SELECTION');
-      options.lifecycleOperator=true;
-    }
-  }else if(options.lifecycleOperator)throw fail('LIFECYCLE_OPERATOR_SELECTION');
   require('./pgstream').enabled();
-  if(options.connectionBudgetProfile)throw fail('PGSTREAM_EXTERNAL_ADMISSION_UNQUALIFIED');
   const workers=require('./evaluator-workers'),evaluatorWorkers=workers.selection();
   if(evaluatorWorkers)workers.assertSeed(evaluatorWorkers,plan.tenantIds());
-  const freshControl=!!(options.lifecycleOperator&&selected.version===2);
   const {pg,vault,output,sourceCommit,deployCommit,uid,gid,configMaxBytes}=options;
   const privateDirectory=path.join(output,'bootstrap');fs.mkdirSync(privateDirectory,{recursive:true,mode:0o700});
   const initFile=path.join(privateDirectory,'vault-init.json'),completeFile=path.join(privateDirectory,'complete.json'),startedFile=path.join(privateDirectory,'started.json');
@@ -93,11 +78,6 @@ async function bootstrap(options) {
   try{
     // This script owns a dedicated database. It never adopts existing application
     // schemas/roles; a partial run must be inspected and its demo volumes replaced.
-    if(options.connectionBudgetProfile){
-      const observed=await admin.query("SELECT (SELECT system_identifier::text FROM pg_control_system()) AS \"systemIdentifier\", pg_postmaster_start_time()::text AS \"postmasterStartedAt\", current_setting('max_connections')::int AS \"serverMaximum\", current_setting('superuser_reserved_connections')::int AS \"superuserReserved\", coalesce(current_setting('reserved_connections',true),'0')::int AS \"otherReserved\"");
-      if(observed.rows.length!==1)throw fail('CONNECTION_BUDGET_TARGET_UNKNOWN');options.connectionBudgetObserved=observed.rows[0];
-    }
-    if(freshControl){l.roles.restore_commissioner=l.prefix+'_restore_commissioner';l.roles.realtime_recovery=l.prefix+'_realtime_recovery';}
     const preexisting=await admin.query('SELECT nspname FROM pg_namespace WHERE nspname LIKE $1',[l.prefix+'_%']);
     const roles=await admin.query('SELECT rolname FROM pg_roles WHERE rolname LIKE $1',[l.prefix+'_%']);
     if(preexisting.rows.length||roles.rows.length)throw fail('BOOTSTRAP_OBJECTS_ALREADY_EXIST');
@@ -112,9 +92,6 @@ async function bootstrap(options) {
     // Clinical output producers/deliverers may use PostgreSQL's reserved_connections
     // slots; REST-serving roles may not (clinical-isolation.js).
     for(const sql of require('./clinical-isolation').grants(l))await admin.query(sql);
-    // Setup-only exception: fixed commissioner, no membership/inheritance or
-    // application ownership. Runtime verifies its complete effective allowlist.
-    if(freshControl)await admin.query('ALTER ROLE '+q(l.roles.restore_commissioner)+' BYPASSRLS NOINHERIT');
     const {run}=require('../../lib/migrations/postgres');
     for(const [kind,catalogue]of Object.entries(allCatalogues)){
       const namespace=l.namespaces[kind];await admin.query('CREATE SCHEMA '+q(namespace));
@@ -128,27 +105,13 @@ async function bootstrap(options) {
       for(const row of functions.rows)await admin.query('ALTER FUNCTION '+row.signature+' OWNER TO '+q(l.owner));
       await admin.query('ALTER SCHEMA '+q(namespace)+' OWNER TO '+q(l.owner));
     }
-    for(const sql of plan.grants({...l,roles:Object.fromEntries(Object.entries(l.roles).filter(([name])=>!['restore_commissioner','realtime_recovery'].includes(name)))}))await admin.query(sql);
-    if(freshControl)for(const sql of require('./control-recovery-bootstrap').grants(l))await admin.query(sql);
+    for(const sql of plan.grants(l))await admin.query(sql);
     const managementGrants=require('../../lib/management-sessions/authority').grants({namespaces:{registry:l.namespaces.registry,authorization:l.namespaces.authorization,access:l.namespaces.access,control:l.namespaces.control},issuer:l.roles.management_issuer,authorityOwner:l.managementAuthorityOwner});
     for(const sql of [...managementGrants.authorityOwner,...managementGrants.issuer])await admin.query(sql);
     await require('./platform-startup').install(admin,l);
     const streamDescriptor=require('./pgstream').descriptor(l,evaluatorWorkers);
     await require('./pgstream').init({admin,adminURL:pg.toString(),layout:l,config:streamDescriptor});
     const nativeSource=await require('./native-lifecycle').source(admin,streamDescriptor.pgstream.slot);
-    if(options.connectionBudgetProfile&&require('./connection-budget-files').read(options.connectionBudgetProfile).version===2){
-      const database=(await admin.query('SELECT current_database() AS database,(SELECT oid::text FROM pg_database WHERE datname=current_database()) AS "databaseOid"')).rows;
-      if(database.length!==1)throw fail('WORKER_DATABASE_IDENTITY');
-      options.workerDatabase=require('./worker-database').identity(database[0]);
-    }
-    if(freshControl){
-      options.controlRecoveryPrincipals={};
-      for(const [className,role]of [['lifecycle-operator',l.roles.operator],['restore-commissioner',l.roles.restore_commissioner],['realtime-recovery',l.roles.realtime_recovery]]){
-        const rows=(await admin.query('SELECT current_database() AS database,(SELECT oid::text FROM pg_database WHERE datname=current_database()) AS "databaseOid",rolname AS role,oid::text AS "roleOid" FROM pg_roles WHERE rolname=$1',[role])).rows;
-        if(rows.length!==1)throw fail('CONTROL_RECOVERY_PRINCIPAL');options.controlRecoveryPrincipals[className]=require('./control-recovery').principal(rows[0]);
-      }
-    }
-    if(options.lifecycleOperator){const identity=await admin.query('SELECT current_database() AS database,(SELECT oid::text FROM pg_database WHERE datname=current_database()) AS "databaseOid",rolname AS role,oid::text AS "roleOid" FROM pg_roles WHERE rolname=$1',[l.roles.operator]);if(identity.rows.length!==1)throw fail('LIFECYCLE_OPERATOR_PRINCIPAL');options.lifecycleOperatorPrincipal=identity.rows[0];}
     // Registry completion still issues queries through this client.
     return await require('./registry-bootstrap').finish({options,request,rootToken:initialization.root_token,layout:l,roleURLs,writePrivate,admin,adminURL:pg.toString(),nativeSource});
   }finally{await admin.end();}

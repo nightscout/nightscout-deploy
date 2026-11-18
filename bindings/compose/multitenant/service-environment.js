@@ -30,7 +30,7 @@ function read () {
   if (!values || typeof values !== 'object' || Array.isArray(values)) throw new Error();
   for (const [key, value] of Object.entries(values)) {
     if (!/^[A-Z][A-Z0-9_]*$/.test(key) || typeof value !== 'string' || value.includes('\0') ||
-        (/^NS_CONNECTION_BUDGET_/.test(key) || ['NODE_OPTIONS', 'NODE_PATH', 'PATH', 'LD_PRELOAD', 'NS_ENV_FILE', 'MULTITENANT_CONFIG_MAX_BYTES'].includes(key))) throw new Error();
+        (['NODE_OPTIONS', 'NODE_PATH', 'PATH', 'LD_PRELOAD', 'NS_ENV_FILE', 'MULTITENANT_CONFIG_MAX_BYTES'].includes(key))) throw new Error();
   }
   return values;
 }

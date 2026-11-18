@@ -39,7 +39,7 @@ function sourceIdentity(source) {
   const envFile = path.join(source.root, 'deploy/multitenant/.env');
   if (fs.existsSync(envFile)) {
     const lines = fs.readFileSync(envFile, 'utf8').split('\n');
-    if (lines.some(line => /^NS_(?:CONNECTION_BUDGET=1|EVALUATOR_WORKERS=|REALTIME_WORKERS=)/.test(line)) || lines.some(line => line.startsWith('NS_API_REPLICAS=') && line !== 'NS_API_REPLICAS=1')) throw fail('REVISION_SELECTED_PROFILE_UNSUPPORTED');
+    if (lines.some(line => /^NS_(?:EVALUATOR_WORKERS=|REALTIME_WORKERS=)/.test(line)) || lines.some(line => line.startsWith('NS_API_REPLICAS=') && line !== 'NS_API_REPLICAS=1')) throw fail('REVISION_SELECTED_PROFILE_UNSUPPORTED');
   }
 }
 

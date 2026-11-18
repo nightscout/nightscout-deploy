@@ -129,67 +129,48 @@ async function restore (config, artifact, env = process.env, hooks = {}) {
   } finally { await pool.end(); }
 }
 
-// The admitted entry owns construction; this adapter accepts only its branded
-// context. Preserve tenant scope and the selected source binding.
-function validateRecoveryConfig(value,env){return validateConfig(value,env,false);}
-function recoveryController(config,context){
- if(!require('./lifecycle-operator-entry').isContext(context))throw fail('LIFECYCLE_OPERATOR_CONTEXT');
- context.check();return require('../../lib/tenant-lifecycle/restore-resume').create({namespace:config.control.namespace,locks:config.control.locks,pool:context.pool,statementTimeoutMs:10000,lockWaitMs:2000,...selectionOptions(config)});
-}
-// SOURCE-only admitted capture/restore boundary. The fixed entry owns the
-// branded pool; no constructor or startup acquisition is invented here.
-function admittedContext(context) {
-  if (!require('./lifecycle-operator-entry').isContext(context)) throw fail('LIFECYCLE_OPERATOR_CONTEXT');
-  context.check();
-}
-async function admittedCapture(config, tenant, context, env = process.env) {
-  admittedContext(context); operationPlacement(env); tenantFor(config, tenant);
-  const lifecycle = lifecycleFor(config);
-  const snapshot = require('./lifecycle-snapshot').create(context,{catalogues:lifecycle.admittedCatalogue(),namespaces:config.namespaces,sourceCommit:env.NS_SOURCE_COMMIT});
-  const artifact = await exportTenant(lifecycle, snapshot, config, tenant, env.NS_SOURCE_COMMIT);
-  context.check(); return artifact;
-}
-async function admittedRestore(config, artifact, context, env = process.env, hooks = {}) {
-  admittedContext(context);
-  const tenant = tenantFor(config, artifact?.manifest?.tenant), lifecycle = lifecycleFor(config);
+// Interrupted-restore recovery on the operator's plain private pool (max 1).
+// `inspect` changes nothing; `resume` reopens a tenant held closed by a restore
+// whose operator has ended, under the claim that `inspect` reported.
+async function recover (config, command, tenant, claimId, env = process.env) {
   operationPlacement(env);
+  tenantFor(config, tenant);
+  const { Pool } = require('pg');
+  const pool = new Pool({ connectionString: env.NS_OPERATOR_PG, max: 1, connectionTimeoutMillis: 5000,
+    statement_timeout: 10000, options: '-c search_path=pg_catalog' });
   let controller;
   try {
-    controller = require('../../lib/tenant-lifecycle/maintenance-window').create({ namespace: config.control.namespace,
-      locks: config.control.locks, pool: context.pool, drainTimeoutMs: config.drainTimeoutMs, ...selectionOptions(config) });
-    let committed = false;
-    const result = await controller.withRestore(tenant, { artifactDigest: artifact.digest }, async ({ connection, maintenanceClaim }) => {
-      context.check();
-      if (hooks.beforeData) await hooks.beforeData();
-      context.check();
-      return lifecycle.restoreLogical(connection, artifact, { tenant, namespaces: config.namespaces, ledgerNamespace: config.control.namespace, maintenanceClaim,
-        ...(hooks.onRow ? { onRow: hooks.onRow } : {}), onCommitted: async summary => {
-          context.check(); committed = true; if (hooks.onCommitted) await hooks.onCommitted(summary); context.check();
-        } });
-    });
-    context.check(); if (!committed) throw fail('COMPOSE_RESTORE_COMMIT_NOT_OBSERVED');
-    return result;
-  } finally { await controller?.close(); }
+    controller = recoveryController(config, pool);
+    return command === 'inspect' ? await controller.inspect(tenant) : await controller.resume(tenant, { claimId });
+  } finally { await controller?.close(); await pool.end(); }
+}
+function recoveryController (config, pool) {
+  return require('../../lib/tenant-lifecycle/restore-resume').create({ namespace: config.control.namespace, locks: config.control.locks, pool,
+    statementTimeoutMs: 10000, lockWaitMs: 2000, ...selectionOptions(config) });
 }
 
 function argumentsFor (args) {
   const command = args.shift();
-  if (!['export', 'restore'].includes(command)) throw fail('COMPOSE_OPERATOR_USAGE');
+  if (!['export', 'restore', 'inspect', 'resume'].includes(command)) throw fail('COMPOSE_OPERATOR_USAGE');
   const options = {};
   while (args.length) {
     const name = args.shift(), value = args.shift();
-    if (!['--tenant', '--directory', '--digest'].includes(name) || !value || Object.hasOwn(options, name)) throw fail('COMPOSE_OPERATOR_USAGE');
+    if (!['--tenant', '--directory', '--digest', '--claim'].includes(name) || !value || Object.hasOwn(options, name)) throw fail('COMPOSE_OPERATOR_USAGE');
     options[name] = value;
   }
-  if (!UUID.test(options['--tenant'] || '') || !path.isAbsolute(options['--directory'] || '') ||
-      (command === 'restore' && !/^[a-f0-9]{64}$/.test(options['--digest'] || '')) ||
-      (command === 'export' && options['--digest'])) throw fail('COMPOSE_OPERATOR_USAGE');
-  return { command, tenant: options['--tenant'], directory: options['--directory'], digest: options['--digest'] };
+  const recovering = command === 'inspect' || command === 'resume';
+  if (!UUID.test(options['--tenant'] || '') ||
+      (recovering ? options['--directory'] || options['--digest'] || (command === 'resume') !== Object.hasOwn(options, '--claim') || (command === 'resume' && !UUID.test(options['--claim']))
+        : !path.isAbsolute(options['--directory'] || '') || options['--claim'] ||
+          (command === 'restore' && !/^[a-f0-9]{64}$/.test(options['--digest'] || '')) ||
+          (command === 'export' && options['--digest']))) throw fail('COMPOSE_OPERATOR_USAGE');
+  return { command, tenant: options['--tenant'], directory: options['--directory'], digest: options['--digest'], claimId: options['--claim'] };
 }
 
 async function main (args = process.argv.slice(2)) {
   const options = argumentsFor(args), config = loadConfig(), artifacts = require('../../lib/tenant-lifecycle/filesystem-artifact');
   tenantFor(config, options.tenant);
+  if (options.command === 'inspect' || options.command === 'resume') return await recover(config, options.command, options.tenant, options.claimId);
   if (options.command === 'export') {
     const artifact = await capture(config, options.tenant);
     await artifacts.saveTenantArtifact(artifact, { directory: options.directory });
@@ -207,4 +188,4 @@ if (require.main === module) main().then(result => process.stdout.write(JSON.str
     recovery: 'Inspect persisted operation state. Do not automatically replay or reopen the tenant.' }) + '\n');
   process.exitCode = 1;
 });
-module.exports = { admittedCapture, admittedRestore, validateRecoveryConfig, recoveryController, selectionOptions, validateConfig, loadConfig, lifecycleFor, tenantFor, capture, restore, argumentsFor, main };
+module.exports = { selectionOptions, validateConfig, loadConfig, lifecycleFor, tenantFor, capture, restore, recover, recoveryController, argumentsFor, main };

@@ -23,11 +23,6 @@ if [ -f .env ]; then
     [ -f "$realtime_file" ] || { echo 'Selected realtime placement overlay missing' >&2; exit 1; }
     compose+=(-f "$realtime_file")
   fi
-  budget_file="$(dirname "$replica_file")/compose.connection-budget.yaml"
-  if [[ "$(<.env)" == *NS_CONNECTION_BUDGET=1* ]]; then
-    [ -f "$budget_file" ] || { echo 'Selected connection-budget overlay missing' >&2; exit 1; }
-    compose+=(-f "$budget_file")
-  fi
 fi
 case "${1:-}" in
   prepare)
@@ -45,15 +40,7 @@ case "${1:-}" in
     node build.js --check-image
     exec "${compose[@]}" --profile ops run --rm bootstrap
     ;;
-  admission)
-    shift
-    exec node connection-budget-cli.js "$(dirname "$replica_file")" "$@"
-    ;;
   up)
-    if [[ "$(<.env)" == *NS_CONNECTION_BUDGET=1* ]]; then
-      echo 'Selected connection-budget profile requires explicit admission bind/start per process; ordinary up refuses uncontrolled worker startup' >&2
-      exit 78
-    fi
     node build.js --check-image
     "${compose[@]}" --profile ops run --rm bootstrap
     "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 90 admin
@@ -67,10 +54,6 @@ case "${1:-}" in
     exec "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 900 $realtime_services $evaluator_services pgstream tenant-admin ui nginx
     ;;
   demo)
-    if [[ "$(<.env)" == *NS_CONNECTION_BUDGET=1* ]]; then
-      echo 'Selected connection budget refuses undeclared restore/demo/operator SQL processes' >&2
-      exit 78
-    fi
     node build.js --check-image
     exec "${compose[@]}" --profile ops run --rm --no-deps demo
     ;;

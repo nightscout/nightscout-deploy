@@ -4,7 +4,7 @@
 // Each role's pool sizes bound its PostgreSQL connections (census C-06); the
 // loader installs no per-process connection plan.
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),{spawnSync}=require('node:child_process');
-const F=require('../connection-budget-files');
+const F={write:(file,value)=>fs.writeFileSync(file,JSON.stringify(value)+'\n',{mode:0o600})};
 function fixture(){
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ns-health-admission-'));fs.chmodSync(dir,0o700);const base=path.join(dir,'deploy/multitenant');fs.mkdirSync(base,{recursive:true});
  for(const name of ['entrypoint.js','load-env.js','service-environment.js'])fs.copyFileSync(path.join(__dirname,'..',name),path.join(base,name));
