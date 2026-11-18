@@ -136,7 +136,10 @@ function checkVerification(expected, proof, identity, contract, now = Date.now()
 
 async function main() {
   const app = process.cwd(), dir = path.dirname(__filename);
-  const contract = read(dir, 'source-contract.json', 'K8S_CANDIDATE_CONTRACT_REQUIRED');
+  const sourceContract = read(dir, 'source-contract.json', 'K8S_CANDIDATE_CONTRACT_REQUIRED');
+  const topology = process.env.NS_APPLICATION_TOPOLOGY || 'cohort';
+  need(['cohort', 'separate-k1'].includes(topology), 'K8S_CANDIDATE_TOPOLOGY_REQUIRED');
+  const contract = {...sourceContract, applicationTopology: topology};
   const identity = fixture(process.env.NS_FIXTURE_NAMESPACE, process.env.NS_FIXTURE_RUN_ID);
   if (process.argv[2] === 'hold') {
     const root = '/state';

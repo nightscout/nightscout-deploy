@@ -13,6 +13,8 @@ test('separate K1 render detects broken boundaries and restores the same baselin
   assert.deepEqual(errors(), []);
   assert.equal(Object.keys(baseline.inventory.workloads).length, 12);
   const cases = [
+    ['source contract reserialized', x => {const m=x.find(w=>w.kind==='ConfigMap'&&w.metadata.name==='provision-scripts');m.data['source-contract.json']=JSON.stringify(JSON.parse(m.data['source-contract.json']));}, /rendered source-contract.json differs/],
+    ['topology mode omitted', x => {const c=x.find(w=>w.kind==='Job'&&w.metadata.name==='provision').spec.template.spec.containers.find(c=>c.name==='done');c.env=c.env.filter(e=>e.name!=='NS_APPLICATION_TOPOLOGY');}, /explicit provision topology/],
     ['second evaluator', x => x.find(w => w.kind === 'Deployment' && w.metadata.name === 'evaluator').spec.replicas = 2, /one Recreate Deployment/],
     ['private edge access', x => x.find(w => w.kind === 'NetworkPolicy' && w.metadata.name === 'api-internal').spec.ingress[0].from.push({podSelector:{matchLabels:{'app.kubernetes.io/component':'edge'}}}), /unauthorized source/],
     ['lost lifecycle path', x => x.find(w => w.kind === 'NetworkPolicy' && w.metadata.name === 'realtime-internal').spec.ingress = [], /lacks a directed lifecycle/],
@@ -28,6 +30,8 @@ test('separate K1 render detects broken boundaries and restores the same baselin
     assert.deepEqual(errors(), [], name + ' restored');
   }
   const projection = baseline.all.find(x => x.kind === 'ConfigMap' && x.metadata.name === 'provision-scripts');
-  assert.equal(JSON.parse(projection.data['source-contract.json']).applicationTopology, 'separate-k1');
+  assert.equal(projection.data['source-contract.json'], fs.readFileSync(path.join(root,'assets/source-contract.json'),'utf8'), 'source-contract bytes match the immutable binding receipt');
+  const done = baseline.all.find(x => x.kind === 'Job' && x.metadata.name === 'provision').spec.template.spec.containers.find(x => x.name === 'done');
+  assert.ok(done.env.some(x => x.name === 'NS_APPLICATION_TOPOLOGY' && x.value === 'separate-k1'));
   assert.equal(projection.data['network-documents.cjs'], fs.readFileSync(path.join(root,'ops/network-documents.cjs'),'utf8'));
 });

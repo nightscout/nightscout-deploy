@@ -78,7 +78,10 @@ function checks (all, inventory, composeDir, envMain) {
   const resolve = (svc, sp) => targets(svc).filter(t => t.port.name === sp.targetPort || t.port.containerPort === (sp.targetPort ?? sp.port));
 
   run('package-assets', fail => {
-    const contract=JSON.parse(fs.readFileSync(path.join(__dirname,'../assets/source-contract.json')));
+    const captured=fs.readFileSync(path.join(__dirname,'../assets/source-contract.json'),'utf8');
+    const contract=JSON.parse(captured);
+    const projection=all.find(m=>m.kind==='ConfigMap'&&m.metadata.name==='provision-scripts');
+    if(projection?.data['source-contract.json']!==captured)fail('rendered source-contract.json differs from captured bytes');
     for(const name of ['nginx.conf','service-environment.js']){
       const bytes=fs.readFileSync(path.join(__dirname,'../assets',name));
       if(require('node:crypto').createHash('sha256').update(bytes).digest('hex')!==contract.sourceFilesSha256[name])fail(name+' differs from immutable source bytes');

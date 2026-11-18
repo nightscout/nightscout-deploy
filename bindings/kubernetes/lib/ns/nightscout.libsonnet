@@ -651,7 +651,7 @@
         data: {
           'vault-kubernetes-auth.js': importstr '../../ops/vault-kubernetes-auth.js',
           'candidate-documents.cjs': importstr '../../ops/candidate-documents.cjs',
-          'source-contract.json': std.manifestJson((import '../../assets/source-contract.json') + { applicationTopology: c.applicationTopology }),
+          'source-contract.json': importstr '../../assets/source-contract.json',
           'network-documents.cjs': importstr '../../ops/network-documents.cjs',
         },
       },
@@ -726,6 +726,7 @@
                 // Keep this container alive for private tar export, including disposable state.
                 // Publisher acknowledges only after every Secret has been created. No private log.
                 step('done', ['node', '/run/ns-overlay/candidate-documents.cjs', 'hold'], [
+                  { name: 'NS_APPLICATION_TOPOLOGY', value: c.applicationTopology },
                   { name: 'NS_FIXTURE_NAMESPACE', valueFrom: { fieldRef: { fieldPath: 'metadata.namespace' } } },
                   { name: 'NS_FIXTURE_RUN_ID', valueFrom: { fieldRef: { fieldPath: "metadata.labels['nightscout.org/run-id']" } } },
                 ]),

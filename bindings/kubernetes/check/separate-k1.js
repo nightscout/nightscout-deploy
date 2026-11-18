@@ -39,6 +39,9 @@ function check(all, inventory, fail) {
     if ((service.spec.ports || []).some(p => p.targetPort === 'int-role') && !ROLES.some(role => service.metadata.name === role + '-internal')) fail('private role port is published by ' + service.metadata.name);
   }
   if (inventory.evaluatorPool.partition !== 'off') fail('separate-k1 supports the native single evaluator');
+  const provision = workloads.find(x => x.metadata.name === 'provision');
+  const done = provision?.spec.template.spec.containers.find(x => x.name === 'done');
+  if (!done?.env.some(x => x.name === 'NS_APPLICATION_TOPOLOGY' && x.value === 'separate-k1')) fail('separate-k1 requires the explicit provision topology selection');
   const defaultDeny = policies.find(x => x.metadata.name === 'default-deny-ingress');
   if (!defaultDeny || Object.keys(defaultDeny.spec.podSelector || {}).length || defaultDeny.spec.ingress?.length || !defaultDeny.spec.policyTypes.includes('Ingress')) fail('separate-k1 requires namespace default deny ingress');
 }
