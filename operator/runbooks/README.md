@@ -18,6 +18,16 @@ Restore advances the selected tenant’s generation and suspends it. Uploaders r
 
 Use the private operator container to inspect an interrupted restore (`restore.js inspect --tenant <tenant>`). The reported claim identifies the tenant, generation and restore artifact. A `before-data` interruption kept the preceding data. A `data-replaced` interruption kept the committed replacement. When the original backend has gone and inspection reports that the claim is resumable, run `restore.js resume --tenant <tenant> --claim <claimId>` with the exact inspected claim. A refused or uncertain outcome requires another inspection. Confirm the active generation, the matching resume record and actual tenant service before telling users that service has returned. A selection-proof refusal requires the intended configuration and current verified evaluator contract. Historical operation markers and clearance rows remain available for audit.
 
+For a retained native database, stop the old evaluator, pgstream, provisioner and serving roles before switching images. Preserve the logical slot, source generation and private operation documents. Using the paired image and a direct migration-admin connection from `NS_RECEIPT_ADMIN_PG`, stage the updated private provisioning document in a new file.
+
+```bash
+node deploy/multitenant/native-lifecycle.js "$EVALUATOR_OPERATION_FILE" "$ADMIN_CONFIG_FILE" "$NEW_ADMIN_CONFIG_FILE"
+```
+
+The cutover checks the source identity, generation range, completed-row contract and evaluator ownership lock. It records the current lifecycle phase as pending work where the receipt advances. The evaluator retains responsibility for completing that work. An interrupted row migration rolls back. If private file staging fails after commit, repeat the command with a fresh output filename. Install the staged document with the existing provisioner's file ownership and permissions. Re-run platform pre-start verification before starting serving roles. Keep the paired image and provisioning document together on restart. A downgrade requires a coordinated pre-upgrade database and configuration restore.
+
+After restoring a tenant, require an authenticated reconnect that shows a restored reading and a new reading from the current generation. Until then, keep users on their primary display and alarms.
+
 The operator uses its own private pool of one connection. The earlier cohort and `clear-operations` procedures below document the pinned historical rehearsal and apply only to that revision.
 
 ## Historical rehearsal on the pinned revision
@@ -85,11 +95,10 @@ At each of these the procedure ends and a person decides. They are the same on e
    `LIFECYCLE_RESTORE_ALREADY_SUSPENDED`) and after a role restart (rehearsed).
    **Never** update the window row, delete an audit or operation row, or change the claim by hand:
    the stored rows may be half of what you think they are, and every role caches what it last proved.
-2. **Unfinished operations exist for a tenant.** Never clear them by hand. A restore started on
-   that tenant refuses before it closes the tenant
-   (`LIFECYCLE_RESTORE_PREFLIGHT_ORPHANED_OPERATIONS`) when a record's owner is gone; the tenant
-   keeps serving (rehearsed). `clear-operations`, below, records the ones whose owner is provably
-   gone. Stop when it reports any record as `retained`: something may still be running it.
+2. **Unfinished operations exist for a tenant.** Never edit or delete them by hand. On the current
+   core they are reported by `inspect` and do not block a restore, which drains in-flight
+   transactions itself (decision `restore-suspend-drain-replace`; read-derived, not yet
+   re-rehearsed). There is no `clear-operations` command.
 3. **A restore ended with `LIFECYCLE_RESTORE_SUSPENSION_OUTCOME_UNCERTAIN`,
    `..._DATA_OUTCOME_UNCERTAIN` or `..._ACTIVATION_OUTCOME_UNCERTAIN`.** The reply to a commit was
    lost; the commit may or may not have happened. Read the persisted state above; do not run the
@@ -109,12 +118,11 @@ At each of these the procedure ends and a person decides. They are the same on e
 
 Rehearsed 2026-11-13 on the synthetic Compose binding with core branch `claude/restore-resume-20261113`
 (`drills/drill-restore-resume.sh`, four interruption kinds; `drills/drill-orphaned-operations.sh`).
-The three commands run in the private operator container, like `restore`:
+The two commands run in the private operator container, like `restore`:
 
 ```bash
 drills/stack.sh ops demo node -r ./deploy/multitenant/load-env.js deploy/multitenant/restore.js inspect --tenant <tenant>
 drills/stack.sh ops demo node -r ./deploy/multitenant/load-env.js deploy/multitenant/restore.js resume --tenant <tenant> --claim <claimId from inspect>
-drills/stack.sh ops demo node -r ./deploy/multitenant/load-env.js deploy/multitenant/restore.js clear-operations --tenant <tenant>
 ```
 
 1. Tell the tenant's users it is closed and to rely on their CGM's or pump's own display and alarms.
@@ -128,15 +136,10 @@ drills/stack.sh ops demo node -r ./deploy/multitenant/load-env.js deploy/multite
    - `data-replaced`: the restored rows **are** stored. After a resume the tenant serves the
      restored data. Verify state and history as in [backup-and-restore.md](backup-and-restore.md).
    If `resumable` is `false`, read `reasons` and stop. `LIFECYCLE_RESUME_RESTORE_OWNER_PRESENT`
-   means the restore is still running: wait for it. `LIFECYCLE_RESUME_PENDING_OPERATIONS` means
-   unfinished operations must be cleared first (step 4).
-4. Only when asked to by step 3 or by a refused restore: `clear-operations`. It records, for each
-   unfinished operation whose owning process is provably gone, that nothing is running it. It never
-   deletes or edits an operation record. If it lists any operation under `retained`, stop: a process
-   may still be running it.
-5. `resume --claim <claimId>`, with the claim `inspect` printed. A refusal leaves the tenant closed
+   means the restore is still running: wait for it.
+4. `resume --claim <claimId>`, with the claim `inspect` printed. A refusal leaves the tenant closed
    and changes nothing; read the code and stop.
-6. Read the persisted state again: the window is `active`, the restore audit row is unchanged, and
+5. Read the persisted state again: the window is `active`, the restore audit row is unchanged, and
    `<prefix>_control.tenant_lifecycle_restore_resume` has one row for the claim. Check the tenant
    answers, then tell its users.
 
@@ -164,8 +167,7 @@ The decisions live in the alignment workspace, `releases/cgm-remote-monitor-16.0
   recovered only from the Vault part of a cold backup, and stop condition 4 is where `ensure` or
   `factory reset` would be the supported answer once they exist. Whether either reissues a lost root
   secret is not decided; until it is, stop condition 4 stands as written. Reopening a tenant held
-  closed and clearing unfinished operations are the operator's `resume` and `clear-operations`
-  (decision `restore-resume-and-precheck`), not factory reset.
+  closed is the operator's `resume` (decision `restore-resume-and-precheck`), not factory reset.
 - **`realtime-automatic-recovery`.** Realtime workers restart on failure and keep their shards; a
   surviving worker takes over after a grace period. In this binding every role still has
   `restart: "no"` (`bindings/compose/multitenant/compose.yaml:11`), so today the operator restarts a

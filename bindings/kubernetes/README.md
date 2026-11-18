@@ -1,267 +1,207 @@
 # Kubernetes binding
 
-The external-stream update separates pgstream into one `Deployment` and keeps the
-existing one-Pod cohort. The private `evaluator` Service selects only `cohort-0`
-and publishes its address before pod-wide clinical readiness; the application
-receiver still checks its durable intake ownership before accepting work.
-Platform restart of pgstream does not restart the evaluator.
+This package binds the current core and deployment source to ordinary Kubernetes resources.
+`applicationTopology: "separate-k1"` places API, evaluator, realtime and tenant-admin in separate
+one-replica Deployments. The default `cohort` profile retains the shared StatefulSet. Both profiles
+use the same source-owned roles and startup sequence. Live correctness and repeatability remain
+**UNMEASURED** until the selected tuple completes its synthetic network baseline.
 
-This update is source-checked only; Kubernetes runtime is **UNMEASURED**. The
-November 10 smoke and `check/golden/preview.yaml` retain their original source
-attribution. That historical render does not qualify the external-stream target
-and must not be used to apply this candidate. No distributable maintained
-PostgreSQL/wal2json image digest is supplied here. Rendering requires explicit
-`NS_SOURCE_COMMIT`, `NS_DEMO_IMAGE` and `NS_PGSTREAM_POSTGRES_IMAGE` inputs; the
-application image must contain the matching external-receiver implementation.
-The PostgreSQL image must contain wal2json; the old stock PostgreSQL default cannot
-satisfy the canonical streaming settings. Render the supplied inputs with Tanka's
-`--ext-str` flags, then inspect the generated manifests before applying them.
+`lib/ns/nightscout.libsonnet` exposes `new(overrides)` with package-local imports.
+`environments/separate-k1/inputs.json` and `environments/synthetic/inputs.json` are render examples
+with unavailable image references. Supply verified immutable image references before applying.
+The original `check/golden/preview.yaml` is a historical capture. Current checks render their
+inputs and verify their contracts; the historical capture grants no current qualification.
 
-*Contributor- and operator-facing. State 2026-11-10: rendered, checked offline, and smoked on a kind
-cluster (Kubernetes v1.32.2). The smoke record is in the alignment workspace,
-`reports/tenancy/k8s-binding-2026-11-10/README.md`. Every row of the equivalence table below says
-what was measured.*
+## Source and runtime ownership
 
-A Tanka environment (plain Jsonnet, no vendored libraries) that binds the multitenant Compose tree
-in `../compose/` to ordinary Kubernetes resources: the same image, the same commands, the same
-per-role private documents at the same paths, the same PostgreSQL identities. Decisions of record
-are in the alignment workspace's `releases/cgm-remote-monitor-16.0.0/decisions.md`
-(`tanka-binding-parallel`, `internal-listener-ory-pattern`, `admin-plane-same-address-different-port`,
-`evaluator-static-partition`, `pool-primitive-shared`, `vault-agent-sidecar`).
+`assets/source-contract.json` records the actual immutable image receipt, source commands, SQL
+identities and file checksums measured by `check/source-equivalence.py`. The image contains core
+and deployment bytes; the Kubernetes binding has its own later commit. Set `imageDeployCommit`
+to the deployment bytes in the image and `bindingIdentity` to the package commit. A local Docker
+image ID is not a pullable OCI manifest digest. Image delivery needs operator-supplied, verified
+registry references or another explicitly qualified delivery path.
 
-| path | holds |
+The capture supports platform verification v2 and v3. The constructor checks the selected
+version against the installed source and preserves each version's startup proof without a lease.
+Unknown versions and a v2/v3 mismatch refuse preparation. A later binding commit can use an
+existing image only while its complete Compose runtime tree still matches `imageDeployCommit`.
+
+| Source capability | Kubernetes binding |
 |---|---|
-| `lib/ns/nightscout.libsonnet` | the renderer: one function, `new(overrides)` |
-| `environments/preview/` | the preview environment: one cohort, one evaluator member, core `0392acf9` |
-| `ops/vault-kubernetes-auth.js` | provisioning step: the Compose Vault Agent step with Kubernetes auth in place of AppRole |
-| `ops/fit-check.js` | pre-Namespace fit check from recorded node and Pod lists; refuses with `K8S_FIT_REFUSED`, never evicts or creates |
-| `ops/image-ledger.js` | once-per-candidate image publication and cache-warm ledger: plan, record digest, verify warm, resolve; never pushes |
-| `scripts/secrets.sh` | creates every Secret the render references, at apply time; nothing is committed |
-| `check/invariants.js` | the rendered-YAML invariants (offline, `tk eval`) |
-| `check/controls.js` | one or more break-it controls per invariant, in a scratch copy |
-| `check/golden/preview.yaml` | retained November 10 render at its original source; not the external-stream apply target |
-| `check/vault-kubernetes-auth.test.js` | the provisioning step against a recorded fake Vault |
+| API, realtime, evaluator, tenant-admin | `separate-k1`: one Deployment per role, Recreate, one replica; private HTTP. `cohort`: one StatefulSet with private Unix sockets |
+| Maintained pgstream producer | Independent one-replica Recreate Deployment, same binary command and private wire Secret; private evaluator intake Service selects the evaluator workload for the chosen profile |
+| PostgreSQL/wal2json | Explicit supplied image digest and the source streaming/connection settings; image entrypoint retained for initdb |
+| Source bootstrap | Explicit no-retry Job with a finite deadline; source creates registry/admin/management documents and slot/publication configuration |
+| API Vault policy | Kubernetes-auth helper imports the source-created policy and adapts the supported tokenFile; projected audience-bound token feeds the native Vault Agent sidecar |
+| Admin | Source entrypoint and complete private source documents; only its copied ADMIN_HOSTNAME changes to the actual Pod IP; ClusterIP and operator-only NetworkPolicy |
+| UI and edge | Source UI preload/command and byte-identical nginx asset; ClusterIP consumer entry |
+| Tenant provisioning | Separate suspended primer Job runs the source command through the private admin API; operator explicitly unsuspends it after admin readiness and verifies the platform before serving roles start |
 
-## Shape
+Core constructs the tenant documents, credentials, application lifecycle state and authority.
+The separate profile projects only deployment addresses before the admin screens those documents.
+Both profiles use one native evaluator intake owner. Evaluator partition
+selection remains unqualified and the focused source gate refuses it. StatefulSet replacement is
+sequential, Deployments use Recreate, and no HPA is generated. Separate experiment namespaces have
+separate databases/Vault state. Never duplicate cohort replicas against one database.
 
-```
-StatefulSet cohort (replicas 1, OrderedReady)     one Pod per cohort
-  init  install-config     Secret ns-config-<role> -> memory emptyDir, 0400, uid 1000
-  init  vault-agent        native sidecar; Kubernetes auth; sink /run/ns-vault/token
-  api, realtime, evaluator, tenant-admin          node deploy/multitenant/entrypoint.js <role>
-  emptyDir ns-ipc at /run/ns-ipc                  serve.internal sockets, pod-private
-Service api :1337, Service realtime :1339         the names nginx.conf's upstreams use
-Deployment admin (Recreate)                       ADMIN_HOSTNAME=<pod IP>, :1342, acknowledged
-Service admin (ClusterIP) + NetworkPolicy         operator Pods only; never the edge
-Deployment ui, Service ui :1340
-Deployment edge (nginx.conf byte for byte), Service edge :8080    the consumer entry
-StatefulSet postgres, StatefulSet vault           same digests as compose.yaml
-Job provision (backoffLimit 0)                    bootstrap -> vault-kubernetes-auth -> ownership-grants
-NetworkPolicy                                     default deny ingress, then each Compose path
-```
+Role Secret files are copied from Kubernetes symlinks into regular 0400 files inside private 0700
+directories. This includes extensionless source token files. The installer test passes the copied
+admin environment through the actual source environment reader and confirms it refuses group-readable
+input. No Secret or literal credential is rendered.
 
-**Cohort or per-role placement.** This binding runs every role in one Pod, the cohort. The cohort
-is a monolith: scale it vertically (more CPU and memory for the Pod), never horizontally, and the
-binding holds it to one replica. For horizontal scale or high availability, deploy the roles as
-separate components instead (per-role placement), each scaled through its own mechanism: API
-replicas through the fixed roster, the evaluator through the pool table, realtime through sharding.
-The two placements are alternatives and never run against the same database at the same time.
-Decision of record: [cohort-pod-not-scaled](https://github.com/bewest/rag-nightscout-ecosystem-alignment/blob/main/releases/cgm-remote-monitor-16.0.0/decisions.md#cohort-pod-not-scaled).
+## Separate K=1 contracts
 
-Three things the YAML does on purpose:
+`lib/ns/components.libsonnet` reuses the existing role Pod templates and drops the shared socket
+volume. Each role owns a private ClusterIP Service at
+`<role>-internal`, on ports 19001–19004 for API, evaluator, realtime and tenant-admin respectively.
+The evaluator intake remains `evaluator:19913`. Private Services publish addresses before clinical
+readiness so lifecycle and intake readiness cannot deadlock startup. Core still checks its own
+storage admission and actual participant incarnation on each contract.
 
-- **`enableServiceLinks: false` on every Pod.** Kubernetes would otherwise inject
-  `API_PORT=tcp://<ip>:1337` (and `REALTIME_PORT`, `ADMIN_PORT`, `UI_PORT`) into every container
-  of the namespace, and core reads `API_PORT` to work out the consumer listener even in roles that
-  do not serve it (`lib/server/serve/listeners.js`). Read-derived; Compose injects no such variable.
-- **Private documents and sockets live in a 0700 subdirectory.** `load-env.js` refuses a
-  symlinked or group-readable `env.json`, and Secret volumes are both. An `emptyDir` root is
-  root-owned, mode 3777 under `fsGroup` (measured), and core refuses that as the socket directory
-  (`lib/server/internal-api/transport.js`, `SOCKET_IPC_DIRECTORY_REFUSED`). So the init step creates
-  a 0700 subdirectory `d` owned by uid 1000 in each volume and copies the role's Secret into it as
-  0400 files. Role containers mount only that subdirectory (`subPath: d`): their own documents
-  read-only at `/run/ns-config`, and the shared sockets at `/run/ns-ipc`. Compose's `prepare.js`
-  0700 directories give the same result.
-- **The evaluator pool wiring uses core's names and is off in the preview.** Core reads
-  `MULTITENANT_POOL_EVALUATOR_{PARTITION,MEMBERS,ORDINAL,LEASE_MS,DATABASE_URL,NAMESPACE}`
-  (`lib/pool-membership/config.js`, branch `codex/pool-primitive-20261110`). With the partition off,
-  core refuses any partitioned key ("partition is off but ... set"), so the preview renders none.
-  `evaluatorPool.partition: 'on'` renders `PARTITION=on` and `ORDINAL` from the StatefulSet
-  `apps.kubernetes.io/pod-index` label. The member count is the pool table's, set by an operator
-  command, so no `MEMBERS` variable is rendered. Readiness stays the role health check and never
-  depends on pool eligibility, which would deadlock `OrderedReady`. The renderer refuses any replica
-  count other than 1.
+`ops/network-documents.cjs` removes socket selections and sets the existing core HTTP listener and
+peer URL keys. It updates the admin's private verification environments and the operator participant
+endpoints from the same addresses. It preserves role configurations, credentials, participant IDs,
+native generation and the producer wire. Only API receives the existing API Vault Agent and token
+sink. Other roles retain their source-specific token files; they receive no API Agent token.
 
-## Requirements
+Default deny ingress and directed policies admit the four roles and the operator to private role
+ports, edge/operator to consumer API/realtime ports, and only pgstream to stream intake. Public
+Services and edge routes do not expose private listeners. Actual NetworkPolicy enforcement requires
+a live negative connectivity check.
 
-Kubernetes 1.29 or newer (native sidecars; the pod-index label needs 1.28), a network plugin
-that enforces NetworkPolicy, a default StorageClass, and a `kubectl` within one minor version
-of the server. The historical apply path used `check/golden/preview.yaml`. The external-stream
-target requires a fresh render with the explicit qualified image inputs above. `tk` v0.20.0 renders and checks, but cannot
-apply against `kubectl` v1.32: `tk apply` panics (`splitRow: slice bounds out of range` while
-reading `kubectl api-resources`). The original November 10 smoke used the Compose image built from core `0392acf9` with that source's
-Compose tree in place (`tools/compose-overlay.sh`, then the tree's `build.js`); its base
-`config.js` must leave out the ownership identity, which the ownership overlay adds.
+P's `startup-v2` platform verification runs through private admin before serving. Its receipt has
+namespace, exact role roster and generation digests, with no lease or timestamp. The primer's
+`done` container publishes that receipt as `verified.json`; the source verifier refuses anything but
+a complete `verified` receipt. Each serving role checks its own proof generation and fails closed,
+and serving admission checks current database, role and epoch identity, so the binding does not
+re-derive the generations. The provision `done` container only projects network addresses,
+publishes a public provenance record and holds the private state for export; source, catalogue,
+commit and binary identity come from the image digest and Job ordering
+(`architecture-justified-removal`).
 
-## Render the external-stream target
+Recreate and one replica express rollout intent. They do not prove old-backend termination for a
+manual Pod delete, partition or restore. Qualification must observe the actual old process/backend
+termination or fencing and changed participant incarnation. Baseline Pod UID guards keep refusing
+unplanned replacements. This profile supplies K=1 placement; K>1 and HA need their own contracts.
 
-Supply the selected image references and matching core commit through the existing
-artifact inputs. A source-only synthetic render is not image qualification.
+## Inputs and storage
+
+All init containers, Vault sidecars and serving/provisioning containers have explicit CPU, memory
+and ephemeral-storage requests. `resourceAccounting: "requests-v1"` keeps authored limits only;
+the legacy `limits-v1` mode retains the bounded synthetic defaults. `resources.<container-name>` overrides the bounded
+synthetic defaults. These defaults are not measured sizing. `placement` sets Pod scheduling fields;
+`placementByWorkload.<name>` overrides them. Supported staging fields include nodeName,
+nodeSelector, tolerations, affinity and topologySpreadConstraints. An explicit existing nodeName
+requires environment-owned headroom/admission checks; it does not reserve resources.
+`imagePullSecrets` names existing same-namespace Secrets and is copied to every Pod template.
+
+| `storage.mode` | Rendered storage | Qualification limit |
+|---|---|---|
+| `dynamic` (legacy default) | PostgreSQL/Vault claim templates and provision-state PVC | May incur new volume charges |
+| `disposable` | Bounded per-Pod emptyDir; no PVC | Backing-store Pod replacement loses state; never a durability result |
+| `existing-claim` | Only explicit `storage.claims.{postgres,vault,provisionState}` references | Requires operator-owned, unshared claims and storage qualification |
+
+`profile: 'existing-capacity'` refuses dynamic storage and public Services. Its gate also rejects
+provider-resource manifests, hostPath and unbounded emptyDirs. It cannot prove actual node headroom,
+autoscaling behavior, registry allowance, transfer cost or policy enforcement. Lane E owns those
+read-only preflight facts. No cloud resource is created by rendering.
+
+Kubernetes native sidecars require a supporting cluster (1.29 or newer for this binding). Use a
+compatible kubectl and a CNI that enforces NetworkPolicy. Vault Kubernetes auth requires the named
+ClusterRoleBinding to system:auth-delegator in addition to namespace permission. The fixture inventory
+names that exact cluster-scoped cleanup object. Tanka v0.20.0 is used for offline eval/show only.
+
+## Inspect and check offline
+
+From this directory:
 
 ```bash
-: "${NS_SOURCE_COMMIT:?Supply the selected core commit}"
-: "${NS_DEMO_IMAGE:?Supply the matching qualified application image}"
-: "${NS_PGSTREAM_POSTGRES_IMAGE:?Supply the maintained PostgreSQL/wal2json digest}"
-tk show --dangerous-allow-redirect environments/preview \
-  --ext-str "NS_SOURCE_COMMIT=$NS_SOURCE_COMMIT" \
-  --ext-str "NS_DEMO_IMAGE=$NS_DEMO_IMAGE" \
-  --ext-str "NS_PGSTREAM_POSTGRES_IMAGE=$NS_PGSTREAM_POSTGRES_IMAGE" > current-manifests.yaml
+tk eval environments/synthetic > /tmp/synthetic-resources.json
+tk eval environments/synthetic -e inventory > /tmp/synthetic-inventory.json
+tk show --dangerous-allow-redirect environments/synthetic > /tmp/synthetic.yaml
 node check/invariants.js
 node check/controls.js
+node --test check/separate-k1.test.js
+node check/invariants.js --env environments/separate-k1
+node --test check/vault-kubernetes-auth.test.js check/installer.test.js
+bash check/golden.sh
 ```
 
-## Retained November 10 smoke (historical commands, not the external-stream target)
+`inventory` is a hidden Jsonnet field and is never applied. It names source/image/binding identity,
+run ownership, workloads/commands/budgets, Services, document filenames, Secret references, storage,
+export rendezvous paths and the commissioning order. `check/invariants.js --root <consumer-root>
+--env <environment>` checks a private consumer without needing a Compose checkout.
+
+To remeasure source equivalence, provide the exact local immutable app image and frozen Compose tree:
 
 ```bash
-commit=0392acf97c720a7e121eea47a9d42a0c8dbe9e73
-docker tag nightscout-multitenant-demo:local nightscout-multitenant-demo:$commit
-kind load docker-image nightscout-multitenant-demo:$commit            # or the cluster's equivalent
-
-# Apply only a fresh inspected render bound to the explicit image inputs above.
-scripts/secrets.sh seed nightscout-preview ../compose
-kubectl -n nightscout-preview wait --for=condition=complete job/provision --timeout=10m
-scripts/secrets.sh publish nightscout-preview nightscout-multitenant-demo:$commit
-kubectl -n nightscout-preview rollout status statefulset/cohort
-kubectl -n nightscout-preview port-forward svc/edge 18080:8080
-# Delete that same applied render; StatefulSet PVCs remain until explicitly deleted.
+python check/source-equivalence.py --compose <frozen-bindings/compose> --image <local-image-id> --diagnostic <immutable-candidate-receipt>
 ```
 
-`spec.json` names `https://127.0.0.1:6443` as the API server for Tanka's own commands.
+This starts only an inert network-disabled Node document constructor. It records the embedded
+receipt, the installed source bytes and binary digest as the image carries them (a later
+binding-only Compose commit is not a refusal), then compares all SQL identities and source
+commands with the retained contract unless `--capture` is given. It does
+not rerun application acceptance. `--capture` updates the retained source facts and must accompany
+an explicitly selected new source tuple, never a relabeling of inherited acceptance.
 
-The api, realtime and evaluator containers carry a `startupProbe` on the role health command, 5 s ×
-180 = 900 s, the Compose `start_period`. Kubernetes does not run the readiness probe until it passes,
-so a long warm under `NS_TENANT_READINESS=all` is not judged by the 60 s readiness budget. Under the
-default `serve` it passes once the role's own dependencies are up. Not yet applied to a cluster
-(rendered only).
+## Export a clean package
 
-The Compose binding orders startup with `depends_on: service_healthy` (postgres and vault, api,
-realtime, evaluator and tenant-admin; the edge waits for api, realtime and ui only) and mounts `nginx.compose.conf`, which re-resolves
-the upstreams through Docker's DNS so a restarted role is reached again without an edge restart.
-This binding needs neither, and keeps importing the resolver-free `nginx.conf`: readiness probes keep a role out of its Service until it is ready, startup probes and
-in-place container restarts cover the start order, and the edge reaches roles through Service
-names, whose ClusterIP does not change when a Pod restarts.
-
-## Checks
+After committing the binding, from this directory:
 
 ```bash
-cd bindings/kubernetes
-node check/invariants.js --compose <bindings/compose of the tree this binds>
-node check/controls.js   --compose <same>
-# The golden.sh comparison belongs to the retained November 10 source capture.
-node --test check/vault-kubernetes-auth.test.js
+python scripts/export-package.py --commit HEAD --output <new-absolute-artifact-directory>
 ```
 
-`invariants.js` reads `../compose` by default. The historical preview rendered core `0392acf9`, the commit
-`../compose/SOURCE.md` records; `postgres-identities-match-compose` is red whenever the two differ.
+The exporter uses `git archive` of the exact clean commit. It writes `package/`, `package.tar`, a
+checksum receipt, a separate standalone `consumer/`, deterministic resource JSON/YAML and
+`fixture-inventory.json`. That independent consumer imports the package without any sibling
+Compose path. Private overlays use the same complete immutable `package/`, then supply their own
+private inputs and the receipt's binding commit. Do not commit private environment inputs here.
 
-| check | asserts | control (mutation -> message) |
-|---|---|---|
-| `internal-listener-not-on-service` | `ns-ipc` is an `emptyDir` in exactly one Pod template; no container sets `NS_SERVE_INTERNAL_HOST/PORT` or `NS_*_INTERNAL_URL`; every Service port targets a declared container port; no Service publishes an `int-*` port (bar `admin`) | `ns-ipc` as `hostPath` -> `volume ns-ipc must be a pod-private emptyDir, found hostPath`; realtime Service to `int-owner` -> `Service/realtime publishes internal port int-owner` |
-| `admin-not-public` | no Ingress; the admin port only on `Service/admin`, `ClusterIP`, not the consumer entry; nginx.conf routes to neither plane; the admin Pods' NetworkPolicy admits operator Pods only | admin Service `LoadBalancer` -> `Service/admin exposes the admin port as LoadBalancer` |
-| `secrets-by-reference` | no Secret rendered; no credential-named or credential-shaped literal env; no credential material in ConfigMaps; `/run/secrets` and `/run/ns-secret` mounts are Secret volumes | connection string in api env -> `env NS_API_PG is a literal; it must come from a Secret reference` |
-| `images-pinned` | every image by `@sha256:` digest or an exact tag (semver or 40-hex commit) | `postgres:16` -> `image postgres:16 is not pinned by digest or exact tag` |
-| `evaluator-statefulset` | the evaluator is in exactly one workload, a StatefulSet, replicas 1; partition off renders no `MULTITENANT_POOL_EVALUATOR_*` key; partition on renders `PARTITION=on` and `ORDINAL` from the pod-index label, never `MEMBERS`; readiness is the role health check only | ordinal with partition off -> `partition is off but the evaluator sets MULTITENANT_POOL_EVALUATOR_ORDINAL`; partition on with `metadata.name` -> `... ORDINAL must come from the StatefulSet pod-index label`; extra readiness argument -> `evaluator readiness must be the role health check only` |
-| `cohort-single-replica` | the workload carrying the socket volume is a StatefulSet with replicas exactly 1, and no HorizontalPodAutoscaler targets it | `replicas: 2` -> `StatefulSet/cohort replicas is 2; the one-Pod cohort is a monolith and scales vertically only; for horizontal scale or HA use per-role placement (decision cohort-pod-not-scaled)` |
-| `private-directories` | role containers mount `ns-ipc` and their `config-*` volume at the 0700 subdirectory (`subPath: d`) | `ns-ipc` at its root -> `container api mounts ns-ipc at its root; mount the 0700 subdirectory (subPath d)` |
-| `no-overlap-update` | StatefulSets `OrderedReady`, default one-at-a-time update, replicas 1; Deployments `Recreate` | `Parallel` -> `podManagementPolicy must be OrderedReady` |
-| `startup-budget` | api, realtime and evaluator each carry a `startupProbe` running `node deploy/multitenant/health.js <role>` with `periodSeconds` × `failureThreshold` ≥ 900 s | `failureThreshold: 30` -> `container api startupProbe allows 150 s; it must allow at least 900 s (Compose start_period)`; probe left off the evaluator -> `container evaluator has no startupProbe` |
-| `service-links-off` | every Pod sets `enableServiceLinks: false` | `true` on the cohort -> `StatefulSet/cohort must set enableServiceLinks: false` |
-| `postgres-identities-match-compose` | the per-workload PostgreSQL identities equal the Compose plan's per-role connection documents plus the ownership overlay's role, ; current core/deploy compatibility is measured by `tools/plan-contract-check.sh --prospective` | `root_writer` dropped from api -> `api: binding names alarm,api,lifetime_api,readiness, Compose names ...,root_writer` |
+## Operator commissioning boundary
 
-## Equivalence with the Compose binding
+Lane E supplies the actual context, existing-capacity checks, image delivery and scoped commands.
+Lane T supplies workload/authority/stored-write/clinical/frame observations. No live operation is
+performed by the offline checks above.
 
-Status words: **rendered** (present in the render and covered by the offline checks), **smoked**
-(applied to the kind cluster on 2026-11-10 and exercised; core `16a1fc2d`, image built with this
-repository's Compose tree), **UNMEASURED** (neither, or a difference whose effect has not been
-run). **Control red** means the smoke ran the control and it did not hold. The equivalence claim in
-the deployment-bindings contract also waits on the trust probes (`DEPLOY-TRUST-PROBES`).
+1. Inspect the exact rendered objects/inventory and environment preflight. Create only the owned
+   Namespace and explicit trust/policy/ConfigMap/store objects. Do not borrow existing workload state.
+2. Operator runs `scripts/secrets.sh seed <namespace> <compat-arg>` with explicit `NS_KUBE_CONTEXT`
+   and matching `NS_RUN_ID`. The helper verifies Namespace ownership and refuses existing Secrets.
+3. Apply provision Job. Its source bootstrap and Kubernetes auth run in order. The `done` container
+   waits at `/state/.ready` for private export, within `activeDeadlineSeconds`.
+4. Operator runs `scripts/secrets.sh publish <namespace> <compat-image-arg>`. It verifies the owned
+   Pod UID, exports directly into a private temporary directory, creates role Secrets, then
+   acknowledges `/state/.exported`. Job completion follows export. There is no reader Pod or volume.
+5. Apply only the private admin Deployment and wait for its health check. Apply primer suspended
+   and explicitly unsuspend it. It provisions the synthetic tenants and calls the private admin
+   verification API. Wait for the primer to be ready and export its non-secret
+   `/run/ns-primer/verified.json` proof from the owned Pod. The proof binds the fixture, native
+   lifecycle selection and expected generations of the three serving roles.
+6. Apply the remaining serving workloads and wait for their readiness. The serving roles require the
+   live verification record and open tenants on demand. Run the source-owned
+   `node deploy/multitenant/prime.js prime` in primer's `done` container within the run deadline
+   with `NS_PRIMER_STATE=/run/ns-primer`. Export `/run/ns-primer/tenants.json` to the owned
+   private test packet. This file contains synthetic test authority. Capture the adapter's
+   `candidate-proof` and `policy` while the same primer container is still waiting. Acknowledge
+   `/run/ns-primer/.exported` after these observations and after any phase that requires the same
+   live container observation. Follow the finite job deadline throughout.
+7. Observe the tiny synthetic trial under the finite environment deadline. Cleanup verifies actual
+   Namespace UID/run label and the exact tokenreview binding ownership before deleting those owned
+   resources. Retain private evidence before removing disposable storage. Namespace deletion does
+   not delete existing external claims; their retention/cleanup remains with their owner.
 
-Two defects of the Compose tree at `16a1fc2d` stopped the smoke. Both reproduce here and both
-belong to the Compose tree, not the binding; the smoke continued with a lab-only workaround, named
-in each row:
-
-- `config.js` gives `root_writer` no read of the lifecycle control schema, so the api exits
-  (`LIFECYCLE_WINDOW_SCHEMA_UNSAFE` inside `SUBJECT_ADMIN_STORE_UNSAFE`). The bench lane's
-  "Bench fix 1" (`bench/compose-baseline-20261110` `54af5f2`) is the fix; the smoke ran its grants
-  by hand in the disposable database.
-- The ownership overlay's `ownership-grants.js` wrote `admin.json` without
-  `ownership.lifecycleNamespace`, which core's `admin-config.js:59` requires, so admin exited
-  ("invalid explicit admin operator configuration"). The smoke added the key by hand; the overlay
-  now writes it (see `../compose/ownership-admin/README.md`).
-
-| Compose service or setting | Kubernetes counterpart | status |
-|---|---|---|
-| `postgres`: digest, `POSTGRES_DB`, password file, `pg_isready` healthcheck, named volume | StatefulSet `postgres`, Service `postgres`, Secret `ns-postgres-password`, PVC; `PGDATA` is a subdirectory of the volume (a fresh volume carries `lost+found`) | smoked |
-| `vault`: digest, `vault server -config=demo.hcl`, TLS from the demo CA, status 0 or 2 is up | StatefulSet `vault`, ConfigMap `vault-config` (same `demo.hcl`), Secret `ns-vault-tls`; the probe dials loopback with `-tls-server-name=vault`, because the Service name has no endpoint until the probe passes | smoked (the first render probed `vault:8200` and never became Ready) |
-| `prepare.js`: postgres password, demo CA and Vault certificate (SAN `vault`) | `scripts/secrets.sh seed`; the CA signing key is discarded instead of kept in state | smoked |
-| `bootstrap` (profile `ops`) | Job `provision`, step `bootstrap`, same script and environment; output on PVC `provision-state` | smoked |
-| `vault-agent-bootstrap` (AppRole) | step `vault-kubernetes-auth`: same policy and api rewrite, Kubernetes auth bound to service account `ns-cohort` and audience `vault` | smoked |
-| `ownership-grants` (ownership overlay) | step `ownership-grants`, the overlay's script from ConfigMap `ownership-grants` made at apply time | smoked (10 grants); its `admin.json` is the overlay defect above |
-| `vault-agent` service: uid 1000, AppRole files, sink 0600, healthy when the sink has a token | native sidecar in the cohort Pod, projected service-account token, same sink path, startup probe holds the roles | smoked (authenticated, token written, renewed) |
-| `api`, `realtime`, `evaluator`, `tenant-admin` as four services | four containers of the cohort Pod, same image, command and environment document | smoked (api with the root_writer workaround) |
-| shared `${NS_DEMO_STATE}/ipc` bind mount at `/run/ns-ipc` | `emptyDir` `ns-ipc` (memory), 0700 subdirectory at `/run/ns-ipc`, this Pod only | smoked (mounting the volume root was refused: `SOCKET_IPC_DIRECTORY_REFUSED` path) |
-| per-role `${NS_DEMO_STATE}/<role>` read-only at `/run/ns-config` | Secret `ns-config-<role>` copied into a 0700 subdirectory of a memory `emptyDir`, read-only at `/run/ns-config` | smoked |
-| `depends_on` api -> realtime -> evaluator (healthy) | not expressed: the role containers start together after the sidecar | smoked difference: realtime exits 78 once when it starts before api, then the in-place restart serves |
-| `restart: "no"` | Pod `restartPolicy: Always` restarts one role container in place | UNMEASURED beyond the realtime restart above (incarnation and refusal semantics) |
-| healthchecks (`health.js <role>`) | readiness probes, same script; no liveness probe | smoked |
-| `read_only`, `cap_drop: ALL`, `no-new-privileges`, uid 1000, tmpfs `/tmp` | container securityContext, memory `emptyDir` at `/tmp`, seccomp `RuntimeDefault` | smoked |
-| `admin`: `ADMIN_HOSTNAME=admin`, port 1342, acknowledgement, no published port, no nginx route | Deployment `admin`, `ADMIN_HOSTNAME` from `status.podIP`, Service `admin` ClusterIP, NetworkPolicy operator Pods only | smoked (`listOwners` listed 1 owner from an operator Pod; unlabelled Pod timed out) with the `admin.json` workaround |
-| `ui` | Deployment `ui`, Service `ui` | smoked (Ready) |
-| `nginx` published on `127.0.0.1:18080` | Deployment `edge`, ConfigMap with the same `nginx.conf`, Service `edge` ClusterIP | smoked (entry round-trip and Socket.IO through `edge`) |
-| `demo` (profile `ops`, mounts the participant sockets) | not rendered. Ephemeral containers may not set `subPath` (API refusal, measured), and core refuses the volume root as socket directory, so an ephemeral container cannot reach the sockets either | UNMEASURED; needs a design |
-| networks `backend` (internal) and `edge` | default-deny ingress plus one NetworkPolicy per Compose path; egress open | smoked: kindnet enforces; removing the policies opened admin to an unlabelled Pod |
-| PostgreSQL identities per role | `inventory` in the renderer, compared with `config.js` and the ownership overlay | rendered; the identities connected in the smoke |
-| one cohort Pod, a monolith that scales vertically only ([decision cohort-pod-not-scaled](https://github.com/bewest/rag-nightscout-ecosystem-alignment/blob/main/releases/cgm-remote-monitor-16.0.0/decisions.md#cohort-pod-not-scaled)) | StatefulSet replicas exactly 1: the renderer refuses any other count and invariant `cohort-single-replica` fails on a rendered 2. Core does not refuse a second cohort (smoke: a second Pod served), so the rule is the binding's. Horizontal scale or HA is per-role placement, never alongside the cohort on one database | rendered; control red as expected |
-| update without overlap | `OrderedReady`, delete-before-create | smoked once: `rollout restart` deleted `cohort-0` at 03:51:52Z and created the new one at 03:51:53Z |
-| evaluator worker index | `MULTITENANT_POOL_EVALUATOR_ORDINAL` from the pod-index label when the partition is on; nothing when off | rendered; preview off |
-
-## Fit check and candidate image ledger
-
-Both commands read files only: recorded Kubernetes API list responses, a
-registry manifest read back after publication, a recorded Pod status. Neither
-calls a cluster or registry.
-
-**Fit check.** Run before the run creates its Namespace:
+Do not force-delete a cohort Pod to bypass sequential replacement. Missing durable ownership,
+source/image mismatch, incomplete provisioning, or failed application admission remains a refusal.
+Run the focused C3 document controls in its network-isolated local app image:
 
 ```bash
-node bindings/kubernetes/ops/fit-check.js --request request.json \
-  --nodes nodes.json --pods pods.json --node <reserved worker> [--usage usage.json] [--out fit.json]
+docker run --rm --network none --read-only --tmpfs /tmp:rw,nosuid,nodev,size=32m \
+  --mount "type=bind,source=$PWD,target=/check,readonly" \
+  --entrypoint node "$(jq -r .localImageId assets/source-contract.json)" --test /check/check/candidate-documents.test.cjs
 ```
 
-`request.json` is the run's requested `{"cpu": "...", "memory": "..."}`.
-`nodes.json` and `pods.json` are `kubectl get nodes|pods -A -o json` output.
-The command counts the effective requests of the worker's non-terminated Pods
-and keeps the existing protected reserve: CPU `max(0.25, 15%)` and memory
-`max(512Mi, 20%)` of allocatable. A dimension fits when
-`max(peer requests, observed usage) + request + reserve <= allocatable`. The
-command prints every effective number. It exits 0 when the run fits, 2 with
-`K8S_FIT_REFUSED` when it does not, and 1 on invalid input.
-
-**Candidate image ledger.** Publication and cache warm happen once per
-candidate source pair (core commit, deploy commit); later runs reference the
-recorded digest.
-
-```bash
-node bindings/kubernetes/ops/image-ledger.js plan    --ledger L --core SHA --deploy SHA --image-id sha256:ID --repository REPO
-node bindings/kubernetes/ops/image-ledger.js record  --ledger L --core SHA --deploy SHA --image-id sha256:ID --repository REPO --manifest manifest.json
-node bindings/kubernetes/ops/image-ledger.js warm    --ledger L --core SHA --deploy SHA --pod warm-pod.json
-node bindings/kubernetes/ops/image-ledger.js resolve --ledger L --core SHA --deploy SHA
-```
-
-`plan` prints `{"action":"publish","tag":...}` or `{"action":"none","reference":...}`.
-The operator performs the push. `record` accepts only a single-platform schema 2
-manifest whose config digest is the local image ID, and records
-`REPOSITORY@sha256:<digest of the exact manifest bytes>`. A second, different
-publication for the same pair is refused. `warm` records a worker only when the
-Pod status shows that digest pulled and running or completed. `resolve` prints
-the entry or exits 1 with `IMAGE_LEDGER_NOT_PUBLISHED`.
+The test constructs documents from the installed source and exercises the source admin controller
+and client with a synthetic verification response. Kubernetes application and capacity evidence
+requires an admitted run and the existing write, storage, clinical, frame and authority oracles.

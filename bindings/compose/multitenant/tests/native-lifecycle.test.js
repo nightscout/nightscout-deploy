@@ -22,7 +22,7 @@ test('wrong private native raw shape/scope and old placement selector refuse bef
  const {bridge,value,env}=privateFixture();
  const good=bridge.validateConfig(value,env);assert(native.isNative(good.nativeSelection));assert.doesNotThrow(()=>bridge.lifecycleFor(good));
  for(const mutate of [v=>{delete v.nativeSelection;},v=>{delete v.nativeSelection.source;},v=>{delete v.nativeSelection.generation;},v=>{v.nativeSelection.namespace='foreign_checkpoint';},v=>{v.nativeSelection.lifecycleNamespace='foreign_control';},v=>{v.nativeSelection.source.path='./foreign.js';},v=>{v.intakeProfile={};}]){const bad=structuredClone(value);mutate(bad);assert.throws(()=>bridge.validateConfig(bad,env),{code:'COMPOSE_OPERATOR_CONFIG_REFUSED'});}
- await assert.rejects(bridge.ready(good,{MULTITENANT_REALTIME_PLACEMENT:'/old/placement.json'}),{code:'COMPOSE_LEGACY_PLACEMENT_RETIRED'});
+ await assert.rejects(bridge.capture(good,undefined,{MULTITENANT_REALTIME_PLACEMENT:'/old/placement.json'}),{code:'COMPOSE_LEGACY_PLACEMENT_RETIRED'});
 });
 test('serving link-grant omission fails exact generated grant oracle; restored source passes',()=>{
  const file=require.resolve('../native-lifecycle'),m=new Module(file,module);m.filename=file;m.paths=Module._nodeModulePaths(path.dirname(file));const source=fs.readFileSync(file,'utf8'),needle='native.servingGrants({namespace:layout.namespaces.control,role})';assert.equal(source.split(needle).length,2);m._compile(source.replace(needle,'[]'),file);assert.throws(()=>criterion(m.exports),/NATIVE_SELECTED_LINK_READ_REQUIRED/);criterion();
@@ -48,4 +48,11 @@ test('missing native declaration ablation fails the actual private-parser refusa
  const mutant=new Module(file,module);mutant.filename=file;mutant.paths=Module._nodeModulePaths(path.dirname(file));mutant._compile(source.replace(needle,''),file);
  const oracle=implementation=>{const f=privateFixture();assert(native.isNative(implementation.validateConfig(f.value,f.env).nativeSelection));delete f.value.nativeSelection;assert.throws(()=>implementation.validateConfig(f.value,f.env),{code:'COMPOSE_OPERATOR_CONFIG_REFUSED'});};
  assert.throws(()=>oracle(mutant.exports),/Missing expected exception/);oracle(require('../restore'));
+});
+
+test('native provisioning retains its bound receipt digest and refuses a foreign row contract',()=>{
+ const {docs,selection}=fixture();
+ const row=docs.admin.config.provisioning.checkpoints.find(r=>r.consumer===selection.binding.consumer+'-completed');
+ assert.equal(row.digest,selection.contractDigest);binding.attach(docs,selection);
+ row.digest='f'.repeat(64);assert.throws(()=>binding.attach(docs,selection),/COMPOSE_NATIVE_SELECTION_REFUSED/);
 });

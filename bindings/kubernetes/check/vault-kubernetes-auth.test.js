@@ -66,3 +66,17 @@ test('input refuses plain http and a bad service-account name', () => {
   assert.throws(() => input({ NS_VAULT_K8S_AUTH: '1', NS_BOOTSTRAP_OUTPUT: '/state', NS_VAULT_K8S_NAMESPACE: 'n', NS_VAULT_K8S_SERVICE_ACCOUNT: 's', VAULT_ADDR: 'http://vault:8200' }), { code: 'BOOTSTRAP_VAULT_HTTPS_REQUIRED' });
   assert.throws(() => input({ NS_VAULT_K8S_AUTH: '1', NS_BOOTSTRAP_OUTPUT: '/state', NS_VAULT_K8S_NAMESPACE: 'n', NS_VAULT_K8S_SERVICE_ACCOUNT: 'Bad_Name' }), { code: 'VAULT_K8S_BINDING_INVALID' });
 });
+
+
+test('registry C2 imports source API policy and rewrites the supported tokenFile', async () => {
+  const dir=state();
+  fs.writeFileSync(path.join(dir,'api/config.json'),JSON.stringify({registry:{namespace:'synthetic_registry'},vault:{tokenFile:'/run/ns-config/vault-token'}}),{mode:0o600});
+  fs.writeFileSync(path.join(dir,'api/env.json'),JSON.stringify({MULTITENANT_PREVIEW_CONFIG:'/run/ns-config/config.json'}),{mode:0o600});
+  const calls=[];
+  globalThis.fetch=async(url,init)=>{const resource=new URL(url).pathname.slice(4);calls.push({resource,body:init.body&&JSON.parse(init.body)});return resource==='sys/policies/acl/nsdemo_api'?new Response(JSON.stringify({data:{policy:'path "nsdemo_transit/decrypt/tenant-data-*" { capabilities = ["update"] }'}})):new Response(null,{status:204});};
+  await provision(options(dir));
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(dir,'api/config.json'))).vault.tokenFile,'/run/ns-vault/token');
+  assert.match(calls.find(c=>c.resource==='sys/policies/acl/nsdemo_vault_agent').body.policy,/decrypt\/tenant-data-\*/);
+  assert.ok(!calls.some(c=>/tenant_[0-9]/.test(c.resource)));
+  fs.rmSync(dir,{recursive:true,force:true});
+});

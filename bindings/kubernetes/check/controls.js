@@ -12,6 +12,18 @@ const fs = require('node:fs'), os = require('node:os'), path = require('node:pat
 
 const LIB = 'lib/ns/nightscout.libsonnet';
 const CONTROLS = [
+  { check: 'admin-vault-trust', file: LIB, why: 'admin loses Vault CA startup setting',
+    from: "env: [{ name: 'NODE_EXTRA_CA_CERTS', value: '/run/ns-ca/ca.crt' }],", to: 'env: [],',
+    expect: 'source admin must load the exact Vault CA before Node startup' },
+  { check: 'admin-vault-trust', file: LIB, why: 'admin loses read-only Vault CA mount',
+    from: "volumeMounts: [configMount('admin'), caMount, tmpMount]", to: "volumeMounts: [configMount('admin'), tmpMount]",
+    expect: 'source admin requires the read-only namespace Vault CA mount' },
+  { check: 'admin-vault-trust', file: LIB, why: 'admin loses namespace Vault CA volume',
+    from: "volumes: configVolumes('admin') + [ca, tmp]", to: "volumes: configVolumes('admin') + [tmp]",
+    expect: 'source admin requires the read-only namespace Vault CA mount' },
+  { check: 'admin-vault-provisioning-network', file: LIB, why: 'source admin loses Vault access',
+    from: "[sel('cohort'), sel('admin'), sel('provision'), sel('vault')]", to: "[sel('cohort'), sel('provision'), sel('vault')]",
+    expect: 'source admin provisioning requires Vault TCP8200 ingress' },
   { check:'independent-pgstream',file:LIB,why:'multiple consumers of one slot',from:"metadata: meta('pgstream', 'pgstream'),\n        spec: {\n          replicas: 1",to:"metadata: meta('pgstream', 'pgstream'),\n        spec: {\n          replicas: 2",expect:'pgstream must be a one-replica Recreate Deployment' },
   { check:'independent-pgstream',file:LIB,why:'stream Service routes to any evaluator replica',from:"selector: labels('cohort') + { 'statefulset.kubernetes.io/pod-name': 'cohort-0' }",to:"selector: labels('cohort')",expect:'intake Service must select only the admitted cohort-0 owner' },
   { check:'independent-pgstream',file:LIB,why:'pod-wide readiness blocks the stream startup',from:'publishNotReadyAddresses: true',to:'publishNotReadyAddresses: false',expect:'intake routing must bypass pod-wide clinical readiness' },
@@ -37,10 +49,9 @@ const CONTROLS = [
   { check: 'evaluator-statefulset', file: LIB, why: 'ordinal rendered with the partition off',
     from: "                ] else []),\n                // The owner plane", to: "                ] else [{ name: c.evaluatorPool.ordinalEnv, valueFrom: { fieldRef: { fieldPath: \"metadata.labels['apps.kubernetes.io/pod-index']\" } } }]),\n                // The owner plane",
     expect: 'partition is off but the evaluator sets MULTITENANT_POOL_EVALUATOR_ORDINAL' },
-  { check: 'evaluator-statefulset', file: 'environments/preview/main.jsonnet', why: 'partition on, ordinal from the pod name instead of the pod-index label',
-    from: "  prefix: 'nsdemo',", to: "  prefix: 'nsdemo',\n  evaluatorPool: { partition: 'on' },",
-    alsoFile: LIB, alsoFrom: "fieldPath: \"metadata.labels['apps.kubernetes.io/pod-index']\" } } },\n                  // The member count", alsoTo: "fieldPath: 'metadata.name' } } },\n                  // The member count",
-    expect: 'evaluator env MULTITENANT_POOL_EVALUATOR_ORDINAL must come from the StatefulSet pod-index label' },
+  { check: 'render', file: 'environments/synthetic/main.jsonnet', why: 'stale evaluator pool selected for C3',
+    from: "ns.new(import 'inputs.json')", to: "ns.new((import 'inputs.json') + { evaluatorPool: { partition: 'on' } })",
+    expect: 'C3 requires the native K=1 evaluator without pool placement' },
   { check: 'evaluator-statefulset', file: LIB, why: 'readiness made to depend on something other than the role health check',
     from: "readinessProbe: { exec: { command: ['node', 'deploy/multitenant/health.js', role] }", to: "readinessProbe: { exec: { command: ['node', 'deploy/multitenant/health.js', role, 'pool'] }",
     expect: 'evaluator readiness must be the role health check only' },
@@ -62,9 +73,41 @@ const CONTROLS = [
   { check: 'service-links-off', file: LIB, why: 'Service links back on for the cohort',
     from: "with the roles' own <ROLE>_PORT settings.\n              enableServiceLinks: false,", to: "with the roles' own <ROLE>_PORT settings.\n              enableServiceLinks: true,",
     expect: 'StatefulSet/cohort must set enableServiceLinks: false' },
-  { check: 'postgres-identities-match-compose', file: LIB, why: 'api inventory drops the root writer identity',
-    from: "api: ['alarm', 'api', 'lifetime_api', 'readiness', 'root_writer'],", to: "api: ['alarm', 'api', 'lifetime_api', 'readiness'],",
-    expect: 'api: binding names alarm,api,lifetime_api,readiness, Compose names alarm,api,lifetime_api,readiness,root_writer' },
+  { check: 'postgres-identities-match-compose', file: LIB, why: 'admin inventory drops the verification writer',
+    from: 'postgresIdentities: source.postgresIdentities,', to: 'postgresIdentities: source.postgresIdentities + { admin: [] },',
+    expect: 'platform_verifier' },
+  { check: 'source-command-identity', file: LIB, why: 'producer image changed independently of application',
+    from: "name: 'pgstream', image: c.images.app", to: "name: 'pgstream', image: c.images.postgres",
+    expect: 'pgstream image differs from declared immutable application image' },
+  { check: 'independent-pgstream', file: LIB, why: 'producer configuration path changed',
+    from: "'/run/ns-stream/pgstream.yaml', '--log-level', 'info'", to: "'/run/ns-stream/absent.yaml', '--log-level', 'info'",
+    expect: 'pgstream must run the maintained binary directly' },
+  { check: 'container-budgets', file: LIB, why: 'api budget omitted',
+    from: 'resources: resources(x.name)', to: "resources: if x.name == 'api' then {} else resources(x.name)",
+    expect: 'container api missing positive requests.cpu' },
+  { check: 'container-budgets', file: LIB, why: 'native Vault sidecar budget omitted',
+    from: 'resources: resources(x.name)', to: "resources: if x.name == 'vault-agent' then {} else resources(x.name)",
+    expect: 'container vault-agent missing positive requests.cpu' },
+  { check: 'existing-capacity-profile', file: LIB, why: 'public edge adds a provider resource',
+    from: 'type: c.edge.serviceType', to: "type: 'LoadBalancer'",
+    expect: 'Service/edge must be ClusterIP for existing-capacity' },
+  { check: 'provision-boundary', file: LIB, why: 'provision done container no longer holds for export',
+    from: "step('done', ['node', '/run/ns-overlay/candidate-documents.cjs', 'hold']", to: "step('done', ['node', '/run/ns-overlay/candidate-documents.cjs', 'verify']",
+    expect: 'provision must hold private output until explicit export' },
+
+  { check: 'provision-boundary', file: LIB, why: 'primer readiness omits verification proof',
+    from: "'test', '-s', '/run/ns-primer/verified.json'", to: "'test', '-s', '/run/ns-primer/provisioned.json'",
+    expect: 'primer must verify through private admin before advertising its proof' },
+  { check: 'provision-boundary', file: LIB, why: 'one nested admin document missing from the volume projection',
+    from: "['config', 'env', 'operation']", to: "['config', 'env']",
+    expect: 'admin lacks a private verification target document' },
+  { check: 'provision-boundary', file: LIB, why: 'primer can connect directly to PostgreSQL',
+    from: "sel('admin'), sel('ui'), sel('provision')], [{ port: 5432", to: "sel('admin'), sel('ui'), sel('provision'), sel('operator')], [{ port: 5432",
+    expect: 'operator network policy must not admit direct PostgreSQL traffic' },
+  { check: 'provision-boundary', file: LIB, why: 'UI registry traffic is refused by PostgreSQL ingress',
+    from: "sel('admin'), sel('ui'), sel('provision')], [{ port: 5432", to: "sel('admin'), sel('provision')], [{ port: 5432",
+    expect: 'UI registry identity needs scoped PostgreSQL ingress' },
+
 ];
 
 function main () {
@@ -73,7 +116,7 @@ function main () {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'ns-k8s-controls-'));
   const root = path.join(scratch, 'bindings', 'kubernetes'), composeCopy = path.join(scratch, 'bindings', 'compose');
   fs.cpSync(path.resolve(__dirname, '..'), root, { recursive: true });
-  fs.cpSync(compose, composeCopy, { recursive: true });
+  // The complete package has no imports or runtime dependency on sibling Compose files.
   const invariants = () => {
     try { return { code: 0, out: execFileSync('node', [path.join(root, 'check', 'invariants.js'), '--root', root, '--compose', composeCopy], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }) }; } catch (error) { return { code: error.status, out: String(error.stdout) + String(error.stderr) }; }
   };
@@ -95,7 +138,8 @@ function main () {
     const restored = invariants();
     const line = broken.out.split('\n').find(l => l.startsWith('FAIL ' + control.check + ': ') && l.includes(control.expect));
     const others = broken.out.split('\n').filter(l => l.startsWith('FAIL ') && !l.startsWith('FAIL ' + control.check + ': '));
-    const pass = broken.code === 1 && !!line && restored.code === 0;
+    const hit = control.check === 'render' ? broken.out.includes(control.expect) : !!line;
+    const pass = broken.code === 1 && hit && restored.code === 0;
     if (!pass) bad++;
     process.stdout.write((pass ? 'red-as-expected ' : 'CONTROL-FAILED ') + control.check + ' (' + control.why + ')\n' +
       '  broken: exit ' + broken.code + ': ' + (line || broken.out.trim().split('\n').filter(l => l.startsWith('FAIL')).join(' | ') || 'no FAIL line') + '\n' +

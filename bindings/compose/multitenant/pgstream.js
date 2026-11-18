@@ -48,7 +48,7 @@ async function init({admin,adminURL,layout,config,binary='/usr/local/bin/pgstrea
  const profile=config.processAssignment===undefined?undefined:require('../../lib/pgstream/assigned-worker').processProfile(JSON.stringify(config.processAssignment),receiver);
  const targets=profile?profile.receivers.map(url=>receiverURL({pgstream:{receiver:{...receiver,url}}})):[receiverURL(config)];
  const product=()=>require('../../lib/pgstream/evaluator');
- const selected=routes||product().routes(normalized),expected=binarySha256||product().BINARY_SHA256;
+ const selected=routes||product().routes(normalized),expected=binarySha256||require('./pgstream-source.json').binarySha256;
  if(!path.isAbsolute(binary)||!expected||require('node:crypto').createHash('sha256').update(fs.readFileSync(binary)).digest('hex')!==expected)throw new Error('PGSTREAM_BINARY_PIN_REFUSED');
  const q=require('./config').quote,role=q(layout.roles.pgstream),evaluator=q(layout.roles.evaluator),table=q(layout.namespaces.eval_checkpoint)+'.tenant_consumer_checkpoint';
  const columns=workColumns||require('../../lib/pgstream/checkpoint').WORK_COLUMNS;

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Read-only check before a tenant-local restore is started. The restore makes the same check on
-# unfinished operations itself and refuses while the tenant is still open; this script reads the
-# other conditions too and lets an operator see them without starting anything.
+# Read-only check before a tenant-local restore is started. It lets an operator see the blocking
+# conditions without starting anything. Unfinished operation records are reported only: the
+# restore drains in-flight transactions itself (decision restore-suspend-drain-replace).
 #   precheck.sh <tenant-uuid>
 # Exit 0: no blocking condition was read. Exit 1: do not start the restore; see the reasons.
 set -euo pipefail
@@ -25,7 +25,6 @@ done
 reasons=()
 [ "$registry" = active ] || reasons+=("TENANT_NOT_ACTIVE_IN_REGISTRY")
 [ "$phase" = active ] || reasons+=("TENANT_WINDOW_NOT_ACTIVE")
-[ "$unfinished" = 0 ] || reasons+=("UNFINISHED_OPERATIONS_PRESENT")
 [ "$authority" = 1 ] || reasons+=("RESTORE_AUTHORITY_NOT_COMMISSIONED")
 [ "$healthy" = 4 ] || reasons+=("PARTICIPANT_NOT_HEALTHY")
 printf '{"step":"precheck","phase":"%s","unfinishedOperations":%s,"restoreAuthority":%s,"healthyParticipants":%s,"start":%s,"reasons":[%s]}\n' \
