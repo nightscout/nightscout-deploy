@@ -69,3 +69,21 @@ test('image builds the exact maintained source patch and final deterministic bin
  for(const broken of [dockerfile.replace(binary,'0'.repeat(64)),dockerfile.replace(patchHash,'0'.repeat(64)),dockerfile.replace('origin 97d7ab464f0accf6cf1373b3c3f7b328debae4b9','origin main')]){assert.throws(()=>criterion(broken));criterion(dockerfile);}
  assert.throws(()=>criterion(dockerfile,Buffer.concat([patch,Buffer.from('\nchanged')])));criterion(dockerfile);
 });
+
+
+test('startup transport uses the complete canonical roster before native run without changing delivery policy',()=>{
+ const base={pgstream:{slot:'synthetic_slot',transactionRows:128,receiver:{url:'http://evaluator:19913/',trust:'network',bindHost:'0.0.0.0',maxBytes:4096,timeoutMs:1000},startupTransport:{timeoutMs:7200000,retryIntervalMs:25}}};
+ const options={routes:[{schema:'synthetic_entries',table:'entries'}]};
+ const wire=config=>binding.wire(config,'postgres://synthetic@127.0.0.1/synthetic',options);
+ const criterion=(config,value)=>{
+  const expected=config.processAssignment?config.processAssignment.receivers.map(url=>new URL('pgstream',url).href):[new URL('pgstream',config.pgstream.receiver.url).href];
+  assert.deepEqual(value.target.webhooks.startup_transport,{receivers:expected,timeout_ms:7200000,retry_interval_ms:25},'COMPLETE_STARTUP_ROSTER_AND_EXPLICIT_BUDGET_REQUIRED');
+  assert.equal(value.target.webhooks.notifier.client_timeout,2000);assert.equal(value.target.webhooks.notifier.strict_mode,true);assert.deepEqual(value.target.webhooks.notifier.backoff,{constant:{max_retries:1,interval:50}});
+ };
+ const single=wire(base);criterion(base,single);assert.equal(single.target.webhooks.notifier.transaction_batch.slice_receivers,undefined,'startup does not enable sliced delivery implicitly');
+ const many={...base,processAssignment:{count:2,ordinal:0,receivers:['http://evaluator:19913/','http://evaluator-2:19913/']}};
+ const actual=wire(many);criterion(many,actual);assert.deepEqual(actual.target.webhooks.startup_transport.receivers,actual.target.webhooks.notifier.transaction_batch.slice_receivers);
+ for(const mutate of [v=>{delete v.target.webhooks.startup_transport;},v=>{v.target.webhooks.startup_transport.receivers.pop();},v=>{v.target.webhooks.startup_transport.receivers.reverse();},v=>{v.target.webhooks.startup_transport.timeout_ms=300000;}]){const bad=structuredClone(actual);mutate(bad);assert.throws(()=>criterion(many,bad));criterion(many,wire(many));}
+ const absent=structuredClone(base);delete absent.pgstream.startupTransport;assert.equal(wire(absent).target.webhooks.startup_transport,undefined);
+ for(const value of [{timeoutMs:0,retryIntervalMs:1},{timeoutMs:100,retryIntervalMs:101},{timeoutMs:1.5,retryIntervalMs:1}])assert.throws(()=>wire({...base,pgstream:{...base.pgstream,startupTransport:value}}),/startup transport milliseconds/);
+});

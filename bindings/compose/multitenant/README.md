@@ -72,6 +72,25 @@ registered storage connection; realtime reads typed completed output and current
 presentation/control metadata. Partial setup is refused; source
 and deployment revision changes require fresh synthetic state.
 
+Each native `run` invocation can wait for its explicitly configured receiver
+transport before opening a health source pool, initializing or consuming WAL.
+The generated configuration selects `pgstream.startupTransport` with
+`timeoutMs: 300000` and `retryIntervalMs: 50`. These positive integer settings are
+overridable in a newly prepared configuration. They produce the separate
+`target.webhooks.startup_transport` wire document with the canonical ordered
+receiver roster. An absent option preserves the previous native startup path.
+
+The wait requires every selected receiver to answer GET `/pgstream/ready` with
+204. This checks HTTP listener and checkpoint-store ownership; source admission,
+schema verification, clinical completion and whole-role health follow their
+existing checks. Only typed dial connection refusal retries within the selected
+startup budget. Other HTTP/network refusals and cancellation stop startup. After
+success, the startup wait ends; delivery retains its existing strict retry and
+checkpoint behavior. Startup, notifier acknowledgment, clinical and controller
+convergence clocks remain separate. A future controller must allow the selected
+startup and schema/acknowledgment work plus its stability observation within the
+remaining outer work and cleanup windows. Existing prepared runs remain frozen.
+
 The admin service owns platform schema, catalogue and privilege verification.
 `platform-startup.js` writes the selected verification namespace and role into
 serving configuration and copies each role's exact configuration, environment

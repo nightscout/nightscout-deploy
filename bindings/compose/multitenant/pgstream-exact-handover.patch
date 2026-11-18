@@ -1,3 +1,17 @@
+diff --git a/cmd/config/config.go b/cmd/config/config.go
+index 514623a..7899835 100644
+--- a/cmd/config/config.go
++++ b/cmd/config/config.go
+@@ -122,6 +122,9 @@ func ParseStreamConfig() (*stream.Config, error) {
+ 	cfgFile := viper.GetViper().ConfigFileUsed()
+ 	switch {
+ 	case isYAMLConfigFile(cfgFile):
++		if err := validateStartupTransportInput(viper.Get("target.webhooks.startup_transport")); err != nil {
++			return nil, err
++		}
+ 		yamlCfg := YAMLConfig{}
+ 		if err := viper.Unmarshal(&yamlCfg, viper.DecodeHook(byteSizeDecodeHook())); err != nil {
+ 			return nil, fmt.Errorf("invalid format in config file %q: %w", cfgFile, err)
 diff --git a/cmd/config/config_env.go b/cmd/config/config_env.go
 index ca13c70..3fb9333 100644
 --- a/cmd/config/config_env.go
@@ -25,7 +39,7 @@ index ca13c70..3fb9333 100644
  		},
  		RetryPolicy: parseBackoffConfig("PGSTREAM_POSTGRES_LISTENER"),
 diff --git a/cmd/config/config_yaml.go b/cmd/config/config_yaml.go
-index 1004d3a..8e91d36 100644
+index 1004d3a..3560b51 100644
 --- a/cmd/config/config_yaml.go
 +++ b/cmd/config/config_yaml.go
 @@ -149,9 +149,10 @@ type ReplicationConfig struct {
@@ -42,7 +56,19 @@ index 1004d3a..8e91d36 100644
  }
  
  type KafkaConfig struct {
-@@ -306,10 +307,11 @@ type WebhookServerConfig struct {
+@@ -280,8 +281,9 @@ type BulkIngestConfig struct {
+ }
+ 
+ type WebhooksConfig struct {
+-	Subscriptions WebhookSubscriptionsConfig `mapstructure:"subscriptions" yaml:"subscriptions"`
+-	Notifier      WebhookNotifierConfig      `mapstructure:"notifier" yaml:"notifier"`
++	StartupTransport *stream.WebhookStartupTransportConfig `mapstructure:"startup_transport" yaml:"startup_transport"`
++	Subscriptions    WebhookSubscriptionsConfig            `mapstructure:"subscriptions" yaml:"subscriptions"`
++	Notifier         WebhookNotifierConfig                 `mapstructure:"notifier" yaml:"notifier"`
+ }
+ 
+ type WebhookSubscriptionsConfig struct {
+@@ -306,10 +308,11 @@ type WebhookServerConfig struct {
  }
  
  type WebhookNotifierConfig struct {
@@ -58,7 +84,7 @@ index 1004d3a..8e91d36 100644
  }
  
  type SanitizeConfig struct {
-@@ -542,6 +544,7 @@ func (c *YAMLConfig) parsePostgresListenerConfig() (*stream.PostgresListenerConf
+@@ -542,6 +545,7 @@ func (c *YAMLConfig) parsePostgresListenerConfig() (*stream.PostgresListenerConf
  		if c.Source.Postgres.Replication != nil {
  			replicationSlotName = c.Source.Postgres.Replication.ReplicationSlot
  			if c.Source.Postgres.Replication.Plugin != nil {
@@ -66,7 +92,12 @@ index 1004d3a..8e91d36 100644
  				pluginArgs.IncludeXIDs = c.Source.Postgres.Replication.Plugin.IncludeXIDs
  				pluginArgs.AddTables = c.Source.Postgres.Replication.Plugin.AddTables
  				pluginArgs.FilterTables = c.Source.Postgres.Replication.Plugin.FilterTables
-@@ -818,9 +821,10 @@ func (c *YAMLConfig) parseWebhookProcessorConfig() *stream.WebhookProcessorConfi
+@@ -814,13 +818,15 @@ func (c *YAMLConfig) parseWebhookProcessorConfig() *stream.WebhookProcessorConfi
+ 		return nil
+ 	}
+ 	streamCfg := &stream.WebhookProcessorConfig{
++		StartupTransport: c.Target.Webhooks.StartupTransport,
+ 		SubscriptionStore: stream.WebhookSubscriptionStoreConfig{
  			URL: c.Target.Webhooks.Subscriptions.Store.URL,
  		},
  		Notifier: notifier.Config{
@@ -80,6 +111,134 @@ index 1004d3a..8e91d36 100644
  		},
  		SubscriptionServer: server.Config{
  			Address:      c.Target.Webhooks.Subscriptions.Server.Address,
+diff --git a/cmd/config/startup_transport.go b/cmd/config/startup_transport.go
+new file mode 100644
+index 0000000..24bdce3
+--- /dev/null
++++ b/cmd/config/startup_transport.go
+@@ -0,0 +1,43 @@
++// SPDX-License-Identifier: Apache-2.0
++package config
++
++import (
++	"errors"
++	"reflect"
++)
++
++// Validate before mapstructure/yaml can coerce fractional or string scalars into
++// integers. This strict input rule is scoped to the new optional document.
++func validateStartupTransportInput(value any) error {
++	if value == nil {
++		return nil
++	}
++	fields, ok := value.(map[string]any)
++	if !ok || len(fields) != 3 {
++		return errors.New("startup transport requires receivers and exact integer timing fields")
++	}
++	for _, key := range []string{"timeout_ms", "retry_interval_ms"} {
++		v, exists := fields[key]
++		if !exists || v == nil {
++			return errors.New("startup transport timing must be an integer scalar")
++		}
++		switch reflect.TypeOf(v).Kind() {
++		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
++		default:
++			return errors.New("startup transport timing must be an integer scalar")
++		}
++	}
++	if _, exists := fields["receivers"]; !exists {
++		return errors.New("startup transport requires explicit receivers")
++	}
++	values := reflect.ValueOf(fields["receivers"])
++	if !values.IsValid() || values.Kind() != reflect.Slice {
++		return errors.New("startup transport receivers must be an explicit string list")
++	}
++	for i := 0; i < values.Len(); i++ {
++		if _, ok := values.Index(i).Interface().(string); !ok {
++			return errors.New("startup transport receivers must be an explicit string list")
++		}
++	}
++	return nil
++}
+diff --git a/cmd/config/startup_transport_test.go b/cmd/config/startup_transport_test.go
+new file mode 100644
+index 0000000..d572614
+--- /dev/null
++++ b/cmd/config/startup_transport_test.go
+@@ -0,0 +1,57 @@
++// SPDX-License-Identifier: Apache-2.0
++package config
++
++import (
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++
++	"github.com/spf13/viper"
++	"github.com/stretchr/testify/require"
++	"github.com/xataio/pgstream/pkg/stream"
++)
++
++func TestYAMLStartupTransportNamespaceAndMilliseconds(t *testing.T) {
++	v := viper.New()
++	v.SetConfigType("yaml")
++	require.NoError(t, v.ReadConfig(strings.NewReader(`target:
++  webhooks:
++    startup_transport:
++      receivers: [http://worker:19913/pgstream]
++      timeout_ms: 7200000
++      retry_interval_ms: 25
++    notifier:
++      strict_mode: true
++      worker_count: 1
++      client_timeout: 300000
++      backoff:
++        constant:
++          max_retries: 1
++          interval: 50
++`)))
++	var yaml YAMLConfig
++	require.NoError(t, v.Unmarshal(&yaml))
++	selected := yaml.parseWebhookProcessorConfig()
++	require.Equal(t, &stream.WebhookStartupTransportConfig{Receivers: []string{"http://worker:19913/pgstream"}, TimeoutMS: 7200000, RetryIntervalMS: 25}, selected.StartupTransport)
++	require.True(t, selected.Notifier.StrictMode)
++	require.EqualValues(t, 300000, selected.Notifier.ClientTimeout.Milliseconds())
++	require.EqualValues(t, 1, selected.Notifier.Backoff.Constant.MaxRetries)
++	require.EqualValues(t, 50, selected.Notifier.Backoff.Constant.Interval.Milliseconds())
++	yaml.Target.Webhooks.StartupTransport = nil
++	require.Nil(t, yaml.parseWebhookProcessorConfig().StartupTransport)
++}
++
++func TestYAMLStartupTransportStrictScalarsBeforeCoercion(t *testing.T) {
++	for _, scalar := range []string{"100.5", "100.0", "\"100\"", "true", ".nan"} {
++		t.Run(scalar, func(t *testing.T) {
++			viper.Reset()
++			defer viper.Reset()
++			file := filepath.Join(t.TempDir(), "startup.yaml")
++			require.NoError(t, os.WriteFile(file, []byte("target:\n  webhooks:\n    startup_transport:\n      receivers: [http://worker:19913/pgstream]\n      timeout_ms: "+scalar+"\n      retry_interval_ms: 1\n"), 0600))
++			require.NoError(t, LoadFile(file))
++			_, err := ParseStreamConfig()
++			require.ErrorContains(t, err, "integer scalar", "invalid raw timing must refuse before target/source parsing")
++		})
++	}
++}
+diff --git a/cmd/run_cmd.go b/cmd/run_cmd.go
+index aa4fcc9..eb6cd9e 100644
+--- a/cmd/run_cmd.go
++++ b/cmd/run_cmd.go
+@@ -55,6 +55,11 @@ func run(ctx context.Context) error {
+ 		return fmt.Errorf("parsing stream config: %w", err)
+ 	}
+ 
++	// One invocation owns one startup rendezvous. No source pool exists yet.
++	if err := streamConfig.AwaitStartupTransport(ctx); err != nil {
++		return err
++	}
++
+ 	provider, err := newInstrumentationProvider()
+ 	if err != nil {
+ 		return err
 diff --git a/config_template.yaml b/config_template.yaml
 index 1bce6e3..b736884 100644
 --- a/config_template.yaml
@@ -179,10 +338,18 @@ index f76aad4..ec73342 100644
 +therefore pause later intake on healthy slices until platform replacement and
 +producer restart/reconnect complete. This option does not introduce peer takeover.
 diff --git a/pkg/stream/config.go b/pkg/stream/config.go
-index cfbe55e..7ad56ba 100644
+index cfbe55e..41b740f 100644
 --- a/pkg/stream/config.go
 +++ b/pkg/stream/config.go
-@@ -99,6 +99,19 @@ func (c *Config) IsValid() error {
+@@ -77,6 +77,7 @@ type SearchProcessorConfig struct {
+ }
+ 
+ type WebhookProcessorConfig struct {
++	StartupTransport   *WebhookStartupTransportConfig
+ 	Notifier           notifier.Config
+ 	SubscriptionServer server.Config
+ 	SubscriptionStore  WebhookSubscriptionStoreConfig
+@@ -99,6 +100,24 @@ func (c *Config) IsValid() error {
  	if err := c.Processor.IsValid(); err != nil {
  		return err
  	}
@@ -199,9 +366,329 @@ index cfbe55e..7ad56ba 100644
 +			return errors.New("transaction batching requires framed strict webhooks and explicit positive row/byte bounds")
 +		}
 +	}
++	if w := c.Processor.Webhook; w != nil && w.StartupTransport != nil {
++		if err := w.StartupTransport.validate(w.Notifier.TransactionBatch); err != nil {
++			return err
++		}
++	}
  	return c.validateTableSelections()
  }
  
+diff --git a/pkg/stream/startup_transport.go b/pkg/stream/startup_transport.go
+new file mode 100644
+index 0000000..3accb1e
+--- /dev/null
++++ b/pkg/stream/startup_transport.go
+@@ -0,0 +1,111 @@
++// SPDX-License-Identifier: Apache-2.0
++
++package stream
++
++import (
++	"context"
++	"errors"
++	"fmt"
++	"net"
++	"net/http"
++	"net/url"
++	"slices"
++	"syscall"
++	"time"
++
++	"github.com/xataio/pgstream/pkg/wal/processor/webhook/notifier"
++)
++
++// WebhookStartupTransportConfig is an optional native run-command prerequisite.
++// It does not change notifier delivery retries or establish clinical readiness.
++type WebhookStartupTransportConfig struct {
++	Receivers       []string `mapstructure:"receivers" yaml:"receivers"`
++	TimeoutMS       int64    `mapstructure:"timeout_ms" yaml:"timeout_ms"`
++	RetryIntervalMS int64    `mapstructure:"retry_interval_ms" yaml:"retry_interval_ms"`
++}
++
++func (c *WebhookStartupTransportConfig) validate(batch *notifier.TransactionBatchConfig) error {
++	const maxMilliseconds = int64((1<<63 - 1) / time.Millisecond)
++	if c.TimeoutMS <= 0 || c.TimeoutMS > maxMilliseconds || c.RetryIntervalMS <= 0 || c.RetryIntervalMS > c.TimeoutMS {
++		return errors.New("startup transport requires positive representable timeout/retry milliseconds")
++	}
++	// Reuse the existing exact ordered-instance URL and duplicate checks. The
++	// temporary positive bounds validate URLs without changing delivery framing.
++	if c.Receivers == nil || (&notifier.TransactionBatchConfig{MaxRows: 1, MaxBytes: 1, SliceReceivers: c.Receivers}).Validate() != nil {
++		return errors.New("startup transport requires explicit canonical receiver instances")
++	}
++	if batch != nil && batch.SliceReceivers != nil && !slices.Equal(c.Receivers, batch.SliceReceivers) {
++		return errors.New("startup transport must match the exact ordered slice receivers")
++	}
++	return nil
++}
++
++// AwaitStartupTransport is called once by the native run command, before health
++// source pools, initialization or replication. Library Run callers do not opt in
++// implicitly. Success leaves no retry state behind; later delivery remains strict.
++func (c *Config) AwaitStartupTransport(ctx context.Context) error {
++	if c.Processor.Webhook == nil || c.Processor.Webhook.StartupTransport == nil {
++		return nil
++	}
++	if err := c.IsValid(); err != nil {
++		return fmt.Errorf("invalid startup transport configuration: %w", err)
++	}
++	selected := *c.Processor.Webhook.StartupTransport
++	selected.Receivers = slices.Clone(selected.Receivers)
++	transport := &http.Transport{Proxy: nil, DialContext: (&net.Dialer{}).DialContext, DisableKeepAlives: true}
++	defer transport.CloseIdleConnections()
++	return awaitStartupTransport(ctx, selected, transport)
++}
++
++func awaitStartupTransport(ctx context.Context, config WebhookStartupTransportConfig, transport http.RoundTripper) error {
++	ctx, cancel := context.WithTimeout(ctx, time.Duration(config.TimeoutMS)*time.Millisecond)
++	defer cancel()
++	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
++	for ordinal, receiver := range config.Receivers {
++		endpoint, _ := url.Parse(receiver) // validated before any I/O
++		endpoint.Path = "/pgstream/ready"
++		for {
++			if ctx.Err() != nil {
++				return fmt.Errorf("startup transport receiver %d deadline/cancellation: %w", ordinal, ctx.Err())
++			}
++			request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
++			if err != nil {
++				return errors.New("startup transport request refused")
++			}
++			response, err := client.Do(request)
++			if err == nil {
++				response.Body.Close()
++				if ctx.Err() != nil {
++					return fmt.Errorf("startup transport receiver %d deadline/cancellation: %w", ordinal, ctx.Err())
++				}
++				if response.StatusCode != http.StatusNoContent {
++					return fmt.Errorf("startup transport receiver %d HTTP status %d refused", ordinal, response.StatusCode)
++				}
++				break
++			}
++			if ctx.Err() != nil {
++				return fmt.Errorf("startup transport receiver %d deadline/cancellation: %w", ordinal, ctx.Err())
++			}
++			if !startupDialRefused(err) {
++				// Do not echo URLs, credentials, response bodies or raw network errors.
++				return fmt.Errorf("startup transport receiver %d network failure refused", ordinal)
++			}
++			timer := time.NewTimer(time.Duration(config.RetryIntervalMS) * time.Millisecond)
++			select {
++			case <-ctx.Done():
++				timer.Stop()
++				return fmt.Errorf("startup transport receiver %d deadline/cancellation: %w", ordinal, ctx.Err())
++			case <-timer.C:
++			}
++		}
++	}
++	if ctx.Err() != nil {
++		return fmt.Errorf("startup transport deadline/cancellation: %w", ctx.Err())
++	}
++	return nil
++}
++
++func startupDialRefused(err error) bool {
++	var operation *net.OpError
++	return errors.As(err, &operation) && operation.Op == "dial" && errors.Is(operation.Err, syscall.ECONNREFUSED)
++}
+diff --git a/pkg/stream/startup_transport_test.go b/pkg/stream/startup_transport_test.go
+new file mode 100644
+index 0000000..2620709
+--- /dev/null
++++ b/pkg/stream/startup_transport_test.go
+@@ -0,0 +1,192 @@
++// SPDX-License-Identifier: Apache-2.0
++package stream
++
++import (
++	"context"
++	"errors"
++	"io"
++	"net"
++	"net/http"
++	"net/http/httptest"
++	"os"
++	"strings"
++	"sync/atomic"
++	"syscall"
++	"testing"
++	"time"
++
++	"github.com/stretchr/testify/require"
++	"github.com/xataio/pgstream/pkg/wal/processor/webhook/notifier"
++)
++
++type startupRoundTrip func(*http.Request) (*http.Response, error)
++
++func (f startupRoundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
++func startupConfig(urls ...string) WebhookStartupTransportConfig {
++	return WebhookStartupTransportConfig{Receivers: urls, TimeoutMS: 1000, RetryIntervalMS: 5}
++}
++func startupResponse(status int) *http.Response {
++	return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header)}
++}
++func dialRefused() error {
++	return &net.OpError{Op: "dial", Net: "tcp", Err: &os.SyscallError{Syscall: "connect", Err: syscall.ECONNREFUSED}}
++}
++
++func TestStartupTransportValidation(t *testing.T) {
++	a, b := "http://worker-a:19913/pgstream", "http://worker-b:19913/pgstream"
++	good := startupConfig(a, b)
++	require.NoError(t, good.validate(nil))
++	batch := &notifier.TransactionBatchConfig{MaxRows: 10, MaxBytes: 1000, SliceReceivers: []string{a, b}}
++	require.NoError(t, good.validate(batch))
++	for name, mutate := range map[string]func(*WebhookStartupTransportConfig){
++		"nil": func(c *WebhookStartupTransportConfig) { c.Receivers = nil }, "empty": func(c *WebhookStartupTransportConfig) { c.Receivers = []string{} },
++		"duplicate": func(c *WebhookStartupTransportConfig) { c.Receivers = []string{a, a} }, "userinfo": func(c *WebhookStartupTransportConfig) { c.Receivers = []string{"http://secret@worker:19913/pgstream"} },
++		"path": func(c *WebhookStartupTransportConfig) { c.Receivers = []string{"http://worker:19913/pgstream/ready"} }, "query": func(c *WebhookStartupTransportConfig) { c.Receivers = []string{a + "?key=secret"} },
++		"https": func(c *WebhookStartupTransportConfig) { c.Receivers = []string{"https://worker:19913/pgstream"} }, "port": func(c *WebhookStartupTransportConfig) { c.Receivers = []string{"http://worker/pgstream"} },
++		"zero": func(c *WebhookStartupTransportConfig) { c.TimeoutMS = 0 }, "overflow": func(c *WebhookStartupTransportConfig) { c.TimeoutMS = 1<<63 - 1 }, "negative": func(c *WebhookStartupTransportConfig) { c.RetryIntervalMS = -1 }, "interval": func(c *WebhookStartupTransportConfig) { c.RetryIntervalMS = c.TimeoutMS + 1 },
++	} {
++		t.Run(name, func(t *testing.T) { c := startupConfig(a, b); mutate(&c); require.Error(t, c.validate(nil)) })
++	}
++	for _, roster := range [][]string{{b, a}, {a}, {a, b, "http://worker-c:19913/pgstream"}} {
++		c := startupConfig(roster...)
++		require.Error(t, c.validate(batch))
++	}
++	// Reference milliseconds are defaults, not a ceiling.
++	large := startupConfig(a)
++	large.TimeoutMS = 7200000
++	large.RetryIntervalMS = 100
++	require.NoError(t, large.validate(nil))
++}
++
++func TestStartupTransportAllReceiversAndOnlyDialRefusalRetries(t *testing.T) {
++	config := startupConfig("http://worker-a:19913/pgstream", "http://worker-b:19913/pgstream")
++	var requests []string
++	transport := startupRoundTrip(func(r *http.Request) (*http.Response, error) {
++		require.Equal(t, http.MethodGet, r.Method)
++		require.Equal(t, "/pgstream/ready", r.URL.Path)
++		require.Empty(t, r.Header.Get("Authorization"))
++		require.Nil(t, r.Body)
++		requests = append(requests, r.URL.Host)
++		if len(requests) == 1 {
++			return nil, dialRefused()
++		}
++		return startupResponse(204), nil
++	})
++	require.NoError(t, awaitStartupTransport(context.Background(), config, transport))
++	require.Equal(t, []string{"worker-a:19913", "worker-a:19913", "worker-b:19913"}, requests, "every configured receiver must pass in ordinal order")
++}
++
++func TestStartupTransportHardHTTPAndNetworkFailures(t *testing.T) {
++	for _, status := range []int{200, 301, 302, 307, 401, 403, 404, 429, 500, 503} {
++		t.Run(http.StatusText(status), func(t *testing.T) {
++			calls := 0
++			err := awaitStartupTransport(context.Background(), startupConfig("http://worker:19913/pgstream"), startupRoundTrip(func(*http.Request) (*http.Response, error) { calls++; return startupResponse(status), nil }))
++			require.ErrorContains(t, err, "HTTP status")
++			require.Equal(t, 1, calls)
++		})
++	}
++	for name, failure := range map[string]error{"dns": &net.OpError{Op: "dial", Err: &net.DNSError{Err: "no such host", IsNotFound: true}}, "timeout": &net.OpError{Op: "dial", Err: context.DeadlineExceeded}, "reset": &net.OpError{Op: "read", Err: syscall.ECONNRESET}, "readRefused": &net.OpError{Op: "read", Err: syscall.ECONNREFUSED}, "EOF": io.EOF, "text": errors.New("dial connection refused"), "permission": &net.OpError{Op: "dial", Err: syscall.EACCES}} {
++		t.Run(name, func(t *testing.T) {
++			calls := 0
++			err := awaitStartupTransport(context.Background(), startupConfig("http://worker:19913/pgstream"), startupRoundTrip(func(*http.Request) (*http.Response, error) { calls++; return nil, failure }))
++			require.ErrorContains(t, err, "network failure refused")
++			require.Equal(t, 1, calls)
++			require.NotContains(t, err.Error(), "http://")
++		})
++	}
++}
++
++func TestStartupTransportFiniteNeverReadyAndCancellation(t *testing.T) {
++	for _, cancelNow := range []bool{false, true} {
++		t.Run(map[bool]string{false: "deadline", true: "cancel"}[cancelNow], func(t *testing.T) {
++			config := startupConfig("http://worker:19913/pgstream")
++			config.TimeoutMS = 75
++			ctx, cancel := context.WithCancel(context.Background())
++			defer cancel()
++			calls := 0
++			start := time.Now()
++			err := awaitStartupTransport(ctx, config, startupRoundTrip(func(*http.Request) (*http.Response, error) {
++				calls++
++				if cancelNow {
++					cancel()
++				}
++				return nil, dialRefused()
++			}))
++			require.Error(t, err)
++			require.Less(t, time.Since(start), time.Second)
++			require.Positive(t, calls)
++			if cancelNow {
++				require.ErrorIs(t, err, context.Canceled)
++				require.Equal(t, 1, calls)
++			} else {
++				require.ErrorIs(t, err, context.DeadlineExceeded)
++				require.Greater(t, calls, 1)
++			}
++		})
++	}
++}
++
++func TestStartupTransportActualHTTPNoRedirectProxyOrHiddenReentry(t *testing.T) {
++	var targetCalls atomic.Int64
++	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { targetCalls.Add(1); w.WriteHeader(204) }))
++	defer target.Close()
++	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, target.URL, 302) }))
++	defer redirect.Close()
++	t.Setenv("HTTP_PROXY", target.URL)
++	t.Setenv("http_proxy", target.URL)
++	t.Setenv("NO_PROXY", "")
++	makeConfig := func(address string) *Config {
++		return &Config{Listener: ListenerConfig{Postgres: &PostgresListenerConfig{}}, Processor: ProcessorConfig{Webhook: &WebhookProcessorConfig{StartupTransport: func() *WebhookStartupTransportConfig { v := startupConfig(address + "/pgstream"); return &v }()}}}
++	}
++	require.ErrorContains(t, makeConfig(redirect.URL).AwaitStartupTransport(context.Background()), "HTTP status 302")
++	require.EqualValues(t, 0, targetCalls.Load(), "redirect/proxy target must receive no request")
++	c := makeConfig(target.URL)
++	require.NoError(t, c.AwaitStartupTransport(context.Background()))
++	require.EqualValues(t, 1, targetCalls.Load())
++	time.Sleep(25 * time.Millisecond)
++	require.EqualValues(t, 1, targetCalls.Load(), "success leaves no background probe or renewable grace")
++	c.Processor.Webhook.StartupTransport = nil
++	require.NoError(t, c.AwaitStartupTransport(context.Background()))
++	require.EqualValues(t, 1, targetCalls.Load())
++}
++
++func TestStartupTransportActualRefusedSocketThenOwnedListener(t *testing.T) {
++	reservation, err := net.Listen("tcp", "127.0.0.1:0")
++	require.NoError(t, err)
++	address := reservation.Addr().String()
++	require.NoError(t, reservation.Close())
++	config := startupConfig("http://" + address + "/pgstream")
++	done := make(chan error, 1)
++	go func() {
++		c := &Config{Listener: ListenerConfig{Postgres: &PostgresListenerConfig{}}, Processor: ProcessorConfig{Webhook: &WebhookProcessorConfig{StartupTransport: &config}}}
++		done <- c.AwaitStartupTransport(context.Background())
++	}()
++	select {
++	case err := <-done:
++		t.Fatalf("returned before listener bind: %v", err)
++	case <-time.After(30 * time.Millisecond):
++	}
++	listener, err := net.Listen("tcp", address)
++	require.NoError(t, err)
++	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		if r.URL.Path != "/pgstream/ready" {
++			t.Errorf("wrong endpoint %s", r.URL.Path)
++		}
++		w.WriteHeader(204)
++	})}
++	defer server.Close()
++	go server.Serve(listener)
++	select {
++	case err := <-done:
++		require.NoError(t, err)
++	case <-time.After(2 * time.Second):
++		t.Fatal("did not observe actual listener")
++	}
++}
++
++func TestStartupTransportCancellationCannotEarn204Success(t *testing.T) {
++	ctx, cancel := context.WithCancel(context.Background())
++	defer cancel()
++	err := awaitStartupTransport(ctx, startupConfig("http://worker:19913/pgstream"), startupRoundTrip(func(*http.Request) (*http.Response, error) { cancel(); return startupResponse(204), nil }))
++	require.ErrorIs(t, err, context.Canceled)
++}
 diff --git a/pkg/stream/stream.go b/pkg/stream/stream.go
 index 4faf570..d472f7c 100644
 --- a/pkg/stream/stream.go
