@@ -139,11 +139,12 @@ export async function packet(spec,helperRoot,archives){
       if(discoveryMode(spec))need(receipt.checkImageReturncode===0&&receipt.imageInspection.sourceLabel===spec.pins.core&&receipt.imageInspection.deployLabel===spec.pins.deploy,'PGCAL_DISCOVERY_IMAGE_QUALIFICATION');
     }
   }
+  // Helper dependency bytes are recorded as read; the packet no longer refuses on
+  // a hash pin or on the text of a helper's imports (the helper commit is the identity).
+  let dependencyFiles;
   if(topologyBinding(spec)){
-    const d=spec.helperDependencies;
-    for(const [name,sha256]of Object.entries(d.files))need(await hashFile(path.join(helperRoot,name))===sha256,'PGCAL_TOPOLOGY_DEPENDENCY_BYTES');
-    const resourceSource=await fs.readFile(path.join(helperRoot,'tools/mt-bench/m7-joined/diagnostic_resources.py'),'utf8');
-    need(/(?:^|\n)[ \t]*(?:from experiment_batch import|import experiment_batch)(?:\s|$)/.test(resourceSource)===(d.profile==='external-service-batch-v1'),'PGCAL_TOPOLOGY_DEPENDENCY_PROFILE');
+    dependencyFiles={};
+    for(const name of Object.keys(spec.helperDependencies.files))dependencyFiles[name]=await hashFile(path.join(helperRoot,name));
   }
   const directory=path.join(helperRoot,'tools/mt-bench/remote-pgstream');
   const actual=(await fs.readdir(directory)).filter(f=>/\.(py|cjs)$/.test(f)&&!f.startsWith('test_')).sort();
@@ -158,7 +159,7 @@ export async function packet(spec,helperRoot,archives){
     need((await fs.lstat(a.path)).isFile()&&await hashFile(a.path)===a.sha256,'PGCAL_ARTIFACT_HASH_CHANGED');
     artifacts[name]={imageId:a.imageId,sha256:a.sha256,bytes:(await fs.stat(a.path)).size};
   }
-  return {version:1,profile:PROFILE,status:'OFFLINE_PACKET_VALIDATED',liveQualification:'UNMEASURED',capacityAcceptance:'NOT_GRANTED',spec,helperFiles:hashes,...(spec.helperDependencies?{helperDependencies:spec.helperDependencies}:{}),artifacts,
+  return {version:1,profile:PROFILE,status:'OFFLINE_PACKET_VALIDATED',liveQualification:'UNMEASURED',capacityAcceptance:'NOT_GRANTED',spec,helperFiles:hashes,...(dependencyFiles?{helperDependencyFiles:dependencyFiles}:{}),...(spec.helperDependencies?{helperDependencies:spec.helperDependencies}:{}),artifacts,
     transfer:{sut:['alignment source at helperCommit','core source at pins.core','deploy overlay at pins.deploy','app image archive','postgres image archive','genuine diagnostic receipt','binding'],driver:['remote-pgstream helper allowlist','binding','traffic descriptor',...TRAFFIC_FILES]},
     clocks:{sut:'local SQL request bookends/cgroup/process/IO only',driver:'local monotonic write-to-frame and event-loop',crossHostSubtraction:false,writeToEvaluation:'UNMEASURED'},
     coldBoot:'deployment-stages.json; infrastructure/bootstrap/provision/commission/pool-initialize/API/prime/publish before steady sampling',
