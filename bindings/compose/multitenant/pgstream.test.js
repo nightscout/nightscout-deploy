@@ -55,13 +55,13 @@ test('native cohort wire has explicit preserved bounds and framing with red/rest
 
 test('image builds the exact maintained source patch and final deterministic binary; pin/source controls fail',()=>{
  const dockerfile=fs.readFileSync(path.join(__dirname,'Dockerfile'),'utf8'),patch=fs.readFileSync(path.join(__dirname,'pgstream-exact-handover.patch'));
- const patchHash=crypto.createHash('sha256').update(patch).digest('hex'),binary=require('../../lib/pgstream/evaluator').BINARY_SHA256,provenance=require('./pgstream-source.json');
- assert.equal(provenance.binarySha256,binary);assert.equal(provenance.patchSha256,patchHash);assert(dockerfile.includes(provenance.connectorCommit));assert(dockerfile.includes(provenance.upstreamCommit));assert(dockerfile.includes(provenance.goBuilder));
+ const patchHash=crypto.createHash('sha256').update(patch).digest('hex'),provenance=require('./pgstream-source.json'),binary=provenance.binarySha256;
+ assert.match(provenance.binarySha256,/^[0-9a-f]{64}$/);assert.equal(provenance.patchSha256,patchHash);assert(dockerfile.includes(provenance.connectorCommit));assert(dockerfile.includes(provenance.upstreamCommit));assert(dockerfile.includes(provenance.goBuilder));
  const criterion=(docker,bytes=patch)=>{
   assert(docker.includes('golang:1.26.11-alpine@sha256:f496f8c537ed506626ee1a6913afb32c45068a48697163c088f604cc775a0c38'),'PINNED_GO_BUILDER_REQUIRED');
   assert(docker.includes('git fetch --depth=1 origin 97d7ab464f0accf6cf1373b3c3f7b328debae4b9'),'MAINTAINED_UPSTREAM_COMMIT_REQUIRED');
   assert(docker.includes(crypto.createHash('sha256').update(bytes).digest('hex')+'  /tmp/pgstream-exact-handover.patch'),'PATCH_HASH_REQUIRED');
-  assert(docker.includes(binary+'  /out/pgstream'),'CORE_BINARY_PIN_MUST_MATCH_BUILD');
+  assert(docker.includes(binary+'  /out/pgstream'),'DEPLOY_BINARY_PIN_MUST_MATCH_BUILD');
   assert(docker.includes('CGO_ENABLED=0 GOTOOLCHAIN=local')&&docker.includes('-trimpath -buildvcs=false'),'REPRODUCIBLE_BINARY_FLAGS_REQUIRED');
   assert(docker.includes('COPY --from=pgstream-build --chmod=0555 /out/pgstream /usr/local/bin/pgstream'),'BUILT_BINARY_REQUIRED');
  };

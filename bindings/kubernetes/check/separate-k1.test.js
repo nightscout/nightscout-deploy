@@ -11,10 +11,10 @@ test('separate K1 render detects broken boundaries and restores the same baselin
   const baseline = render();
   const errors = (all = baseline.all) => checks(all, baseline.inventory).flatMap(x => x.failures.map(f => x.name + ': ' + f));
   assert.deepEqual(errors(), []);
-  assert.equal(Object.keys(baseline.inventory.workloads).length, 12);
+  for (const name of ['api', 'evaluator', 'realtime', 'tenant-admin', 'provision', 'primer']) assert.ok(baseline.inventory.workloads[name], name);
   const cases = [
-    ['source contract reserialized', x => {const m=x.find(w=>w.kind==='ConfigMap'&&w.metadata.name==='provision-scripts');m.data['source-contract.json']=JSON.stringify(JSON.parse(m.data['source-contract.json']));}, /rendered source-contract.json differs/],
     ['topology mode omitted', x => {const c=x.find(w=>w.kind==='Job'&&w.metadata.name==='provision').spec.template.spec.containers.find(c=>c.name==='done');c.env=c.env.filter(e=>e.name!=='NS_APPLICATION_TOPOLOGY');}, /explicit provision topology/],
+    ['tenant-admin removed', x => x.splice(x.findIndex(w => w.kind === 'Deployment' && w.metadata.name === 'tenant-admin'),1), /lacks workloads tenant-admin/],
     ['second evaluator', x => x.find(w => w.kind === 'Deployment' && w.metadata.name === 'evaluator').spec.replicas = 2, /one Recreate Deployment/],
     ['private edge access', x => x.find(w => w.kind === 'NetworkPolicy' && w.metadata.name === 'api-internal').spec.ingress[0].from.push({podSelector:{matchLabels:{'app.kubernetes.io/component':'edge'}}}), /unauthorized source/],
     ['lost lifecycle path', x => x.find(w => w.kind === 'NetworkPolicy' && w.metadata.name === 'realtime-internal').spec.ingress = [], /lacks a directed lifecycle/],

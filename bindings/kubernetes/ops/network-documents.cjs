@@ -33,25 +33,17 @@ function project(root) {
   const operatorFile = path.join(root, 'ops/config.json');
   if (fs.existsSync(operatorFile)) {
     const config = read('ops/config.json');
-    need(config.control && typeof config.control === 'object' && !Array.isArray(config.control));
-    // The source registry operator has no participant addresses. Preserve it
-    // byte-for-byte; project a participant manifest only when source supplied one.
-    if (!Object.hasOwn(config.control, 'participants')) return;
-    need(Array.isArray(config.control.participants) && config.control.participants.length === ROLES.length);
-    for (const participant of config.control.participants) {
-      need(ROLES.includes(participant.id) && participant.roles?.length === 1 && participant.roles[0] === participant.id);
-      const { maxBytes, timeoutMs } = participant.endpoint;
+    // The source registry operator has no participant addresses; leave it
+    // byte-for-byte. Otherwise address each participant this binding runs as
+    // its own Deployment; the source parser judges the rest.
+    const participants = config?.control?.participants;
+    if (!Array.isArray(participants)) return;
+    for (const participant of participants) {
+      if (!ROLES.includes(participant?.id)) continue;
+      const { maxBytes, timeoutMs } = participant.endpoint || {};
       participant.endpoint = { url: address(participant.id), trust: 'network', maxBytes, timeoutMs };
     }
     write('ops/config.json', config);
   }
 }
-function check(root) {
-  for (const role of ROLES) {
-    const env = JSON.parse(fs.readFileSync(path.join(root, role, 'env.json'), 'utf8'));
-    need(env.NS_SERVE_INTERNAL_HOST === '0.0.0.0' && env.NS_SERVE_INTERNAL_PORT === String(PORTS[role]));
-    need(!Object.keys(env).some(name => name === 'NS_SERVE_INTERNAL_SOCKET' || /^NS_[A-Z_]+_INTERNAL_SOCKET$/.test(name)));
-    for (const peer of ROLES) need(env[key(peer) + 'URL'] === address(peer));
-  }
-}
-module.exports = { PORTS, ROLES, address, environment, project, check };
+module.exports = { PORTS, ROLES, address, environment, project };

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Drill: the API role is killed with requests in flight and leaves unfinished operation records
-# behind. The tenant keeps serving after the role restarts. A tenant-local restore started now
-# refuses before it closes the tenant; the operator clears the records whose owner is gone, and
-# the restore then completes. Runbook: ../runbooks/role-death-mid-operation.md
-# NS_DRILL_SKIP_CLEARANCE=1 leaves the clearance out (the control: the restore must then still refuse).
+# behind. The tenant keeps serving after the role restarts. The records are reported, not blocking:
+# a tenant-local restore suspends the tenant, drains in-flight transactions (a killed backend's
+# transaction is already gone) and completes without any clearance step (decision
+# restore-suspend-drain-replace). Runbook: ../runbooks/role-death-mid-operation.md
 set -euo pipefail
 drill=orphaned-operations
 source "$(dirname "$0")/lib.sh"
@@ -23,25 +23,13 @@ sleep 3; orphans=$(unfinished "$tenant")
 printf '{"drill":"%s","step":"unfinished-records-after-role-restart","observed":%s}\n' "$drill" "$orphans"
 [ "$orphans" -gt 0 ] || { printf '{"drill":"%s","result":"inconclusive","reason":"no request was in flight at the kill"}\n' "$drill"; exit 2; }
 step tenant-serves-after-role-restart "$(driver oo-p1 probe $name --tenant a | field admitted)" true
-step precheck-refuses "$("$here/precheck.sh" "$tenant" | field reasons)" '["UNFINISHED_OPERATIONS_PRESENT"]'
-# The restore itself refuses, and the tenant stays open.
-step restore-refused-before-closing "\"$(driver oo-r1 restore $name | field error)\"" '"LIFECYCLE_RESTORE_PREFLIGHT_ORPHANED_OPERATIONS"'
-step tenant-still-open "\"$(window "$tenant")\"" '"active|false|false"'
-step no-restore-claim-recorded "$(sql "SELECT count(*) FROM nsdemo_control.tenant_lifecycle_restore_audit WHERE tenant_id='$tenant'")" "$audits_before"
-step tenant-serves-after-refusal "$(driver oo-p2 probe $name --tenant a | field admitted)" true
-seen=$(operator_cli oo-inspect inspect --tenant "$tenant" || true)
-step inspect-counts-owner-gone "$(echo "$seen" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{let v={};try{v=JSON.parse(s.trim().split("\n").pop())}catch{};process.stdout.write(String(v.operations?v.operations.ownerGone:""))})')" "$orphans"
+# The unfinished records are reported, never a reason to refuse the restore.
+step precheck-allows-with-unfinished-records "$("$here/precheck.sh" "$tenant" | field start)" true
 records_before=$(unfinished_records "$tenant")
-if [ "${NS_DRILL_SKIP_CLEARANCE:-}" != 1 ]; then
-  cleared=$(operator_cli oo-clear clear-operations --tenant "$tenant" || true)
-  count() { node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{let v={};try{v=JSON.parse(s.trim().split("\n").pop())}catch{};process.stdout.write(String(Array.isArray(v[process.argv[1]])?v[process.argv[1]].length:""))})' "$1"; }
-  step records-cleared "$(echo "$cleared" | count cleared)" "$orphans"
-  step records-retained "$(echo "$cleared" | count retained)" 0
-fi
-# A clearance is a new row; the operation records themselves are untouched.
+step restore-completes "\"$(driver oo-r1 restore $name | field state)\"" '"activated"'
+step restore-claim-recorded "$(sql "SELECT count(*) - $audits_before FROM nsdemo_control.tenant_lifecycle_restore_audit WHERE tenant_id='$tenant'")" 1
+# The operation records themselves are untouched; nothing edits or clears them.
 step operation-records-untouched "$(unfinished_records "$tenant")" "$records_before"
-step unfinished-and-not-cleared "$(unfinished "$tenant")" 0
-step restore-after-clearance "\"$(driver oo-r2 restore $name | field state)\"" '"activated"'
 step tenant-open-after-restore "\"$(window "$tenant")\"" '"active|false|false"'
 step state-restored "$(driver oo-vs verify-state $name | field pass)" true
 step other-tenant-writes "$(driver oo-b progress $name | field pass)" true

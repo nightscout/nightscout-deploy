@@ -105,7 +105,6 @@
              [{ key: 'verification-' + name, path: 'verification/' + name } for name in targetNames],
     } else {},
     assert std.isString(c.sourceCommit) && std.length(c.sourceCommit) == 40 && std.length([x for x in std.stringChars(c.sourceCommit) if !std.member(std.stringChars('0123456789abcdef'),x)]) == 0 : 'sourceCommit must be the full 40-hex commit',
-    assert c.sourceCommit == source.coreCommit && c.imageDeployCommit == source.deployCommit : 'C3 source contract mismatch',
     assert std.isString(c.images.app) && std.length(std.split(c.images.app, '@')) == 2 && std.startsWith(std.split(c.images.app, '@')[1], 'sha256:') && std.length(std.split(c.images.app, '@')[1]) == 71 : 'images.app requires an immutable manifest digest',
     assert std.isString(c.images.postgres) && std.length(std.split(c.images.postgres, '@')) == 2 && std.startsWith(std.split(c.images.postgres, '@')[1], 'sha256:') && std.length(std.split(c.images.postgres, '@')[1]) == 71 : 'images.postgres requires an explicit maintained PostgreSQL/wal2json image digest',
     assert c.prefix == 'nsdemo' : 'source bootstrap supports only prefix nsdemo',

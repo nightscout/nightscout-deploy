@@ -14,7 +14,7 @@ what you may do. "Retry" always means the same request with the same identifiers
 | one cohort role (API, realtime, evaluator, tenant-admin), during a tenant restore | restore refused (`SOCKET_IPC_UNAVAILABLE`); tenant **held closed**; restored rows not committed (audit `suspended`) | restart the role so other tenants are served, then `inspect` and `resume` ([README.md](README.md#a-tenant-held-closed-by-an-interrupted-restore)): `before-data` | run the restore again (refused, `LIFECYCLE_RESTORE_ALREADY_SUSPENDED`); reopen by hand |
 | the restore operator, inside the data transaction | tenant **held closed**; restored rows not committed (audit `suspended`) | `inspect` and `resume`: `before-data` | as above |
 | the restore operator, after the data commit | tenant **held closed**; restored rows **are** committed (audit `restored`); roles were never told to drop what they cached | `inspect` and `resume`: `data-replaced`; the resume makes every role drop what it cached before the tenant opens | as above |
-| the API role, with requests in flight | the tenant serves again once the role restarts, but **unfinished operation markers remain** | restart the role; before a tenant-local restore, `clear-operations` ([README.md](README.md#a-tenant-held-closed-by-an-interrupted-restore)) | clear the markers by hand. Stop condition 2 when any is `retained` |
+| the API role, with requests in flight | the tenant serves again once the role restarts; **unfinished operation markers remain** and are reported by `inspect` | restart the role; a tenant-local restore drains in-flight transactions and does not need the markers cleared | edit or delete the markers by hand |
 
 ## After any role death
 
@@ -26,11 +26,11 @@ the tenant that a restore had closed.
    incarnation: a restore that had pinned the old one can never complete with the new one.
 2. For every tenant: read the window and the unfinished-operation count.
 3. A tenant that is `active` with zero unfinished operations needs nothing more.
-4. A tenant that is `active` with unfinished operations is serving. Rehearsed: the markers are still
-   there after the role restarts, and a tenant-local restore refuses before closing the tenant
-   (`LIFECYCLE_RESTORE_PREFLIGHT_ORPHANED_OPERATIONS`). `clear-operations` records the markers whose
-   owner is gone; the restore then completes. At core `debcc2c7`, which has no such check, the same
-   restore ended `LIFECYCLE_RESTORE_DRAIN_TIMEOUT` with the tenant held closed.
+4. A tenant that is `active` with unfinished operations is serving. The markers are still there
+   after the role restarts. They do not block a tenant-local restore: the restore suspends the
+   tenant and waits for in-flight transactions, and a killed role's transactions are already gone
+   (decision `restore-suspend-drain-replace`; read-derived from core `cd05701d`, not yet re-rehearsed
+   with `drill-orphaned-operations.sh`).
 5. A tenant that is `suspended` is at stop condition 1: follow [README.md](README.md#a-tenant-held-closed-by-an-interrupted-restore). The other tenants keep
    working (rehearsed in every mode: another tenant completes a write while the first is held, and after).
 

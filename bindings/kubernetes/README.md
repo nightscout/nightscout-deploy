@@ -52,7 +52,7 @@ input. No Secret or literal credential is rendered.
 ## Separate K=1 contracts
 
 `lib/ns/components.libsonnet` reuses the existing role Pod templates and drops the shared socket
-volume. The inventory contains twelve workloads. Each role owns a private ClusterIP Service at
+volume. Each role owns a private ClusterIP Service at
 `<role>-internal`, on ports 19001–19004 for API, evaluator, realtime and tenant-admin respectively.
 The evaluator intake remains `evaluator:19913`. Private Services publish addresses before clinical
 readiness so lifecycle and intake readiness cannot deadlock startup. Core still checks its own
@@ -70,9 +70,14 @@ Services and edge routes do not expose private listeners. Actual NetworkPolicy e
 a live negative connectivity check.
 
 P's `startup-v2` platform verification runs through private admin before serving. Its receipt has
-namespace, exact role roster and generation digests, with no lease or timestamp. The constructor
-compares the actual receipt against source-loaded expected generations. Serving admission checks
-current database, role and epoch identity. The legacy receipt reader retains its expiry checks.
+namespace, exact role roster and generation digests, with no lease or timestamp. The primer's
+`done` container publishes that receipt as `verified.json`; the source verifier refuses anything but
+a complete `verified` receipt. Each serving role checks its own proof generation and fails closed,
+and serving admission checks current database, role and epoch identity, so the binding does not
+re-derive the generations. The provision `done` container only projects network addresses,
+publishes a public provenance record and holds the private state for export; source, catalogue,
+commit and binary identity come from the image digest and Job ordering
+(`architecture-justified-removal`).
 
 Recreate and one replica express rollout intent. They do not prove old-backend termination for a
 manual Pod delete, partition or restore. Qualification must observe the actual old process/backend
@@ -133,8 +138,10 @@ To remeasure source equivalence, provide the exact local immutable app image and
 python check/source-equivalence.py --compose <frozen-bindings/compose> --image <local-image-id> --diagnostic <immutable-candidate-receipt>
 ```
 
-This starts only an inert network-disabled Node document constructor. It compares the embedded
-receipt and installed source bytes, then compares all SQL identities and source commands. It does
+This starts only an inert network-disabled Node document constructor. It records the embedded
+receipt, the installed source bytes and binary digest as the image carries them (a later
+binding-only Compose commit is not a refusal), then compares all SQL identities and source
+commands with the retained contract unless `--capture` is given. It does
 not rerun application acceptance. `--capture` updates the retained source facts and must accompany
 an explicitly selected new source tuple, never a relabeling of inherited acceptance.
 

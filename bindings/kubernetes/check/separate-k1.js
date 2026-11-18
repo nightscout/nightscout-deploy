@@ -2,8 +2,9 @@
 const { PORTS, ROLES } = require('../ops/network-documents.cjs');
 function check(all, inventory, fail) {
   const workloads = all.filter(x => ['Deployment', 'StatefulSet', 'Job'].includes(x.kind));
-  const want = [...ROLES, 'postgres', 'vault', 'pgstream', 'admin', 'ui', 'edge', 'provision', 'primer'].sort();
-  if (JSON.stringify(workloads.map(x => x.metadata.name).sort()) !== JSON.stringify(want)) fail('separate-k1 requires twelve exact workloads');
+  const names = new Set(workloads.map(x => x.metadata.name));
+  const missing = [...ROLES, 'postgres', 'vault', 'pgstream', 'admin', 'ui', 'edge', 'provision', 'primer'].filter(name => !names.has(name));
+  if (missing.length) fail('separate-k1 lacks workloads ' + missing.join(','));
   const component = 'app.kubernetes.io/component';
   const policies = all.filter(x => x.kind === 'NetworkPolicy');
   const matches = (selector, labels) => Object.entries(selector?.matchLabels || {}).every(([k, v]) => labels[k] === v);

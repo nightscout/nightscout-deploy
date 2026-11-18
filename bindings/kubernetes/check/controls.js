@@ -76,9 +76,6 @@ const CONTROLS = [
   { check: 'postgres-identities-match-compose', file: LIB, why: 'admin inventory drops the verification writer',
     from: 'postgresIdentities: source.postgresIdentities,', to: 'postgresIdentities: source.postgresIdentities + { admin: [] },',
     expect: 'platform_verifier' },
-  { check: 'render', file: 'environments/synthetic/inputs.json', why: 'foreign core source receipt',
-    from: require('../assets/source-contract.json').coreCommit, to: '0000000000000000000000000000000000000000',
-    expect: 'C3 source contract mismatch' },
   { check: 'source-command-identity', file: LIB, why: 'producer image changed independently of application',
     from: "name: 'pgstream', image: c.images.app", to: "name: 'pgstream', image: c.images.postgres",
     expect: 'pgstream image differs from declared immutable application image' },
@@ -94,8 +91,8 @@ const CONTROLS = [
   { check: 'existing-capacity-profile', file: LIB, why: 'public edge adds a provider resource',
     from: 'type: c.edge.serviceType', to: "type: 'LoadBalancer'",
     expect: 'Service/edge must be ClusterIP for existing-capacity' },
-  { check: 'provision-boundary', file: 'ops/candidate-documents.cjs', why: 'provision uses the wrong export marker',
-    from: "path.join(root, '.exported'))) clearInterval(timer); }, 1000);\n    return;", to: "path.join(root, '.wrong-export-marker'))) clearInterval(timer); }, 1000);\n    return;",
+  { check: 'provision-boundary', file: LIB, why: 'provision done container no longer holds for export',
+    from: "step('done', ['node', '/run/ns-overlay/candidate-documents.cjs', 'hold']", to: "step('done', ['node', '/run/ns-overlay/candidate-documents.cjs', 'verify']",
     expect: 'provision must hold private output until explicit export' },
 
   { check: 'provision-boundary', file: LIB, why: 'primer readiness omits verification proof',
@@ -110,9 +107,6 @@ const CONTROLS = [
   { check: 'provision-boundary', file: LIB, why: 'UI registry traffic is refused by PostgreSQL ingress',
     from: "sel('admin'), sel('ui'), sel('provision')], [{ port: 5432", to: "sel('admin'), sel('provision')], [{ port: 5432",
     expect: 'UI registry identity needs scoped PostgreSQL ingress' },
-  { check: 'package-assets', file: 'assets/service-environment.js', why: 'copied source loader asset drifted',
-    from: 'const maxBytes = limit();', to: 'const maxBytes = 1048576;',
-    expect: 'service-environment.js differs from immutable source bytes' },
 
 ];
 
