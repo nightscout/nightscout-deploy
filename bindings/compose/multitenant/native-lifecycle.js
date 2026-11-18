@@ -13,16 +13,21 @@ function select(layout,docs,identity){
  if(identity.slot!==evaluator.pgstream.slot||evaluator.postgres.namespaces.checkpoint!==layout.namespaces.eval_checkpoint)throw fail();
  return native.create({namespace:layout.namespaces.eval_checkpoint,lifecycleNamespace:layout.namespaces.control,consumer:evaluator.consumer,source:identity,generation:evaluator.pgstream.generation});
 }
+function completedPlan(provisioning,selection){
+ const {namespace,consumer}=native.validate(selection).binding;
+ const rows=provisioning.checkpoints.filter(row=>row.namespace===namespace&&row.consumer===consumer+'-completed');
+ const legacy=require('../../lib/pgstream/checkpoint').create({typed:true,connection:{},namespace,consumer,maxBytes:1}).digest;
+ if(rows.length!==1||![legacy,selection.contractDigest].includes(rows[0].digest))throw fail();
+ return rows[0];
+}
 function attach(docs,selection){
- native.validate(selection);
+ const checkpoint=completedPlan(docs.admin.config.provisioning,selection);
  for(const operation of Object.values(docs.operations)){
-  if(operation.intakeProfile!==undefined||operation.namespace!==selection.binding.lifecycleNamespace)throw fail();
-  operation.nativeSelection=structuredClone(selection.binding);
+  if(operation.intakeProfile!==undefined||operation.namespace!==selection.binding.lifecycleNamespace||
+    operation.nativeSelection!==undefined&&!require('node:util').isDeepStrictEqual(operation.nativeSelection,selection.binding))throw fail();
  }
- const {namespace,consumer}=selection.binding;
- const rows=docs.admin.config.provisioning.checkpoints.filter(r=>r.namespace===namespace&&r.consumer===consumer+'-completed');
- if(rows.length!==1)throw fail();
- rows[0].digest=selection.contractDigest;
+ for(const operation of Object.values(docs.operations))operation.nativeSelection=structuredClone(selection.binding);
+ checkpoint.digest=selection.contractDigest;
  return docs;
 }
 function grants(layout,selection){
@@ -52,12 +57,23 @@ async function upgradeReceipts({admin,adminURL,selection}){
 module.exports={source,select,attach,grants,install,upgradeReceipts};
 if(require.main===module){
  (async()=>{
-  if(process.argv.length!==3||!process.env.NS_RECEIPT_ADMIN_PG)throw fail();
-  const operation=JSON.parse(require('node:fs').readFileSync(process.argv[2],'utf8'));
+  // A staged provisioning document keeps the operator's existing ownership,
+  // permissions and secret distribution under the deployment's control.
+  if(process.argv.length!==5||!process.env.NS_RECEIPT_ADMIN_PG)throw fail();
+  const fs=require('node:fs');
+  const operation=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
   if(operation.intakeProfile!==undefined||operation.namespace!==operation.nativeSelection?.lifecycleNamespace)throw fail();
   const selection=native.create(operation.nativeSelection),adminURL=process.env.NS_RECEIPT_ADMIN_PG;
+  const admin=JSON.parse(fs.readFileSync(process.argv[3],'utf8'));
+  completedPlan(admin.provisioning,selection).digest=selection.contractDigest;
   const client=new (require('pg').Client)({connectionString:adminURL});
-  try{await client.connect();const changed=await upgradeReceipts({admin:client,adminURL,selection});console.log('Native receipt rows upgraded',changed);}
+  try{
+   await client.connect();
+   await native.assertCurrent(client,selection,{nativeSource:{source:selection.binding.source,generation:selection.binding.generation}});
+   const changed=await upgradeReceipts({admin:client,adminURL,selection});
+   fs.writeFileSync(process.argv[4],JSON.stringify(admin)+'\n',{mode:0o600,flag:'wx'});
+   console.log('Native receipt rows upgraded',changed);
+  }
   finally{await client.end();}
  })().catch(error=>{console.error(/^[A-Z0-9_]+$/.test(error.message)?error.message:'NATIVE_RECEIPT_UPGRADE_REFUSED');process.exitCode=1;});
 }

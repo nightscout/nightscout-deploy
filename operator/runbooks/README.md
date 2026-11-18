@@ -18,7 +18,15 @@ Restore advances the selected tenant’s generation and suspends it. Uploaders r
 
 Use the admitted private lifecycle operator to inspect an interrupted restore. The reported claim identifies the tenant, generation and restore artifact. A `before-data` interruption kept the preceding data. A `data-replaced` interruption kept the committed replacement. When the original backend has gone and inspection reports that the claim is resumable, submit `resume` with the exact inspected claim. A refused or uncertain outcome requires another inspection. Confirm the active generation, the matching resume record and actual tenant service before telling users that service has returned. A selection-proof refusal requires the intended configuration and current verified evaluator contract. Historical operation markers and clearance rows remain available for audit.
 
-**Current native restore candidate is blocked for clinical display.** In the four-role rehearsal, the API accepted a new reading and the evaluator stored the restored and new readings together. The restored tenant's realtime listener still refused stock clients with `TENANT_WARMING`. Its durable work eligibility remained disabled after activation. Keep the tenant's users on their primary display and alarms until a reconnected client receives a current reading from the restored generation. An active audit row or a successful API read alone cannot establish that outcome.
+For a retained native database, stop the old evaluator, pgstream, provisioner and serving roles before switching images. Preserve the logical slot, source generation and private operation documents. Using the paired image and a direct migration-admin connection from `NS_RECEIPT_ADMIN_PG`, stage the updated private provisioning document in a new file.
+
+```bash
+node deploy/multitenant/native-lifecycle.js "$EVALUATOR_OPERATION_FILE" "$ADMIN_CONFIG_FILE" "$NEW_ADMIN_CONFIG_FILE"
+```
+
+The cutover checks the source identity, generation range, completed-row contract and evaluator ownership lock. It records the current lifecycle phase as pending work where the receipt advances. The evaluator retains responsibility for completing that work. An interrupted row migration rolls back. If private file staging fails after commit, repeat the command with a fresh output filename. Install the staged document with the existing provisioner's file ownership and permissions. Re-run platform pre-start verification before starting serving roles. Keep the paired image and provisioning document together on restart. A downgrade requires a coordinated pre-upgrade database and configuration restore.
+
+After restoring a tenant, require an authenticated reconnect that shows a restored reading and a new reading from the current generation. Until then, keep users on their primary display and alarms.
 
 The private command, intent and connection-budget contract are described in the [lifecycle operator binding](../../bindings/compose/multitenant/CONNECTION-BUDGET.md). The earlier cohort and `clear-operations` procedures below document the pinned historical rehearsal and apply only to that revision.
 
