@@ -59,8 +59,7 @@ function layout(prefix = 'nsdemo') {
   return {prefix,owner:prefix+'_owner',managementAuthorityOwner:prefix+'_management_authority',namespaces:Object.fromEntries(Object.keys(catalogues()).map(name=>[name,prefix+'_'+name])),
     roles:Object.fromEntries(names.map(name=>[name,prefix+'_'+name])),mount:prefix+'_transit'};
 }
-const { insertionGrants } = require('../../lib/server/ordinary-deployment-grants');
-function grants(layout,{nativeSelection}={}){return [...require('../../lib/server/ordinary-deployment-grants').grants(layout),...(nativeSelection?require('./native-lifecycle').grants(layout,nativeSelection):[])];}
+const { insertionGrants, grants } = require('../../lib/server/ordinary-deployment-grants');
 function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress,registryMode=true,realtimeOwnership=null}) {
   if(!registryMode)throw new TypeError('STATIC_PRODUCT_CONFIGURATION_RETIRED');
   const ns=l.namespaces, base='/run/ns-config',ipc='/run/ns-ipc';
