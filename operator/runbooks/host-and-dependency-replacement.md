@@ -70,3 +70,58 @@ as a loss of every volume on one machine (`drill-host-replacement.sh`). A differ
 different state path and public name changes are `UNMEASURED`.
 
 Drills: `drill-dependency-restart.sh api-death | vault-restart | postgres-restart | postgres-outage`, `drill-host-replacement.sh`.
+
+## Credential and Vault recovery on a selected streaming deployment
+
+Read the prepared source/image identity and selected static worker roster before
+using this section. Earlier rehearsals above keep their original source and
+scope. Same-ordinal platform replacement preserves each worker's ordinal and
+worker count. It does not authorize a spare worker, takeover by a different
+ordinal, or an uncoordinated change in worker count. A strict producer failure
+pauses later intake for every slice until the producer restarts and replays.
+Accepted work can finish during that pause. Measure the restart and replay on
+the actual deployment before claiming a recovery-time bound.
+
+The opt-in [Vault Agent recipe](../../bindings/compose/vault-agent/README.md)
+owns AppRole login and the token sink. A nonempty sink is a file observation;
+confirm an actual authorized Transit operation before declaring recovery. API
+requests that need keys may fail while Vault is sealed, unreachable, or the sink
+credential is missing, expired, or revoked. Tell affected users that current data
+may be unavailable, as described in [the recovery introduction](README.md).
+
+1. Confirm the exact project, source/image pair, Vault data volume and private
+   state directory. Inspect the dependency and role status without printing
+   tokens or key material. Do not initialize a replacement Vault in place of a
+   missing original volume.
+2. Restore private reachability and TLS verification first. Use the prepared CA
+   and expected hostname. Do not bypass a failed certificate chain or use a
+   different origin to make the operation succeed.
+3. If Vault is sealed, use its separately recorded unseal custody. Confirm that
+   the custodians can be reached during the declared outage. The synthetic lab
+   keeps one share in its private bootstrap file; a component test using that
+   share establishes no production custody or host-replacement guarantee.
+4. If the Agent was stopped, replace its consumed secret-id using the recipe's
+   explicit `secret-id` operation before starting it. A bounded serving token
+   does not imply a bounded machine login credential. Revocation and replacement
+   of the AppRole secret-id are separate operator actions.
+5. Confirm the Agent has produced a current token and the selected API can
+   perform its actual authorized key operation. An old token retained in an
+   environment or a file is not a fallback. Verify a healthy independent tenant,
+   current clinical data/history, pending work and due work. Re-check each
+   unfinished tenant operation before resuming a restore.
+6. Record the outage interval, which requests/effects were refused, recovered
+   accepted and completed positions, and the independent other-tenant oracle.
+   Do not call those elapsed observations an availability or data-loss bound
+   without the selected deployment's complete workload and storage evidence.
+
+The finite native component probe in
+[`operating-component.cjs`](../../bindings/compose/vault-agent/tests/operating-component.cjs)
+checks the committed Agent HCL and policy with real TLS, AppRole renewal and
+reauthentication, the production token-file reader and Transit HMAC/decrypt
+paths. It records wrong-CA, key-management, missing-sink, expiry, revocation,
+seal and transport controls with restored positives. This component proof does
+not run an API, identity provider, client binary or the selected Compose image.
+The actual deployment still needs public Host/alias/selector/header and
+WebSocket checks, private route refusal, its own CA chain, real identity/client
+journeys, populated backup/rollback and storage retention evidence. Missing
+external credentials or human custody leaves the affected criterion open.

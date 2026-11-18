@@ -145,3 +145,40 @@ and limitations live in alignment's
 `reports/tenancy/vault-agent-registry-2026-11-12/`. Runtime files in the final delivery
 are unchanged from the measured deployment commit above. Default/pilot activation
 and comprehensive joined-candidate acceptance remain separate coordinator work.
+
+## Small native operating component proof
+
+Before a complete selected deployment is available, run a finite isolated
+Vault/Agent proof with a clean core worktree and a fresh absolute output path:
+
+```bash
+node bindings/compose/vault-agent/tests/operating-component.cjs \
+  --core /absolute/owned/core \
+  --out /mnt/data/nightscout-workspace/artifacts/owned-lane/vault-component-01
+```
+
+The command uses the pinned locally available Vault image, creates two owned
+containers and one network, publishes only Vault on one explicit loopback port,
+and cleans only those exact recorded IDs. The server and Agent are nonroot with
+finite CPU/memory limits. The child proof has a 180-second limit. Output and
+synthetic private credentials remain in the explicitly selected private output
+root; preserve it as sensitive evidence and never commit its `private/` tree.
+The server's synthetic data uses retained storage so stop/start can exercise an
+actual sealed restart. It is not a backup restoration.
+
+`source.json` pins both Git heads, the image, Agent HCL, production token reader,
+Transit client and instrument hashes. `observations.json` retains completed
+observations even if a later assertion fails. `proof.json` exists only after
+all component assertions pass; `cleanup.json` separately records exact resource
+absence. A failed setup is not a semantic refusal control. The instrument refuses
+an existing output directory and never adopts a prepared deployment or its
+credentials. Keep all original failed captures.
+
+The probe uses actual CA verification, AppRole login, renewal/max-TTL re-login,
+production HMAC/decrypt operations, missing sink, expiry/revocation, seal/unseal,
+transport outage and recovery. It also verifies that the serving policy cannot
+read or manage keys. These are native **component** observations. API serving,
+external identity, actual client binaries, selected-image recovery timing,
+production unseal custody, populated backup restoration and capacity need their
+own selected-deployment evidence. See the
+[dependency recovery runbook](../../../operator/runbooks/host-and-dependency-replacement.md#credential-and-vault-recovery-on-a-selected-streaming-deployment).

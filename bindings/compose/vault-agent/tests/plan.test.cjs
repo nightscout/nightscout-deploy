@@ -4,7 +4,6 @@
 const test = require('node:test'), assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path'), os = require('node:os'), { execFileSync } = require('node:child_process');
 const launch = require('../launch');
 const repository = path.resolve(__dirname, '../../../..');
-const evaluatorCommit = '962fbdbe8617ed8abe63cad7039fde70f91fcbce';
 function fixture (apis, workers) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-plan-fixture-')), base = path.join(root, 'deploy/multitenant'), state = path.join(root, 'state');
   fs.mkdirSync(base, { recursive: true, mode: 0o700 }); fs.mkdirSync(state, { mode: 0o700 });
@@ -12,11 +11,14 @@ function fixture (apis, workers) {
   execFileSync('git', ['-C', root, '-c', 'user.name=synthetic-fixture', '-c', 'user.email=synthetic@example.invalid', 'commit', '--quiet', '--allow-empty', '-m', 'synthetic fixture']);
   const source = execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
   const deploy = execFileSync('git', ['-C', repository, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-  for (const name of ['replicas.js', 'realtime-workers.js']) fs.copyFileSync(path.resolve(__dirname, '../../multitenant', name), path.join(base, name));
-  // Explicit immutable interface, not an unfinished peer worktree.
-  fs.writeFileSync(path.join(base, 'evaluator-workers.js'), execFileSync('git', ['-C', repository, 'show', evaluatorCommit + ':bindings/compose/multitenant/evaluator-workers.js']));
+  for (const name of ['replicas.js', 'realtime-workers.js', 'evaluator-workers.js', 'static-ownership.js']) fs.copyFileSync(path.resolve(__dirname, '../../multitenant', name), path.join(base, name));
+  fs.mkdirSync(path.join(root, 'lib/pool-membership'), { recursive: true });
+  const core = process.env.NS_UI_TEST_CORE;
+  assert.ok(core && path.isAbsolute(core), 'NS_UI_TEST_CORE must name the selected core source');
+  fs.copyFileSync(path.join(core, 'lib/pool-membership/slice.js'), path.join(root, 'lib/pool-membership/slice.js'));
+  // Use the selected binding's matching immutable static worker interfaces.
   const selected = { NS_SOURCE_COMMIT: source, NS_DEPLOY_COMMIT: deploy, NS_DEMO_STATE: state, NS_API_REPLICAS: String(apis),
-    ...(workers ? { NS_REALTIME_WORKERS: '2', NS_REALTIME_SHARDS: '8', NS_EVALUATOR_WORKERS: '3' } : {}) };
+    ...(workers ? { NS_REALTIME_WORKERS: '2', NS_EVALUATOR_WORKERS: '2' } : {}) };
   fs.writeFileSync(path.join(base, '.env'), Object.entries(selected).map(([k, v]) => k + '=' + v).join('\n') + '\n', { mode: 0o600 });
   fs.writeFileSync(path.join(base, '.overlay.json'), JSON.stringify({ version: 1, deployRepository: repository, deployCommit: deploy }));
   fs.writeFileSync(path.join(base, 'compose.yaml'), 'services: {}\n');
@@ -31,7 +33,7 @@ for (const apis of [1, 2, 4]) test('pure plan includes every API and selected re
   try {
     const before = fs.readdirSync(f.state).sort(), result = launch.plan(f.root, { NS_VAULT_AGENT_PROJECT: 'synthetic-plan', NS_API_REPLICAS: '16' });
     assert.equal(result.apis.length, apis); assert.equal(result.files.length, 5); assert.equal((result.stdin.match(/:\/run\/ns-vault:ro/g) || []).length, apis);
-    assert.deepEqual(result.realtime, ['realtime', 'realtime-2', 'socket-edge']); assert.deepEqual(result.evaluators, ['evaluator', 'evaluator-2', 'evaluator-3']);
+    assert.deepEqual(result.realtime, ['realtime', 'realtime-2', 'socket-edge']); assert.deepEqual(result.evaluators, ['evaluator', 'evaluator-2']);
     assert.deepEqual(fs.readdirSync(f.state).sort(), before);
   } finally { f.close(); }
 });
@@ -39,12 +41,13 @@ test('default topology remains singular while missing selected overlays/changed 
   const plain = fixture(1, false);
   try { const result = launch.plan(plain.root, { NS_VAULT_AGENT_PROJECT: 'synthetic-plan' }); assert.deepEqual(result.realtime, ['realtime']); assert.deepEqual(result.evaluators, ['evaluator']); }
   finally { plain.close(); }
-  for (const problem of ['missing-evaluator', 'changed-realtime', 'symlink-replica', 'wrong-source']) {
+  for (const problem of ['missing-evaluator', 'changed-realtime', 'symlink-replica', 'wrong-source', 'retired-shards']) {
     const f = fixture(2, true);
     try {
       if (problem === 'missing-evaluator') fs.unlinkSync(path.join(f.state, 'compose.evaluator.yaml'));
       if (problem === 'changed-realtime') fs.appendFileSync(path.join(f.state, 'compose.realtime.yaml'), '# changed\n');
       if (problem === 'symlink-replica') { fs.renameSync(path.join(f.state, 'compose.replicas.yaml'), path.join(f.state, 'other.yaml')); fs.symlinkSync('other.yaml', path.join(f.state, 'compose.replicas.yaml')); }
+      if (problem === 'retired-shards') fs.appendFileSync(path.join(f.base, '.env'), 'NS_REALTIME_SHARDS=8\n');
       if (problem === 'wrong-source') fs.appendFileSync(path.join(f.base, '.env'), 'NS_SOURCE_COMMIT=' + 'a'.repeat(40) + '\n');
       assert.throws(() => launch.plan(f.root, { NS_VAULT_AGENT_PROJECT: 'synthetic-plan' }));
     } finally { f.close(); }
