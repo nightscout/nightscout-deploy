@@ -4,6 +4,7 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 const plan=require('../config'),binding=require('../native-lifecycle'),native=require('../../../lib/tenant-lifecycle/native-selection');
 function fixture(){const layout=plan.layout('nsnative'),urls=Object.fromEntries(Object.entries(layout.roles).map(([kind,role])=>[kind,'postgres://'+role+':synthetic@postgres:5432/nightscout_compose_test']));const docs=plan.documents({layout,urls,tokens:[],publicKeys:[],managementKeys:[],vaultAddress:'https://vault:8200',realtimeOwnership:require('../realtime-workers').initial(require('../realtime-workers').selection())});const source={system_id:'42',timeline:1,database:'nightscout_compose_test',slot:docs.configs.evaluator.pgstream.slot},selection=binding.select(layout,docs,source);binding.attach(docs,selection);return{layout,docs,selection,source};}
 function criterion(implementation=binding){const f=fixture(),sql=implementation.grants(f.layout,f.selection);for(const role of ['api','evaluator','realtime','owner_writer','owner_reader','outbox','suppression','display_reader','activity_reader','owner_credentials',...plan.serviceRoles.map(role=>'lifetime_'+role.replace('-','_'))])assert(sql.some(row=>row.includes('tenant_lifecycle_recommission')&&row.endsWith('TO "'+f.layout.roles[role]+'"')),'NATIVE_SELECTED_LINK_READ_REQUIRED');assert(sql.filter(row=>row.includes('pg_control_system')).every(row=>row.endsWith('TO "'+f.layout.roles.operator+'"')));return f;}
+function privateFixture(){const f=fixture(),bridge=require('../restore'),life=plan.lifecycle(f.layout),value={version:2,tenants:[plan.A,plan.B].map((id,i)=>({id,host:plan.tenantAlias(i),tokenEnv:'TOKEN_'+i})),apiOrigin:'http://api:1337',control:{namespace:f.layout.namespaces.control,locks:f.docs.locks,participants:f.docs.remote},...life,drainTimeoutMs:1000,nativeSelection:structuredClone(f.selection.binding)},env={TOKEN_0:'synthetic',TOKEN_1:'synthetic',NS_OPERATOR_PG:'postgres://operator:synthetic@postgres/nightscout_compose_test',NS_SOURCE_COMMIT:'a'.repeat(40)};return{bridge,value,env};}
 test('generated source and actual serving generation select exact native catalogue/grants, retaining default fixture catalogue',()=>{
  const f=criterion();assert.equal(f.selection.binding.generation,f.docs.configs.evaluator.pgstream.generation);assert.equal(f.selection.binding.source.slot,f.docs.configs.evaluator.pgstream.slot);
  assert.notEqual(f.selection.binding.generation,require('../pgstream').descriptor(f.layout).pgstream.generation);
@@ -18,7 +19,7 @@ test('generated source and actual serving generation select exact native catalog
  }finally{fs.rmSync(directory,{recursive:true,force:true});}
 });
 test('wrong private native raw shape/scope and old placement selector refuse before external effects',async()=>{
- const f=fixture(),bridge=require('../restore'),life=plan.lifecycle(f.layout),value={version:2,tenants:[plan.A,plan.B].map((id,i)=>({id,host:plan.tenantAlias(i),tokenEnv:'TOKEN_'+i})),apiOrigin:'http://api:1337',control:{namespace:f.layout.namespaces.control,locks:f.docs.locks,participants:f.docs.remote},...life,drainTimeoutMs:1000,nativeSelection:structuredClone(f.selection.binding)},env={TOKEN_0:'synthetic',TOKEN_1:'synthetic',NS_OPERATOR_PG:'postgres://operator:synthetic@postgres/nightscout_compose_test',NS_SOURCE_COMMIT:'a'.repeat(40)};
+ const {bridge,value,env}=privateFixture();
  const good=bridge.validateConfig(value,env);assert(native.isNative(good.nativeSelection));assert.doesNotThrow(()=>bridge.lifecycleFor(good));
  for(const mutate of [v=>{delete v.nativeSelection;},v=>{delete v.nativeSelection.source;},v=>{delete v.nativeSelection.generation;},v=>{v.nativeSelection.namespace='foreign_checkpoint';},v=>{v.nativeSelection.lifecycleNamespace='foreign_control';},v=>{v.nativeSelection.source.path='./foreign.js';},v=>{v.intakeProfile={};}]){const bad=structuredClone(value);mutate(bad);assert.throws(()=>bridge.validateConfig(bad,env),{code:'COMPOSE_OPERATOR_CONFIG_REFUSED'});}
  await assert.rejects(bridge.ready(good,{MULTITENANT_REALTIME_PLACEMENT:'/old/placement.json'}),{code:'COMPOSE_LEGACY_PLACEMENT_RETIRED'});
@@ -40,4 +41,11 @@ test('selected static replicas share source selection while retaining each real 
   }
   plan.validateFiles(directory,f.docs);assert.equal(ids.size,7);
  }finally{for(const name of names){if(saved[name]===undefined)delete process.env[name];else process.env[name]=saved[name];}fs.rmSync(directory,{recursive:true,force:true});}
+});
+
+test('missing native declaration ablation fails the actual private-parser refusal oracle, then restored parser passes',()=>{
+ const file=require.resolve('../restore'),source=fs.readFileSync(file,'utf8'),needle='value.version===2&&(value.nativeSelection===undefined||value.intakeProfile!==undefined) ||';assert.equal(source.split(needle).length,2);
+ const mutant=new Module(file,module);mutant.filename=file;mutant.paths=Module._nodeModulePaths(path.dirname(file));mutant._compile(source.replace(needle,''),file);
+ const oracle=implementation=>{const f=privateFixture();assert(native.isNative(implementation.validateConfig(f.value,f.env).nativeSelection));delete f.value.nativeSelection;assert.throws(()=>implementation.validateConfig(f.value,f.env),{code:'COMPOSE_OPERATOR_CONFIG_REFUSED'});};
+ assert.throws(()=>oracle(mutant.exports),/Missing expected exception/);oracle(require('../restore'));
 });
