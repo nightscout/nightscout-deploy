@@ -155,10 +155,8 @@ function main(env = process.env) {
       const server = app.listen(port, env.UI_HOSTNAME || '0.0.0.0');
       let closing;
       const close = () => closing || (closing = (async () => {
-        require('./connection-budget-runtime').beginQuiesce();
         await new Promise(resolve => server.close(resolve));
         await presentation?.close();
-        await require('./connection-budget-runtime').finalizeQuiescence(true);
       })());
       server.once('error', () => { presentation?.close().catch(() => {}); process.exitCode = 78; });
       for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => close().then(() => process.exit(0), () => process.exit(1)));
