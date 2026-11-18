@@ -149,7 +149,8 @@ async function bootstrap(options) {
       }
     }
     if(options.lifecycleOperator){const identity=await admin.query('SELECT current_database() AS database,(SELECT oid::text FROM pg_database WHERE datname=current_database()) AS "databaseOid",rolname AS role,oid::text AS "roleOid" FROM pg_roles WHERE rolname=$1',[l.roles.operator]);if(identity.rows.length!==1)throw fail('LIFECYCLE_OPERATOR_PRINCIPAL');options.lifecycleOperatorPrincipal=identity.rows[0];}
-    return require('./registry-bootstrap').finish({options,request,rootToken:initialization.root_token,layout:l,roleURLs,writePrivate,admin,adminURL:pg.toString(),nativeSource});
+    // Registry completion still issues queries through this client.
+    return await require('./registry-bootstrap').finish({options,request,rootToken:initialization.root_token,layout:l,roleURLs,writePrivate,admin,adminURL:pg.toString(),nativeSource});
   }finally{await admin.end();}
 }
 // Failure report: the stable code first (unchanged contract), then the underlying message and the
