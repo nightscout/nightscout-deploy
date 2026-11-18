@@ -832,7 +832,7 @@
     assert std.member(['standard', 'existing-capacity'], c.profile) : 'unknown profile';
     assert std.member(['dynamic', 'disposable', 'existing-claim'], c.storage.mode) : 'unknown storage mode';
     assert c.profile != 'existing-capacity' || (c.storage.mode != 'dynamic' && c.edge.serviceType == 'ClusterIP') : 'existing-capacity forbids dynamic storage and public Services';
-    assert c.tenantCount >= 1 && c.tenantCount <= 10000 : 'tenantCount out of source bounds';
+    assert std.isNumber(c.tenantCount) && c.tenantCount >= 1 : 'tenantCount must be positive';
     local ownership = { 'nightscout.org/run-id': c.runId };
     local identity = {
       'nightscout.org/source-commit': c.sourceCommit,
