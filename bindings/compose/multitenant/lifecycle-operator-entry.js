@@ -7,7 +7,7 @@ const need=(v,c)=>{if(!v)throw Object.assign(new Error(c),{code:c});};
 const digest=file=>require('node:crypto').createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const contexts=new WeakSet();
 function isContext(value){return contexts.has(value);}
-// Fence every new dispatch, including readiness/cohort SQL and cleanup rollback.
+// Fence every new dispatch, including readiness SQL and cleanup rollback.
 // An outstanding dispatch may settle late; that poisons the whole execution.
 function singlePool(pool,{check,late,verify}){
  let acquired=false;
@@ -58,7 +58,7 @@ async function execute({ticket,gate,action,config,env,admission,pg,clock=()=>pro
  const check=()=>{if(expired||clock()>=deadline){expired=true;throw Object.assign(Error('LIFECYCLE_OPERATOR_DEADLINE'),{code:'LIFECYCLE_OPERATOR_DEADLINE'});}};
  const timer=setTimeout(()=>{expired=true;},30000);timer.unref?.();
  const selected=admission.install(ticket,{onState(){},onQuiescent(value){check();proof=value;return onQuiescent?.(value);}});
- let pool,cohort,controller,result,error,clean=true;
+ let pool,controller,result,error,clean=true;
  try{
   check();
   const Pool=admission.wrapPool(pg.Pool,pg.Client,className);
@@ -81,16 +81,15 @@ async function execute({ticket,gate,action,config,env,admission,pg,clock=()=>pro
     await adapter.admittedRestore(config,loaded.artifact,context,env);check();
     result={tenant:request.tenant,digest:request.artifactDigest,state:'restored-and-active'};
    }else{
-    if(request.command!=='inspect')cohort=await adapter.recoveryCohort(config,env);check();
-    controller=adapter.recoveryController(config,cohort,context);
-    result=await (request.command==='inspect'?controller.inspect(request.tenant):request.command==='resume'?controller.resume(request.tenant,{claimId:request.claimId}):controller.clearOperations(request.tenant));check();
+    controller=adapter.recoveryController(config,context);
+    result=request.command==='inspect'?await controller.inspect(request.tenant):await controller.resume(request.tenant,{claimId:request.claimId});
+    check();
    }
   }
   check();
  }catch(cause){error=cause;if(expired||/OUTCOME_UNCERTAIN/.test(cause.code||''))uncertain=true;}
  finally{
   try{await controller?.close();}catch(cause){clean=false;error=error||cause;}
-  try{await cohort?.close();}catch(cause){clean=false;error=error||cause;}
   try{selected.beginQuiesce();await pool?.end();await selected.finalizeQuiescence(clean&&!uncertain&&!expired);}catch(cause){clean=false;error=error||cause;}
   clearTimeout(timer);
  }

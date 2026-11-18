@@ -102,7 +102,7 @@ function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress,
     realtime:{...common,...own('realtime'),REALTIME_HOSTNAME:'0.0.0.0',REALTIME_PORT:'1339',MULTITENANT_REALTIME_CONFIG:base+'/config.json',NS_ADMISSION_FILE:base+'/admission.json',NS_REALTIME_PG:urls.realtime},
     evaluator:{...common,...own('evaluator'),MULTITENANT_EVALUATOR_CONFIG:base+'/config.json',NS_EVALUATOR_PG:urls.evaluator,NS_OUTBOX_PG:urls.outbox,NS_SUPPRESSION_PG:urls.suppression},
     'tenant-admin':{...common,...own('tenant-admin'),TENANT_ADMIN_HOSTNAME:'0.0.0.0',TENANT_ADMIN_PORT:'1341',MULTITENANT_OWNER_PREVIEW_CONFIG:base+'/config.json',NS_OWNER_WRITER_PG:urls.owner_writer,NS_OWNER_READER_PG:urls.owner_reader}};
-  const protectedNamespaces=require('../../lib/server/serve/operation-cohort').protectedNamespaces;
+  const protectedNamespaces=require('../../lib/server/serve/role-topology').protectedNamespaces;
   const participants=serviceRoles.map(role=>({id:role,roles:[role],namespaces:[...new Set([...protectedNamespaces(configs[role]),...(role==='api'?[ns.outbox]:[])])].sort(),maxMessageBytes:1048576,timeoutMs:5000}));
   const locks=ids.map((tenant,i)=>({tenant,key:String(810001+i)})),operations={};
   for(const role of serviceRoles){operations[role]={version:2,namespace:ns.control,connectionEnv:'NS_LIFETIME_PG',locks,participantId:role,participants};Object.assign(environments[role],{NS_LIFETIME_PG:urls['lifetime_'+role.replace('-','_')],MULTITENANT_OPERATION_CONFIG:base+'/operation.json'});}
@@ -136,7 +136,7 @@ function validateFiles(directory, docs) {
   }
   const parsers={api:require('../../lib/server/serve/preview-config').load,realtime:require('../../lib/server/realtime/config').load,
     evaluator:require('../../lib/server/serve/evaluator-config').load,'tenant-admin':require('../../lib/server/serve/owner-preview-config').load};
-  const namespaces=require('../../lib/server/serve/operation-cohort').protectedNamespaces;
+  const namespaces=require('../../lib/server/serve/role-topology').protectedNamespaces;
   for(const role of Object.keys(docs.configs)){
     const productRole = role.startsWith('api-') ? 'api' : role.startsWith('realtime-') ? 'realtime' : role.startsWith('evaluator-') ? 'evaluator' : role;
     const env=Object.fromEntries(Object.entries(docs.environments[role]).map(([key,value])=>[key,typeof value==='string'?value.replace('/run/ns-config',path.join(directory,role)):value]));

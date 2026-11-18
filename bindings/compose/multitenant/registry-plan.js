@@ -55,7 +55,7 @@ function expand(docs, { layout, urls, vaultAddress }) {
   }
   require('./pgstream').configure(docs,layout);
   // Recompute manifest coverage from the selected product configuration.
-  const protectedNamespaces = require('../../lib/server/serve/operation-cohort').protectedNamespaces;
+  const protectedNamespaces = require('../../lib/server/serve/role-topology').protectedNamespaces;
   const participants = Object.entries(docs.configs).map(([role, config]) => ({ id: role, roles: [role],
     namespaces: [...new Set([...protectedNamespaces(config), ...(role === 'api' ? [ns.outbox] : [])])].filter(name => name !== ns.control).sort(), maxMessageBytes: 1048576, timeoutMs: 10000 }));
   for (const value of Object.values(docs.operations)) value.participants = participants;

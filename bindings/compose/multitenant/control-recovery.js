@@ -15,7 +15,7 @@ function intent(className,value){
  else {
   const extras=value?.command==='resume'?['claimId']:value?.command==='restore'?['artifactDigest']:[];
   const uuid=v=>typeof v==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(v)&&v!=='00000000-0000-0000-0000-000000000000';
-  need(exact(value,['version','command','tenant',...extras])&&value.version===2&&['inspect','resume','clear-operations','capture','restore'].includes(value.command)&&uuid(value.tenant)&&(value.command!=='resume'||uuid(value.claimId))&&(value.command!=='restore'||typeof value.artifactDigest==='string'&&matches(HEX64,value.artifactDigest)),'CONTROL_RECOVERY_INTENT');
+  need(exact(value,['version','command','tenant',...extras])&&value.version===2&&['inspect','resume','capture','restore'].includes(value.command)&&uuid(value.tenant)&&(value.command!=='resume'||uuid(value.claimId))&&(value.command!=='restore'||typeof value.artifactDigest==='string'&&matches(HEX64,value.artifactDigest)),'CONTROL_RECOVERY_INTENT');
  }
  return structuredClone(value);
 }

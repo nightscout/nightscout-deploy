@@ -1,6 +1,6 @@
 'use strict';
-// Private operator consumer. Audit and decrypt finish before cohort suspension;
-// their private SQL pools close before the maintenance census. The callback can
+// Private operator consumer. Audit and decrypt finish before tenant suspension;
+// their private SQL pools close before maintenance begins. The callback can
 // only consume the exact immutable root reference captured before suspension.
 const crypto=require('node:crypto');
 const need=(v)=>{if(!v)throw Error('LOCAL_AUTH_PREPARATION_INPUT');};
@@ -22,15 +22,16 @@ async function prepare(config,tenant,{rotateSigningKey=false}={},env=process.env
   const component=require('../../lib/secrets/component').createSecrets({...persistence,providerFor:async t=>{need(t===tenant);return provider;},authorize:async(actor,action)=>actor.tenant===tenant&&actor.principal==='compose-operator'&&actor.consumer==='local-auth-maintenance'&&action.operation==='decrypt'&&action.id===reference});
   root=await component.decrypt({tenant,principal:'compose-operator',consumer:'local-auth-maintenance'},{tenant,id:reference});
  }catch(error){if(Buffer.isBuffer(root))root.fill(0);throw error;}finally{try{await persistence.close();}catch(error){if(Buffer.isBuffer(root))root.fill(0);throw error;}}
- let cohort,controller,pool;
+ let controller,pool;
+
  try{
-  cohort=await require('../../lib/server/serve/operation-cohort').createRemote({namespace:config.control.namespace,tenants:config.control.registry?['registry:'+config.control.registry.namespace]:config.tenants.map(t=>t.id),participants:config.control.participants,placement:env.MULTITENANT_REALTIME_PLACEMENT?require('../../lib/realtime-placement').load(env,{internal:require('../../lib/server/internal-api/listener-config').observer(env)}):null});
   pool=new(require('pg').Pool)({connectionString:env.NS_OPERATOR_PG,max:1,connectionTimeoutMillis:5000,statement_timeout:10000,options:'-c search_path=pg_catalog'});
-  controller=require('../../lib/tenant-lifecycle/maintenance-window').create({namespace:config.control.namespace,locks:config.control.locks,pool,cohort,drainTimeoutMs:config.drainTimeoutMs,...(config.intakeProfile?{intakeProfile:config.intakeProfile}:{})});
+  const selection=config.nativeSelection||config.intakeProfile?require('./restore').selectionOptions(require('./restore').validateRecoveryConfig(config,env)):{};
+  controller=require('../../lib/tenant-lifecycle/maintenance-window').create({namespace:config.control.namespace,locks:config.control.locks,pool,drainTimeoutMs:config.drainTimeoutMs,...selection});
   const work=require('../../lib/secrets/prepare-local-auth').withMaintenance({controller,namespace:legacy,readRoot:async value=>{need(value.tenant===tenant&&value.id===reference&&Buffer.isBuffer(root));return root;}});
   const artifactDigest=crypto.createHash('sha256').update(JSON.stringify(['local-auth-preparation-v1',tenant,reference,rotateSigningKey])).digest('hex');
   return await work(tenant,{artifactDigest,rotateSigningKey});
- }finally{if(Buffer.isBuffer(root))root.fill(0);try{if(controller)await controller.close();}finally{try{if(cohort)await cohort.close();}finally{if(pool)await pool.end();}}}
+ }finally{if(Buffer.isBuffer(root))root.fill(0);try{if(controller)await controller.close();}finally{if(pool)await pool.end();}}
 }
 module.exports={prepare};
 if(require.main===module){require('./load-env');const fs=require('node:fs');Promise.resolve().then(()=>{const [tenant,selection]=process.argv.slice(2);need(process.argv.length<=4&&[undefined,'--rotate'].includes(selection));const file=process.env.NS_OPERATOR_CONFIG||'/run/ns-config/config.json',stat=fs.lstatSync(file);need(stat.isFile()&&!stat.isSymbolicLink()&&stat.size<4194304&&!(stat.mode&0o077));return prepare(JSON.parse(fs.readFileSync(file,'utf8')),tenant,{rotateSigningKey:selection==='--rotate'});}).then(()=>console.log(JSON.stringify({prepared:true}))).catch(()=>{console.error('LOCAL_AUTH_PREPARATION_REFUSED');process.exitCode=1;});}

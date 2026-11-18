@@ -60,8 +60,8 @@ async function finish({ options, request, rootToken, layout, roleURLs, writePriv
   const lifecycle = plan.lifecycle(l);
   writePrivate(path.join(output, 'ops', 'config.json'), { version: nativeSelection?2:1, drainTimeoutMs: 10000,
     tenants: ids.map((id, i) => ({ id, host: plan.tenantAlias(i), tokenEnv: i === 0 ? 'NS_DEMO_TOKEN_A' : i === 1 ? 'NS_DEMO_TOKEN_B' : 'NS_DEMO_TOKEN_' + i })),
-    ...(nativeSelection?{nativeSelection:structuredClone(nativeSelection.binding)}:{}),
-    apiOrigin: docs.apiOrigin || 'http://api:1337', control: { namespace: l.namespaces.control, registry: { namespace: l.namespaces.registry }, locks: docs.locks, participants: docs.remote }, ...lifecycle }, own);
+    ...(nativeSelection?{nativeSelection:structuredClone(nativeSelection.binding),evaluatorProof:require('./operator-selection').inputs(docs,nativeSelection)}:{}),
+    apiOrigin: docs.apiOrigin || 'http://api:1337', control: { namespace: l.namespaces.control, registry: { namespace: l.namespaces.registry }, locks: docs.locks }, ...lifecycle }, own);
   writePrivate(path.join(output, 'ops', 'env.json'), { NS_OPERATOR_PG: roleURLs.operator, NS_AUTH_AUDIT_PG:roleURLs.api, NS_SOURCE_COMMIT: sourceCommit,
      }, own);
   writeToken(path.join(output,'ops','vault-token'), servingToken);

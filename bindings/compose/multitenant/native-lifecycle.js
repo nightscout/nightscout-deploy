@@ -35,5 +35,9 @@ async function install({admin,adminURL,layout,selection}){
  // new source-owned link is created here; do not adopt other schemas/objects.
  await admin.query('ALTER TABLE '+quote(namespace)+'.tenant_lifecycle_recommission OWNER TO '+quote(layout.owner));
  for(const sql of grants(layout,selection))await admin.query(sql);
+ const proof=quote(layout.prefix+'_platform_verification'),operator=quote(layout.roles.operator);
+ await admin.query('GRANT USAGE ON SCHEMA '+proof+' TO '+operator);
+ await admin.query('GRANT SELECT (role,status,epoch,contract_digest,database_oid,database_name,role_oid,role_name) ON '+proof+'.verified_role TO '+operator);
+ await admin.query('GRANT SELECT (singleton,epoch,operation_status) ON '+proof+'.verification_control TO '+operator);
 }
 module.exports={source,select,attach,grants,install};

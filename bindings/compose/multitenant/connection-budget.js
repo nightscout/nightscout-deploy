@@ -42,6 +42,7 @@ const SOURCE = {
   'nightscout-ui-registry': 'bindings/compose/multitenant/ui-registry.js',
   'migration-direct': 'lib/migrations/postgres.js',
   'settings-readiness': 'lib/tenant-settings/readiness.js',
+  'datastore-probe': 'lib/server/serve/datastore-probe.js',
   'snapshot-export': 'lib/server/serve/evaluator-preview.js',
   'snapshot-lock': 'lib/server/serve/evaluator-preview.js',
   'clinical-readiness': 'lib/server/serve/evaluator-readiness.js',
@@ -108,10 +109,10 @@ function describe(docs, poolConfig) {
       direct('admin-readiness'); direct('migration-direct');
     } else if (role === 'ui' || role === 'socket-edge') pool('nightscout-ui-registry', 2);
     else throw fail('CONNECTION_PLAN_ROLE_UNKNOWN');
-    if (operation) {
-      need(integer(operation.leaseSessions, 1, poolConfig.pool('operation', env).max), 'CONNECTION_PLAN_LIFETIME_UNKNOWN');
-      pool('nightscout-operation-lifetime', poolConfig.pool('operation', env).max, operation.leaseSessions);
-    }
+    if (['api', 'evaluator', 'realtime', 'tenant-admin'].includes(role)) direct('datastore-probe');
+    // The generation reader returns each checkout before the tenant callback.
+    // Keep the provisioned control-pool name for existing explicit profiles.
+    if (operation) pool('nightscout-operation-lifetime', poolConfig.pool('operation', env).max);
     return { processInstanceId: name, roles: [role], capabilities, startupConcurrency: poolConfig.startupConcurrency(env) };
   });
 }

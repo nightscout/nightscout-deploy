@@ -6,7 +6,7 @@ const need=(v,c)=>{if(!v)throw Object.assign(new Error(c),{code:c});};
 const exact=(v,keys)=>v&&typeof v==='object'&&!Array.isArray(v)&&equal(Object.keys(v).sort(),[...keys].sort());
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const NAME='lifecycle-operator';
-function intent(v){need(exact(v,['version','command','tenant',...(v?.command==='resume'?['claimId']:[])])&&v.version===1&&['inspect','resume','clear-operations'].includes(v.command)&&UUID.test(v.tenant)&&v.tenant!=='00000000-0000-0000-0000-000000000000'&&(v.command!=='resume'||UUID.test(v.claimId)),'LIFECYCLE_OPERATOR_INTENT');return structuredClone(v);}
+function intent(v){need(exact(v,['version','command','tenant',...(v?.command==='resume'?['claimId']:[])])&&v.version===1&&['inspect','resume'].includes(v.command)&&UUID.test(v.tenant)&&v.tenant!=='00000000-0000-0000-0000-000000000000'&&(v.command!=='resume'||UUID.test(v.claimId)),'LIFECYCLE_OPERATOR_INTENT');return structuredClone(v);}
 function tag(incarnation){return 'nscb:'+incarnation+':'+crypto.createHash('sha256').update(NAME).digest('hex').slice(0,16);}
 function enabled(plan){return plan.lifecycleOperator?.version===1;}
 function validate(plan,book){
