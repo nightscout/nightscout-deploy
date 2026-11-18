@@ -33,7 +33,11 @@ function project(root) {
   const operatorFile = path.join(root, 'ops/config.json');
   if (fs.existsSync(operatorFile)) {
     const config = read('ops/config.json');
-    need(config.control?.participants?.length === ROLES.length);
+    need(config.control && typeof config.control === 'object' && !Array.isArray(config.control));
+    // The source registry operator has no participant addresses. Preserve it
+    // byte-for-byte; project a participant manifest only when source supplied one.
+    if (!Object.hasOwn(config.control, 'participants')) return;
+    need(Array.isArray(config.control.participants) && config.control.participants.length === ROLES.length);
     for (const participant of config.control.participants) {
       need(ROLES.includes(participant.id) && participant.roles?.length === 1 && participant.roles[0] === participant.id);
       const { maxBytes, timeoutMs } = participant.endpoint;

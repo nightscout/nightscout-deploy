@@ -177,9 +177,14 @@ async function main() {
   const timer = setInterval(() => { if (fs.existsSync(path.join(root, '.exported'))) clearInterval(timer); }, 1000);
 }
 
+function refusalCode(error) {
+  const code = error?.code || '';
+  return code === 'K8S_NETWORK_DOCUMENT_CHANGED' || /^(K8S_CANDIDATE_|PLATFORM_VERIFICATION_)[A-Z0-9_]+$/.test(code)
+    ? code : 'K8S_CANDIDATE_DOCUMENT_REFUSED';
+}
+
 if (require.main === module) main().catch(error => {
-  const code = error.code || '';
-  console.error(/^(K8S_CANDIDATE_|PLATFORM_VERIFICATION_)[A-Z0-9_]+$/.test(code) ? code : 'K8S_CANDIDATE_DOCUMENT_REFUSED');
+  console.error(refusalCode(error));
   process.exitCode = 1;
 });
-module.exports = { bootstrapProof, checkVerification, fixture };
+module.exports = { bootstrapProof, checkVerification, fixture, refusalCode };
