@@ -58,11 +58,16 @@ test('actual tiny native generated provisioning, export, logical restore and pri
    const status=request=>({version:4,ownership:peer.roles.includes('realtime')?{count:peer.slice?.count||1,ordinal:peer.slice?.ordinal||0,rule:require('../../../lib/pool-membership/slice').RULE}:null,participant:peer.id,incarnation,namespace:ns.control,roles:peer.roles,tenants:['registry:'+ns.registry],namespaces:peer.namespaces,identity,intakeProfileDigest:currentDigest,datastore:datastore.identity(row),backends:[{pid:row.pid,role:row.role,birth:row.birth}],request});
    peers.push(await transport.open(peer.endpoint,contract,()=>({getStatus:async(_ctx,body)=>status(body.request),getApiHealth:async(_ctx,body)=>({request:body.request,ready:true,storageReady:true}),invalidateTenant:async(_ctx,body)=>({...status(body.request),tenant:body.tenant}),getOperations:async(_ctx,body)=>({request:body.request,tenant:body.tenant,participant:peer.id,incarnation,operations:[]})})));
   }
+  // The bootstrap DBA must be gone before the genuine participant census.
+  // Later fixture edits own short-lived backends that close before restore.
+  await admin.end();
+  const withAdmin=async fn=>{const client=new Client({connectionString:adminURI});await client.connect();try{return await fn(client);}finally{await client.end();}};
+  admin={query:(sql,values)=>withAdmin(client=>client.query(sql,values)),end:async()=>{}};
   config=bridge.validateConfig(raw,env);
   const rows=async(tenant)=>{const result={};for(const entry of raw.catalogues)for(const name of entry.tables)result[entry.kind+'.'+name]=require('../../../lib/tenant-lifecycle/artifact').digestRows((await admin.query('SELECT * FROM '+q(raw.namespaces[entry.kind])+'.'+q(name)+' WHERE tenant_id=$1',[tenant])).rows);return result;};
   const beforeB=await rows(plan.B),queues=async()=>{const result={};for(const name of ['tenant_notification_heads','tenant_notification_requests','tenant_notification_state'])result[name]=require('../../../lib/tenant-lifecycle/artifact').digestRows((await admin.query('SELECT * FROM '+table('outbox',name)+' WHERE tenant_id=$1',[plan.A])).rows);return result;},queueBefore=await queues();
   const artifact=await bridge.capture(config,plan.A,env);
-  const mutate=async()=>{await admin.query('BEGIN');try{await admin.query("SELECT set_config('app.current_tenant_id',$1,true)",[plan.A]);await admin.query('UPDATE '+table('entries','entries')+" SET doc=jsonb_set(doc,'{value}','99'::jsonb) WHERE tenant_id=$1",[plan.A]);await admin.query('COMMIT');}catch(e){await admin.query('ROLLBACK');throw e;}};
+  const mutate=async()=>withAdmin(async client=>{await client.query('BEGIN');try{await client.query("SELECT set_config('app.current_tenant_id',$1,true)",[plan.A]);await client.query('UPDATE '+table('entries','entries')+" SET doc=jsonb_set(doc,'{value}','99'::jsonb) WHERE tenant_id=$1",[plan.A]);await client.query('COMMIT');}catch(e){await client.query('ROLLBACK');throw e;}});
   await mutate();const restored=await bridge.restore(config,artifact,env);assert.equal(restored.result.tables,7);assert.deepEqual(await queues(),queueBefore);assert.deepEqual(await rows(plan.B),beforeB);
   const beforeA=await rows(plan.A);
   for(const change of [v=>{v.nativeSelection.generation='foreign-generation';},v=>{v.nativeSelection.source.system_id+='1';}]){const bad=structuredClone(raw);change(bad);const parsed=bridge.validateConfig(bad,env);await assert.rejects(bridge.capture(parsed,plan.A,env),{code:'RESTORE_COHORT_INTAKE_PROFILE_MISMATCH'});assert.deepEqual(await rows(plan.A),beforeA);}
