@@ -19,6 +19,10 @@ function attach(docs,selection){
   if(operation.intakeProfile!==undefined||operation.namespace!==selection.binding.lifecycleNamespace)throw fail();
   operation.nativeSelection=structuredClone(selection.binding);
  }
+ const {namespace,consumer}=selection.binding;
+ const rows=docs.admin.config.provisioning.checkpoints.filter(r=>r.namespace===namespace&&r.consumer===consumer+'-completed');
+ if(rows.length!==1)throw fail();
+ rows[0].digest=selection.contractDigest;
  return docs;
 }
 function grants(layout,selection){
@@ -30,7 +34,7 @@ function grants(layout,selection){
 async function install({admin,adminURL,layout,selection}){
  const namespace=layout.namespaces.control,quote=require('./config').quote;
  native.bind(selection,namespace);
- await require('../../lib/migrations/postgres').run('up',{direct:true,connectionString:adminURL,namespace,catalogue:native.catalogue(selection),statementTimeoutMs:10000});
+ await upgradeReceipts({admin,adminURL,selection});
  // The baseline objects already have the immutable application owner. Only the
  // new source-owned link is created here; do not adopt other schemas/objects.
  await admin.query('ALTER TABLE '+quote(namespace)+'.tenant_lifecycle_recommission OWNER TO '+quote(layout.owner));
@@ -40,4 +44,20 @@ async function install({admin,adminURL,layout,selection}){
  await admin.query('GRANT SELECT (role,status,epoch,contract_digest,database_oid,database_name,role_oid,role_name) ON '+proof+'.verified_role TO '+operator);
  await admin.query('GRANT SELECT (singleton,epoch,operation_status) ON '+proof+'.verification_control TO '+operator);
 }
-module.exports={source,select,attach,grants,install};
+async function upgradeReceipts({admin,adminURL,selection}){
+ const namespace=native.validate(selection).binding.lifecycleNamespace;
+ await require('../../lib/migrations/postgres').run('up',{direct:true,connectionString:adminURL,namespace,catalogue:native.catalogue(selection),statementTimeoutMs:10000});
+ return require('../../lib/pgstream/native-receipt-cutover').upgrade(admin,selection);
+}
+module.exports={source,select,attach,grants,install,upgradeReceipts};
+if(require.main===module){
+ (async()=>{
+  if(process.argv.length!==3||!process.env.NS_RECEIPT_ADMIN_PG)throw fail();
+  const operation=JSON.parse(require('node:fs').readFileSync(process.argv[2],'utf8'));
+  if(operation.intakeProfile!==undefined||operation.namespace!==operation.nativeSelection?.lifecycleNamespace)throw fail();
+  const selection=native.create(operation.nativeSelection),adminURL=process.env.NS_RECEIPT_ADMIN_PG;
+  const client=new (require('pg').Client)({connectionString:adminURL});
+  try{await client.connect();const changed=await upgradeReceipts({admin:client,adminURL,selection});console.log('Native receipt rows upgraded',changed);}
+  finally{await client.end();}
+ })().catch(error=>{console.error(/^[A-Z0-9_]+$/.test(error.message)?error.message:'NATIVE_RECEIPT_UPGRADE_REFUSED');process.exitCode=1;});
+}
