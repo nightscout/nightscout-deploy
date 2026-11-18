@@ -34,6 +34,8 @@ are in the alignment workspace's `releases/cgm-remote-monitor-16.0.0/decisions.m
 | `lib/ns/nightscout.libsonnet` | the renderer: one function, `new(overrides)` |
 | `environments/preview/` | the preview environment: one cohort, one evaluator member, core `0392acf9` |
 | `ops/vault-kubernetes-auth.js` | provisioning step: the Compose Vault Agent step with Kubernetes auth in place of AppRole |
+| `ops/fit-check.js` | pre-Namespace fit check from recorded node and Pod lists; refuses with `K8S_FIT_REFUSED`, never evicts or creates |
+| `ops/image-ledger.js` | once-per-candidate image publication and cache-warm ledger: plan, record digest, verify warm, resolve; never pushes |
 | `scripts/secrets.sh` | creates every Secret the render references, at apply time; nothing is committed |
 | `check/invariants.js` | the rendered-YAML invariants (offline, `tk eval`) |
 | `check/controls.js` | one or more break-it controls per invariant, in a scratch copy |
@@ -222,3 +224,44 @@ in each row:
 | one cohort Pod, a monolith that scales vertically only ([decision cohort-pod-not-scaled](https://github.com/bewest/rag-nightscout-ecosystem-alignment/blob/main/releases/cgm-remote-monitor-16.0.0/decisions.md#cohort-pod-not-scaled)) | StatefulSet replicas exactly 1: the renderer refuses any other count and invariant `cohort-single-replica` fails on a rendered 2. Core does not refuse a second cohort (smoke: a second Pod served), so the rule is the binding's. Horizontal scale or HA is per-role placement, never alongside the cohort on one database | rendered; control red as expected |
 | update without overlap | `OrderedReady`, delete-before-create | smoked once: `rollout restart` deleted `cohort-0` at 03:51:52Z and created the new one at 03:51:53Z |
 | evaluator worker index | `MULTITENANT_POOL_EVALUATOR_ORDINAL` from the pod-index label when the partition is on; nothing when off | rendered; preview off |
+
+## Fit check and candidate image ledger
+
+Both commands read files only: recorded Kubernetes API list responses, a
+registry manifest read back after publication, a recorded Pod status. Neither
+calls a cluster or registry.
+
+**Fit check.** Run before the run creates its Namespace:
+
+```bash
+node bindings/kubernetes/ops/fit-check.js --request request.json \
+  --nodes nodes.json --pods pods.json --node <reserved worker> [--usage usage.json] [--out fit.json]
+```
+
+`request.json` is the run's requested `{"cpu": "...", "memory": "..."}`.
+`nodes.json` and `pods.json` are `kubectl get nodes|pods -A -o json` output.
+The command counts the effective requests of the worker's non-terminated Pods
+and keeps the existing protected reserve: CPU `max(0.25, 15%)` and memory
+`max(512Mi, 20%)` of allocatable. A dimension fits when
+`max(peer requests, observed usage) + request + reserve <= allocatable`. The
+command prints every effective number. It exits 0 when the run fits, 2 with
+`K8S_FIT_REFUSED` when it does not, and 1 on invalid input.
+
+**Candidate image ledger.** Publication and cache warm happen once per
+candidate source pair (core commit, deploy commit); later runs reference the
+recorded digest.
+
+```bash
+node bindings/kubernetes/ops/image-ledger.js plan    --ledger L --core SHA --deploy SHA --image-id sha256:ID --repository REPO
+node bindings/kubernetes/ops/image-ledger.js record  --ledger L --core SHA --deploy SHA --image-id sha256:ID --repository REPO --manifest manifest.json
+node bindings/kubernetes/ops/image-ledger.js warm    --ledger L --core SHA --deploy SHA --pod warm-pod.json
+node bindings/kubernetes/ops/image-ledger.js resolve --ledger L --core SHA --deploy SHA
+```
+
+`plan` prints `{"action":"publish","tag":...}` or `{"action":"none","reference":...}`.
+The operator performs the push. `record` accepts only a single-platform schema 2
+manifest whose config digest is the local image ID, and records
+`REPOSITORY@sha256:<digest of the exact manifest bytes>`. A second, different
+publication for the same pair is refused. `warm` records a worker only when the
+Pod status shows that digest pulled and running or completed. `resolve` prints
+the entry or exits 1 with `IMAGE_LEDGER_NOT_PUBLISHED`.
