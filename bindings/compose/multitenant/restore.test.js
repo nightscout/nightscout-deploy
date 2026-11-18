@@ -4,7 +4,7 @@
 // restore verdict: these prove that the demonstration refuses false witnesses.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { validateConfig, argumentsFor, cohortTenants } = require('./restore');
+const { validateConfig, argumentsFor } = require('./restore');
 const { runDemo, request } = require('./demo');
 const A = '11111111-1111-4111-8111-111111111111', B = '22222222-2222-4222-8222-222222222222';
 const env = { A_TOKEN: 'private-a-token', B_TOKEN: 'private-b-token', NS_OPERATOR_PG: 'postgres://operator:private-password@postgres/demo',
@@ -53,7 +53,7 @@ function scenario (control) {
     else if (options.method === 'PATCH') table.set(id, { ...table.get(id), ...options.body, srvModified: ++stamp });
     return { status: 200, result: structuredClone(table.get(id)) };
   };
-  return { config: c, env, call, ready: async () => {}, now: () => stamp,
+  return { config: c, env, call, now: () => stamp,
     uuid: () => '00000000-0000-4000-8000-' + String(++count).padStart(12, '0'),
     capture: async () => { snapshot = structuredClone(rows.get(A)); return { digest: 'a'.repeat(64), manifest: { tenant: A } }; }, save: async () => {},
     restore: async (unused, artifact, unusedEnv, hooks) => {
@@ -75,19 +75,11 @@ test('demo ordinary protocol passes; missing A restoration, deletion, B progress
   assert.equal((await runDemo(scenario())).state, 'passed');
 });
 
-test('missing cohort refuses before the first demo mutation', async () => {
-  let called = false;
-  const input = scenario();
-  input.ready = async () => { throw Object.assign(new Error('missing peer'), {code: 'RESTORE_COHORT_INCOMPLETE'}); };
-  input.call = async () => { called = true; throw new Error('unexpected request'); };
-  await assert.rejects(runDemo(input), {code: 'RESTORE_COHORT_INCOMPLETE'});
-  assert.equal(called, false);
-});
-
-test('registry operator cohort uses one exact typed namespace label while static compatibility stays explicit',()=>{
-  assert.deepEqual(cohortTenants(validateConfig(config(),env)),[A,B]);
-  const registry=config();registry.control.registry={namespace:'synthetic_registry'};
-  assert.deepEqual(cohortTenants(validateConfig(registry,env)),['registry:synthetic_registry']);
+test('static and registry operators can start without a participant manifest',()=>{
+  const registry=config();delete registry.control.participants;
+  assert.deepEqual(validateConfig(registry,env).control.locks,registry.control.locks);
+  registry.control.registry={namespace:'synthetic_registry'};
+  assert.deepEqual(validateConfig(registry,env).control.registry,registry.control.registry);
   for(const value of [{namespace:'public'},{namespace:'pg_catalog'},{namespace:'information_schema'},{namespace:'synthetic_registry',tenants:[A]},{namespace:'registry:synthetic_registry'}]){
     registry.control.registry=value;assert.throws(()=>validateConfig(registry,env),{code:'COMPOSE_OPERATOR_CONFIG_REFUSED'});
   }

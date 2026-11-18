@@ -52,3 +52,16 @@ test('removing dispatch deadline fails no-late-COMMIT oracle, restored refuses b
 });
 
 test('removing single-connect guard fails no-replacement oracle; restored refuses',async()=>{const mutant=mutatedModule('../lifecycle-operator-entry',s=>s.replace("need(!acquired,'LIFECYCLE_OPERATOR_SECOND_CONNECT');",''));async function oracle(entry){let n=0;const client={query(){},release(){}};const p=entry.singlePool({async connect(){n++;return client;}},{check(){},late(){},async verify(){}});await p.connect();await assert.rejects(p.connect(),/SECOND_CONNECT/);assert.equal(n,1);}await assert.rejects(oracle(mutant),/Missing expected rejection/);await oracle(E);});
+
+test('reads a retained clearance lease while refusing new clearance work',()=>{
+ const f=fixture();
+ try {
+  const book=f.book(),legacy={...f.request,command:'clear-operations'};
+  O.allocate(f.plan,book,f.request);
+  const row=book.controlLeases[0];
+  row.intent=legacy;row.intentSha256=B.hash(legacy);
+  assert.equal(O.validate(f.plan,book),book);
+  assert.throws(()=>O.allocate(f.plan,book,legacy),/LIFECYCLE_OPERATOR_INTENT/);
+  assert.equal(book.controlLeases.length,1);
+ } finally {f.cleanup();}
+});

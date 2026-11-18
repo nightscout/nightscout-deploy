@@ -6,7 +6,14 @@ const need=(v,c)=>{if(!v)throw Object.assign(new Error(c),{code:c});};
 const exact=(v,keys)=>v&&typeof v==='object'&&!Array.isArray(v)&&equal(Object.keys(v).sort(),[...keys].sort());
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const NAME='lifecycle-operator';
-function intent(v){need(exact(v,['version','command','tenant',...(v?.command==='resume'?['claimId']:[])])&&v.version===1&&['inspect','resume'].includes(v.command)&&UUID.test(v.tenant)&&v.tenant!=='00000000-0000-0000-0000-000000000000'&&(v.command!=='resume'||UUID.test(v.claimId)),'LIFECYCLE_OPERATOR_INTENT');return structuredClone(v);}
+// Old ledgers retain completed or unresolved clearance attempts. They still
+// consume the credit recorded at issue, although new clearance is retired.
+function parseIntent(v, historical){
+ const commands=historical?['inspect','resume','clear-operations']:['inspect','resume'];
+ need(exact(v,['version','command','tenant',...(v?.command==='resume'?['claimId']:[])])&&v.version===1&&commands.includes(v.command)&&UUID.test(v.tenant)&&v.tenant!=='00000000-0000-0000-0000-000000000000'&&(v.command!=='resume'||UUID.test(v.claimId)),'LIFECYCLE_OPERATOR_INTENT');
+ return structuredClone(v);
+}
+function intent(v){return parseIntent(v,false);}
 function tag(incarnation){return 'nscb:'+incarnation+':'+crypto.createHash('sha256').update(NAME).digest('hex').slice(0,16);}
 function enabled(plan){return plan.lifecycleOperator?.version===1;}
 function validate(plan,book){
@@ -16,7 +23,7 @@ function validate(plan,book){
   need(book.controlLeases.length<=4096,'LIFECYCLE_OPERATOR_LEDGER');
   const ids=new Set();
   for(const r of book.controlLeases){
-   need(r&&['ISSUED','BOUND','UNKNOWN','CLOSED'].includes(r.state)&&/^[a-f0-9]{32}$/.test(r.incarnation)&&/^[a-f0-9]{32}$/.test(r.nonce)&&!ids.has(r.incarnation)&&equal(r.tags,[tag(r.incarnation)])&&r.intentSha256===B.hash(intent(r.intent))&&r.planSha256===plan.sha256&&equal(r.source,plan.source)&&r.credits===1,'LIFECYCLE_OPERATOR_LEDGER');
+   need(r&&['ISSUED','BOUND','UNKNOWN','CLOSED'].includes(r.state)&&/^[a-f0-9]{32}$/.test(r.incarnation)&&/^[a-f0-9]{32}$/.test(r.nonce)&&!ids.has(r.incarnation)&&equal(r.tags,[tag(r.incarnation)])&&r.intentSha256===B.hash(parseIntent(r.intent,true))&&r.planSha256===plan.sha256&&equal(r.source,plan.source)&&r.credits===1,'LIFECYCLE_OPERATOR_LEDGER');
    need((r.state==='ISSUED'&&r.container===null)||r.state==='UNKNOWN'||r.container&&r.container.service===NAME&&equal(r.container.source,plan.source),'LIFECYCLE_OPERATOR_LEDGER');ids.add(r.incarnation);
   }
   need(book.controlLeases.filter(r=>r.state!=='CLOSED').length<=1,'LIFECYCLE_OPERATOR_LEDGER');

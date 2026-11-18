@@ -10,9 +10,9 @@ function files({core,state}){
  if(path.resolve(environment.get('NS_DEMO_STATE')||'.')!==path.resolve(state))fail();
  const count=(key,max)=>{const value=environment.get(key);if(!/^[1-9][0-9]*$/.test(value||'')||Number(value)>max)fail();return Number(value);};
  count('NS_API_REPLICAS',16);
- const realtime=environment.has('NS_REALTIME_WORKERS'),evaluator=environment.has('NS_EVALUATOR_WORKERS');
- if(realtime){count('NS_REALTIME_WORKERS',16);count('NS_REALTIME_SHARDS',4096);}else if(environment.has('NS_REALTIME_SHARDS'))fail();
- if(evaluator)count('NS_EVALUATOR_WORKERS',16);
+ const source=Object.fromEntries(environment);
+ const realtime=require('../realtime-workers').selection(source);
+ const evaluator=require('../evaluator-workers').selection(source);
  const selected=['compose.replicas.yaml',...(realtime?['compose.realtime.yaml']:[]),...(evaluator?['compose.evaluator.yaml']:[])];
  const present=fs.readdirSync(state).filter(name=>/^compose\..*\.ya?ml$/.test(name));
  if(present.length!==selected.length||present.some(name=>!selected.includes(name)))fail();

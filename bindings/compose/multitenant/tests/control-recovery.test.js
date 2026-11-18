@@ -29,7 +29,8 @@ test('fixed realtime intent and typed lifecycle/commission intent have no select
  for(const value of [{version:2,command:'inspect'},{version:1,command:'restart'}])assert.throws(()=>C.intent('realtime-recovery',value),/INTENT/);
  assert.deepEqual(C.intent('restore-commissioner',{version:2,command:'commission'}),{version:2,command:'commission'});
  const tenant='11111111-1111-4111-8111-111111111111';
- for(const command of ['inspect','clear-operations','capture','restore','resume']){const v={version:2,command,tenant,...(command==='restore'?{artifactDigest:'a'.repeat(64)}:command==='resume'?{claimId:tenant}:{})};assert.deepEqual(C.intent('lifecycle-operator',v),v);assert.throws(()=>C.intent('lifecycle-operator',{...v,path:'/caller'}),/INTENT/);}
+ assert.throws(()=>C.intent('lifecycle-operator',{version:2,command:'clear-operations',tenant}),/INTENT/);
+ for(const command of ['inspect','capture','restore','resume']){const v={version:2,command,tenant,...(command==='restore'?{artifactDigest:'a'.repeat(64)}:command==='resume'?{claimId:tenant}:{})};assert.deepEqual(C.intent('lifecycle-operator',v),v);assert.throws(()=>C.intent('lifecycle-operator',{...v,path:'/caller'}),/INTENT/);}
 });
 
 test('all fixed classes bind BOTH worker database name and OID, including coherent class drift and missing identity',()=>{

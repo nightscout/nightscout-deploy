@@ -335,8 +335,8 @@ describe('Compose demo private node:http transport', function () {
   });
 });
 
-describe('Compose role health uses the lifecycle participant contract', function () {
-  async function check (mutateReply = reply => reply, mutateHealth = reply => reply) {
+describe('Compose role health uses the private role-health contract', function () {
+  async function check (mutateReply = reply => reply) {
     const file = require.resolve('../health'), calls = [], facade = { argv: ['node', file, 'api'], exitCode: 0, env: { NS_SERVE_INTERNAL_SOCKET: '/run/ns-ipc/api.sock', MULTITENANT_OPERATION_CONFIG: '/run/ns-config/operation.json' } };
     const source = fs.readFileSync(file, 'utf8');
     const nativeRequire = createRequire(file);
@@ -349,9 +349,9 @@ describe('Compose role health uses the lifecycle participant contract', function
         const socket = new EventEmitter(); socket.setTimeout = () => {}; socket.end = () => {}; socket.destroy = () => {};
         queueMicrotask(() => socket.emit('connect')); return socket;
       } };
-      if (name === '../../lib/server/internal-api/clients') return { lifecycleParticipant: options => {
+      if (name === '../../lib/server/internal-api/clients') return { roleHealth: options => {
         calls.push(options);
-        return { getApiHealth: async body => mutateHealth({request:body.request,ready:false,storageReady:true,displaySettings:{ready:false,state:'pending'}}), getStatus: async body => { calls.push(body); return mutateReply({ request: body.request, participant: 'api', roles: ['api'] }); } };
+        return { getStatus: async body => { calls.push(body); return mutateReply({ request: body.request, participant: 'api', roles: ['api'], ready: true }); } };
       } };
       return nativeRequire(name);
     };
@@ -359,13 +359,13 @@ describe('Compose role health uses the lifecycle participant contract', function
     await new Promise(resolve => setImmediate(resolve));
     return { calls, code: facade.exitCode };
   }
-  it('checks the exact lifecycle status acknowledgement and rejects another participant', async function () {
+  it('checks the exact role health acknowledgement and rejects another participant', async function () {
     const valid = await check(); assert.equal(valid.code, 0);
     assert.deepEqual(valid.calls[0], { socketPath: '/run/ns-ipc/api.sock', maxBytes: 1048576, timeoutMs: 1500 });
     assert.match(valid.calls[1].request, /^[0-9a-f-]{36}$/);
     assert.equal((await check(reply => ({ ...reply, participant: 'realtime' }))).code, 1);
     assert.equal((await check(reply => ({ ...reply, request: 'wrong' }))).code, 1);
-    assert.equal((await check(undefined, health => ({...health,storageReady:false}))).code, 1);
-    assert.equal((await check(undefined, health => ({...health,request:'wrong'}))).code, 1);
+    assert.equal((await check(health => ({...health,ready:false}))).code, 1);
+    assert.equal((await check(health => ({...health,roles:['realtime']}))).code, 1);
   });
 });

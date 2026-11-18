@@ -3,8 +3,25 @@
 // is implicit; the coordinator selects its synthetic project/state and core.
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),path=require('node:path'),http=require('node:http'),crypto=require('node:crypto');
-const {spawn}=require('node:child_process');
+const {spawn,execFile}=require('node:child_process');
+const execute=require('node:util').promisify(execFile);
 const selected=process.env.NS_COMPOSE_SHARDING_STATE;
+function restoredReadings(frames,originalSession) {
+  const values=[];
+  for(const {session,value} of frames){
+    if(!session||session===originalSession)continue;
+    for(const {mgdl} of value.sgvs){
+      assert.ok(![145,234,151,152,159,177].includes(mgdl),'reconnected A received a pre-replacement or foreign row');
+      values.push(mgdl);
+    }
+  }
+  return values;
+}
+test('reconnected frame oracle ignores old sessions and detects a stale first frame even after a clean frame',{},()=>{
+  const frame=(session,mgdl)=>({session,value:{sgvs:[{mgdl}]}});
+  assert.deepEqual(restoredReadings([frame('old',139),frame('new',123)],'old'),[123]);
+  assert.throws(()=>restoredReadings([frame('old',123),frame('new',234),frame('new',139)],'old'),/pre-replacement or foreign/);
+});
 test('actual shipping edge preserves registered Host polling/WebSocket/API3 and real restore continuity',{skip:!selected,timeout:120000},async()=>{
   const core=process.env.NS_UI_TEST_CORE;assert.ok(core,'explicit source');
   const state=path.resolve(selected),project=process.env.NS_COMPOSE_SHARDING_PROJECT,port=Number(process.env.NS_COMPOSE_SHARDING_PORT);
@@ -21,7 +38,7 @@ test('actual shipping edge preserves registered Host polling/WebSocket/API3 and 
     const socket=io('http://'+tenant.host+':'+port+(namespace==='/'?'':namespace),{forceNew:true,autoUnref:true,transports:[transport],agent:agent(),timeout:2000,reconnectionDelay:50,reconnectionDelayMax:200});sockets.push(socket);
     const seen={socket,frames:[],acks:[],alarms:[],connections:0};
     socket.on('connect',()=>{seen.connections++;if(namespace==='/'){const root=roots.find(row=>row.id===tenant.id).rootSecret;socket.emit('authorize',{secret:crypto.createHash('sha1').update(root).digest('hex')});}else socket.emit('subscribe',{accessToken:tenant.dataToken,...(namespace==='/storage'?{collections:['entries']}:{})},reply=>seen.acks.push(reply));});
-    socket.on('dataUpdate',value=>seen.frames.push(value));for(const event of ['alarm','urgent_alarm'])socket.on(event,value=>seen.alarms.push(value));return seen;
+    socket.on('dataUpdate',value=>seen.frames.push({session:socket.id,value}));for(const event of ['alarm','urgent_alarm'])socket.on(event,value=>seen.alarms.push(value));return seen;
   }
   async function request(tenant,route,{method='GET',body,token}={}){
     return new Promise((resolve,reject)=>{const data=body===undefined?null:Buffer.from(JSON.stringify(body));const req=http.request({host:'127.0.0.1',port,path:route,method,agent:false,timeout:10000,headers:{host:tenant.host,accept:'application/json',...(token?{authorization:'Bearer '+token}:{}),...(data?{'content-type':'application/json','content-length':data.length}:{})}},res=>{const chunks=[];res.on('data',c=>chunks.push(c));res.on('end',()=>{try{resolve({status:res.statusCode,body:JSON.parse(Buffer.concat(chunks).toString())});}catch{reject(new Error('COMPOSE_SHARD_RESPONSE'));}});});req.on('error',()=>reject(new Error('COMPOSE_SHARD_HTTP')));req.on('timeout',()=>req.destroy());req.end(data);});
@@ -34,17 +51,27 @@ test('actual shipping edge preserves registered Host polling/WebSocket/API3 and 
     const mainA=client(a,'/','polling'),mainB=client(b,'/','websocket'),storage=client(a,'/storage','websocket'),alarms=client(a,'/alarm','polling');
     await until(()=>mainA.frames.length&&mainB.frames.length&&storage.acks.some(row=>row.success)&&alarms.acks.some(row=>row.success),'stock client admission');
     assert.equal(mainA.socket.io.engine.transport.name,'polling');assert.equal(mainB.socket.io.engine.transport.name,'websocket');
-    const bSession=mainB.socket.id;assert.ok(mainA.frames.at(-1).sgvs.some(row=>row.mgdl===123));assert.ok(mainB.frames.at(-1).sgvs.some(row=>row.mgdl===177));
-    assert.ok(!mainA.frames.at(-1).sgvs.some(row=>row.mgdl===177),'tenant frame isolation');
+    const aSession=mainA.socket.id,bSession=mainB.socket.id;assert.ok(mainA.frames.at(-1).value.sgvs.some(row=>row.mgdl===123));assert.ok(mainB.frames.at(-1).value.sgvs.some(row=>row.mgdl===177));
+    assert.ok(!mainA.frames.at(-1).value.sgvs.some(row=>row.mgdl===177),'tenant frame isolation');
     const aToken=await jwt(a),bToken=await jwt(b);
     const current=await request(a,'/api/v3/entries',{token:aToken});assert.equal(current.status,200);assert.ok(current.body.result.some(row=>row.sgv===123),'API3 client explicitly reloads collection after subscribing');
     const probe=await request(b,'/api/v3/entries',{method:'POST',token:bToken,body:{identifier:'shipping-b-live-'+crypto.randomUUID(),type:'sgv',sgv:159,date:Date.now(),utcOffset:0,app:'synthetic-binding'}});assert.equal(probe.status,201);
-    await until(()=>mainB.frames.some(frame=>frame.sgvs.some(row=>row.mgdl===159)),'B actual data progression');
+    await until(()=>mainB.frames.some(({value})=>value.sgvs.some(row=>row.mgdl===159)),'B actual data progression');
     await new Promise(r=>setTimeout(r,6500));assert.equal(mainA.socket.connected,true,'stock idle polling survives ordinary empty poll');assert.equal(mainB.socket.id,bSession);
     const folder=path.join(core,'deploy/multitenant');
     const files=require('./fixtures/shipping-compose-files.cjs').files({core,state});
     assert(files.some(file=>path.basename(file)===(evaluatorProfile?'compose.evaluator.yaml':'compose.realtime.yaml')),'EXPLICIT_SHIPPING_PROFILE_REQUIRED');
     const args=['compose','--project-name',project,'--env-file','.env',...files.flatMap(file=>['-f',file]),'--profile','ops','run','--rm','--no-deps','demo'];
+    const ownerRequestId=crypto.randomUUID();
+    const ownerSession=a.managementExpiresAt*1000>Date.now()+120000?'primer':'renew';
+    async function ownerOperation(phase) {
+      const probe=path.join(__dirname,'fixtures/shipping-owner.cjs');
+      const result=await execute('docker',[...args.slice(0,-1),'-T','--volume',probe+':/opt/shipping-owner.cjs:ro',
+        'primer','node','/opt/shipping-owner.cjs',phase,ownerSession,ownerRequestId],{cwd:folder,timeout:20000});
+      assert.equal(result.stdout.trim(),'SHIPPING_OWNER_ROLE_CREATED');
+      trace.marker('tenant-admin-'+phase+'-restore');
+    }
+    if(evaluatorProfile)await ownerOperation('before');
     const override=process.env.NS_COMPOSE_SHARDING_RESTORE_OVERRIDE;
     if(override){assert.ok(path.isAbsolute(override));args.splice(args.length-1,0,'--volume',override+':/opt/app/deploy/multitenant/restore.js:ro');}
     const demoOverride=process.env.NS_COMPOSE_SHARDING_DEMO_OVERRIDE;
@@ -60,8 +87,18 @@ test('actual shipping edge preserves registered Host polling/WebSocket/API3 and 
     if(measured){await measured.stop();assert.deepEqual(measured.errors,[],'B settings traffic remains healthy');assert.ok(measured.first.every(Boolean));console.log('B_SETTINGS_TRAFFIC reads'+measured.reads+' workers4 errors0');}
     assert.equal(exit,0,'actual shipping restore/census demo refused; inspect private artifact');
     const summary=JSON.parse(fs.readFileSync(record,'utf8').trim().split('\n').at(-1));assert.equal(summary.state,'passed');assert.equal(summary.observations.bCommittedDuringRestore,true);
-    await until(()=>mainB.frames.some(frame=>frame.sgvs.some(row=>row.mgdl===152)),'actual B update during restore reaches unchanged socket');assert.equal(mainB.socket.id,bSession);
+    if(evaluatorProfile)await ownerOperation('after');
+    await until(()=>mainB.frames.some(({value})=>value.sgvs.some(row=>row.mgdl===152)),'actual B update during restore reaches unchanged socket');assert.equal(mainB.socket.id,bSession);
     assert.equal(mainB.connections,1,'unrelated B never reconnects during A restore');
+    await until(()=>mainA.socket.id!==aSession,'old A socket disconnected on generation change');
+    // Socket.IO leaves reconnect after a server disconnect to the application.
+    mainA.socket.connect();
+    await until(()=>mainA.connections>1&&mainA.socket.connected&&mainA.socket.id!==aSession,'A reconnects');
+    await until(()=>restoredReadings(mainA.frames,aSession).includes(123),'reconnected A receives restored snapshot');
+    const postRestore=await request(a,'/api/v3/entries',{method:'POST',token:aToken,body:{
+      identifier:'restored-'+crypto.randomUUID(),type:'sgv',sgv:139,date:Date.now(),utcOffset:0,app:'synthetic-binding'}});
+    assert.equal(postRestore.status,201);
+    await until(()=>restoredReadings(mainA.frames,aSession).includes(139),'restored A frame follows fresh evaluation');
     console.log('COMPOSE_SHARD_PROOF stockPolling stockWebSocket API3reload registeredHost tenantIsolation idlePolling actualRestore census BContinuity');
     trace.marker('proof-complete');
   } catch(error){trace.marker('proof-failed',{code:typedCode(error.code)});if(error.apiReadiness)fs.writeFileSync(path.join(state,'artifacts/api-readiness.json'),JSON.stringify(error.apiReadiness),{mode:0o600});throw error;

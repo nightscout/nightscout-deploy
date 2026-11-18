@@ -303,8 +303,7 @@ version 2 ledger refuses rather than reconstructing unused credits.
 
 After a reviewed compatible source/image/plan selection, the fixed CLI command is
 `node deploy/multitenant/connection-budget-cli.js <state> lifecycle-operator <private-intent-file>`.
-The intent contains only `version: 1`, `command` (`inspect`, `resume` or
-`clear-operations`), and the configured `tenant` UUID. `resume` additionally
+The intent contains only `version: 1`, `command` (`inspect` or `resume`), and the configured `tenant` UUID. `resume` additionally
 requires the exact inspected `claimId`. Keep the intent in a private directory
 with mode 0700 and the file with mode 0600.
 
@@ -315,9 +314,8 @@ The child receives only its private operator environment/configuration, selected
 placement, ticket and writable claim/receipt directory. It uses core admission
 and one backend; it cannot acquire a replacement connection.
 
-`inspect` performs diagnostic reads without contacting participants. Both writing
-commands require core's current complete participant pin, actor census and
-operator authority. Audit rows append beside the existing restore/operation rows.
+`inspect` performs diagnostic reads without contacting participants. A resume checks current operator authority, durable restore ownership and the
+exclusive tenant lock. It appends a resume audit row and activates the inspected generation.
 A 30-second lease fences every new SQL dispatch, including COMMIT. A late reply,
 uncertain commit, lost authentication or unproven close retains `UNKNOWN` and
 blocks further invocations. Late evidence never automatically clears `UNKNOWN`.

@@ -10,6 +10,18 @@ people who use it see no current data from it. Tell them, in plain words, to rel
 pump's own display and alarms until the site is back. Do that before starting any step below that
 closes a tenant or stops the deployment.
 
+## Generation-based tenant restore
+
+Before upgrading, stop every process that uses the previous operation-window protocol. Regenerate the serving and private operator configurations as a pair. Run the admin pre-start verification before starting the new roles. The operator reads the verified evaluator selection when it captures, restores or resumes a selected native tenant.
+
+Restore advances the selected tenant’s generation and suspends it. Uploaders receive a retryable refusal while it is suspended. In-flight database transactions finish before data replacement starts. Other tenants continue serving. After activation, each role rebuilds its tenant state when it sees the new generation. A replica that was offline can rejoin on that generation.
+
+Use the admitted private lifecycle operator to inspect an interrupted restore. The reported claim identifies the tenant, generation and restore artifact. A `before-data` interruption kept the preceding data. A `data-replaced` interruption kept the committed replacement. When the original backend has gone and inspection reports that the claim is resumable, submit `resume` with the exact inspected claim. A refused or uncertain outcome requires another inspection. Confirm the active generation, the matching resume record and actual tenant service before telling users that service has returned. A selection-proof refusal requires the intended configuration and current verified evaluator contract. Historical operation markers and clearance rows remain available for audit.
+
+The private command, intent and connection-budget contract are described in the [lifecycle operator binding](../../bindings/compose/multitenant/CONNECTION-BUDGET.md). The earlier cohort and `clear-operations` procedures below document the pinned historical rehearsal and apply only to that revision.
+
+## Historical rehearsal on the pinned revision
+
 | situation | runbook |
 |---|---|
 | take a backup; restore one tenant; restore the whole deployment | [backup-and-restore.md](backup-and-restore.md) |

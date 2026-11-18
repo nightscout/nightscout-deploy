@@ -13,7 +13,30 @@ function bind(p,l,t){b.recordStarted(p,l,t.processInstanceId,t.incarnation,{cid:
 function compiled(){const d=docs();return b.compile(profile(d),d,{source,poolConfig});}
 test('expanded constructor inventory, source, aggregate, headroom and startup self-overload guards',()=>{const d=docs(),p=profile(d),plan=b.compile(p,d,{source,poolConfig});assert(plan.declaredMaximum>100);assert.equal(plan.slots.find(x=>x.processInstanceId==='evaluator').capabilities['nightscout-evaluator-consumer-preview'].maxInstances,2);
  for(const mutate of [x=>x.resource.serverMaximum=100,x=>x.slots.pop(),x=>delete x.slots[0].capabilities['migration-direct'],x=>x.resource.allowances.observers=0,x=>x.slots[0].capabilities['nightscout-operation-lifetime'].poolMax=0,x=>x.slots[0].cold.pendingLimit=1]){const bad=structuredClone(p);mutate(bad);assert.throws(()=>b.compile(bad,d,{source,poolConfig}));}assert.equal(poolConfig.pool('api').max,4);});
-test('explicit capability options retain requested maximum and enforce held lifetime minimum',()=>{const d=docs(),p=profile(d);p.slots[0].capabilities['nightscout-preview-data'].poolMax=1;const c=b.compile(p,d,{source,poolConfig}).slots[0].capabilities['nightscout-preview-data'];assert.equal(c.poolMax,1);assert.equal(c.metadata.requestedMaximum,4);assert.equal(c.metadata.configurationSource,'explicit-profile');p.slots[0].capabilities['nightscout-operation-lifetime'].poolMax=1;d.operations.api.leaseSessions=2;assert.throws(()=>b.compile(p,d,{source,poolConfig}),/LIFETIME_EXCEEDS/);});
+test('explicit role maximum and legacy control-pool name survive operation session retirement', () => {
+  const deployment = docs();
+  const profileInput = profile(deployment);
+  deployment.operations.api.leaseSessions = 2;
+  profileInput.slots[0].capabilities['nightscout-preview-data'].poolMax = 1;
+  profileInput.slots[0].capabilities['nightscout-operation-lifetime'].poolMax = 1;
+  const capabilities = b.compile(profileInput, deployment, { source, poolConfig }).slots[0].capabilities;
+  assert.equal(capabilities['nightscout-preview-data'].poolMax, 1);
+  assert.equal(capabilities['nightscout-preview-data'].metadata.requestedMaximum, 4);
+  assert.equal(capabilities['nightscout-preview-data'].metadata.configurationSource, 'explicit-profile');
+  assert.equal(capabilities['nightscout-operation-lifetime'].metadata.heldWithinPool, 0);
+});
+test('each serving role declares its datastore probe when lifecycle operation sessions are absent', () => {
+  const deployment = docs();
+  deployment.operations = {};
+  const plan = b.compile(profile(deployment), deployment, { source, poolConfig });
+  for (const slot of plan.slots) {
+    const probe = slot.capabilities['datastore-probe'];
+    if (['api', 'evaluator', 'realtime', 'tenant-admin'].includes(slot.roles[0])) {
+      assert.equal(probe?.kind, 'client', slot.roles[0] + ' requires a datastore probe');
+      assert.equal(probe.metadata.source, 'lib/server/serve/datastore-probe.js');
+    } else assert.equal(probe, undefined);
+  }
+});
 test('maintained constructor scope removes duplicate metadata pools and retains held-owner and actual consumer-instance bounds',()=>{const d=docs(),p=profile(d),model=b.describe(d,poolConfig),ev=model.find(x=>x.roles[0]==='evaluator'),rt=model.find(x=>x.roles[0]==='realtime');
  const api=model.find(x=>x.roles[0]==='api');for(const key of ['nightscout-api-activity','nightscout-legacy-authority','nightscout-current-access','nightscout-tenant-authorization'])assert(!Object.hasOwn(api.capabilities,key),'API owns one shared data/authority connection');
  assert(Object.hasOwn(api.capabilities,'nightscout-secrets'),'audit retains independent COMMIT');

@@ -1,6 +1,6 @@
 'use strict';
 // Run only in a joined source fixture. Actual admission, pg driver/pool,
-// restore-resume, readiness, adapter and remote cohort; recording IO, no PG/RLS.
+// restore-resume, readiness, and operator adapter; recording IO, no PG/RLS.
 const test=require('node:test'),assert=require('node:assert/strict'),{EventEmitter}=require('node:events'),fs=require('node:fs'),path=require('node:path'),Module=require('node:module');
 const E=require('../lifecycle-operator-entry'),O=require('../lifecycle-operator'),B=require('../connection-budget'),C=require('../control-recovery');
 const pg=require('pg'),protocol=require('../../../tests/fixtures/operation-window-admission-protocol'),lower=require('../../../lib/storage/postgres-connection');
@@ -14,21 +14,13 @@ async function run(command='resume',flags={}){
  const logical=pipeline?require('../../../tests/fixtures/logical-restore-protocol').fixture():null;
  if(logical){logical.catalogues=logical.catalogues.filter(r=>['activity','clock'].includes(r.kind));logical.artifact=require('../../../lib/tenant-lifecycle/artifact').buildArtifact({tenant:A,sourceCommit:flags.admittedTicket?.source.coreCommit||'a'.repeat(40),exportedAt:1700000000000,catalogues:logical.artifact.manifest.catalogues.filter(r=>['activity','clock'].includes(r.kind)).map(r=>({...r,tables:r.tables.map(t=>({...t,rows:logical.artifact.tables[r.kind+'.'+t.table]}))}))});if(command==='restore'&&!flags.artifactRoot)await artifactIO.saveCapture(logical.artifact,artifactRoot);}
  const entry=flags.entryTransform?fresh('../lifecycle-operator-entry',flags.entryTransform):E;
- const trace=[],instances=[],metadata=protocol(),peers=['api','evaluator','realtime','tenant-admin'].map((role,i)=>({id:'peer_'+i,roles:[role],namespaces:['clinical_'+i],endpoint:{socketPath:'/synthetic/peer_'+i+'.sock',maxBytes:100000,timeoutMs:1000}}));
- let statusCalls=0,now=0,working,changed=false;
+ const trace=[],instances=[],metadata=protocol();
+ let now=0,working,changed=false;
  const tenantBindings=[];
  const durable={phase:'suspended',claim_id:CLAIM,artifact_digest:'a'.repeat(64),generation:'2',lock_key:'41',auditState:flags.dataReplaced?'restored':'suspended',resumes:[],clearance:[]};
  const restoreState={window:{lock_key:'41',phase:'active',generation:'1',claim_id:null,artifact_digest:null},audit:null},setupRows=[];let restoreWorking;
  const restoreCurrent=()=>restoreWorking||restoreState;
- const clients={lifecycleParticipant(endpoint){const i=peers.findIndex(p=>p.endpoint.socketPath===endpoint.socketPath),peer=peers[i];return {
-  async getStatus({request}){statusCalls++;if(flags.missing)throw Object.assign(Error('missing'),{code:'SOCKET_IPC_UNAVAILABLE'});let identity={...protocol.identity};if(flags.partial)delete identity.clearanceOid;
-   return {version:1,participant:peer.id,incarnation:(flags.stale&&statusCalls>8?'bbbbbbbb':'aaaaaaaa')+'-1111-4111-8111-111111111111',namespace:'synthetic_window',roles:peer.roles,tenants:['registry:synthetic_registry'],namespaces:peer.namespaces,identity,datastore:DATA,backends:[{pid:100+i,role:'synthetic_'+i,birth:'birth_'+i}],request};},
-  async getOperations(body){return {request:body.request,tenant:body.tenant,participant:peer.id,incarnation:body.incarnation,operations:flags.liveOperation?[OP]:[]};},
-  async invalidateTenant(body){trace.push('invalidate:'+body.tenant);const reply=await this.getStatus(body);return {...reply,tenant:body.tenant};}
- };}};
  const original=Module._load;
- Module._load=function(name,...args){if(name==='../internal-api/clients')return clients;return original.call(this,name,...args);};
- const cohort=fresh('../../../lib/server/serve/operation-cohort',flags.cohortTransform);Module._load=original;
  const admission=fresh('../../../lib/storage/connection-admission',flags.admissionTransform);
  class Stream extends EventEmitter{constructor(){super();this.writable=true;this.destroyed=false;}write(bytes,callback){if(bytes[0]===88)trace.push('Terminate');callback?.();return true;}end(){this.writable=false;if(!flags.noEOF)queueMicrotask(()=>{this.emit('end');this.emit('close',false);});}destroy(error){this.destroyed=true;this.writable=false;queueMicrotask(()=>this.emit('close',!!error));return this;}}
  class Client extends pg.Client{
@@ -61,9 +53,9 @@ async function run(command='resume',flags={}){
     if(text.includes('restore-window-claim')||text.includes('restore-window-current'))return {rows:[structuredClone(restoreCurrent().window)]};
     if(text.includes('restore-audit-current'))return {rows:[structuredClone(restoreCurrent().audit)]};
     if(text.includes('restore-preflight')||text.includes('restore-pending'))return {rows:[]};
-    if(text.includes('restore-exclusive'))return {rows:[{held:true}]};
+    if(text.includes('restore-exclusive')||text.includes('suspension-generation-lock'))return {rows:[{held:true}]};
     if(text.includes('pg_advisory_unlock'))return {rows:[{released:true}]};
-    if(text.startsWith('UPDATE ')&&text.includes('tenant_lifecycle_windows')){const w=restoreCurrent().window;if(text.includes("SET phase='suspended'")){Object.assign(w,{phase:'suspended',generation:values[1],claim_id:values[2],artifact_digest:values[3]});}else{assert(trace.some(t=>t.startsWith('invalidate:')));Object.assign(w,{phase:'active',claim_id:null,artifact_digest:null});}return {rowCount:1,rows:[]};}
+    if(text.startsWith('UPDATE ')&&text.includes('tenant_lifecycle_windows')){const w=restoreCurrent().window;if(text.includes("SET phase='suspended'")){Object.assign(w,{phase:'suspended',generation:values[1],claim_id:values[2],artifact_digest:values[3]});}else{assert.equal(restoreState.audit.state,'restored');Object.assign(w,{phase:'active',claim_id:null,artifact_digest:null});}return {rowCount:1,rows:[]};}
     if(text.startsWith('INSERT INTO ')&&text.includes('tenant_lifecycle_restore_audit')){restoreCurrent().audit={generation:values[2],artifact_digest:values[3],role_oid:'31',owner_pid:50,owner_birth:'operator-birth',state:'suspended'};return {rowCount:1,rows:[]};}
     if(text.startsWith('UPDATE ')&&text.includes('tenant_lifecycle_restore_audit')){restoreCurrent().audit.state=text.includes("SET state='restored'")?'restored':'activated';return {rowCount:1,rows:[]};}
     if(text.startsWith('BEGIN')){assert(!restoreWorking);restoreWorking=structuredClone(restoreState);logical.begin();return {command:'BEGIN',rows:[]};}
@@ -72,11 +64,10 @@ async function run(command='resume',flags={}){
     if(text.includes('set_config'))return {rows:[]};
     if(command==='capture'&&text.startsWith('SELECT')&&text.includes('FROM "logical_clock"."tenant_write_clock"'))return {rows:[{tenant_id:A,last_stamp:logical.durable.clock[A],last_delete_stamp:'0'}]};
     if(text.includes('pg_attribute')&&!text.includes('logical-restore')){const table=logical.artifact.manifest.catalogues.flatMap(c=>c.tables.map(t=>({...t,namespace:c.namespace}))).find(t=>values[0]==='"'+t.namespace+'"."'+t.table+'"');assert(table,'EXACT_EXPORT_TABLE');return {rows:table.columns.map(c=>({...c,identity:false}))};}
-    if(!text.includes('restore-cohort-actors')&&text!=='SELECT '+lower.datastoreSQL&&text!=='SELECT pg_catalog.pg_stat_clear_snapshot()')return logical.connection.query(text,values);
+    return logical.connection.query(text,values);
    }
    if(text==='SELECT '+lower.datastoreSQL)return {rows:[DATA]};
    if(text==='SELECT pg_catalog.pg_stat_clear_snapshot()')return {rows:[]};
-   if(text.includes('restore-cohort-actors'))return {rows:[...peers.map((p,i)=>({pid:100+i,role:'synthetic_'+i,birth:'birth_'+i})),...(flags.unknownActor?[{pid:999,role:'unknown',birth:'unknown',clinical:true}]:[])]};
    if(text==='BEGIN'){working=structuredClone(durable);return {rows:[],command:'BEGIN'};}
    if(text==='ROLLBACK'){working=undefined;return {rows:[],command:'ROLLBACK'};}
    if(text==='COMMIT'){Object.assign(durable,working);working=undefined;if(flags.commitLate)now=31000000000;if(flags.lostCommit)throw Object.assign(Error('lost'),{code:'ECONNRESET'});return {rows:[],command:'COMMIT'};}
@@ -107,29 +98,27 @@ async function run(command='resume',flags={}){
  if(flags.wrongSource)ticket.source={...source,coreCommit:'b'.repeat(40)};if(flags.wrongImage)gate.container.imageId='sha256:'+'e'.repeat(64);if(flags.workerTicket)ticket.processInstanceId='api';
  if(flags.malformed){const keys=flags.malformed.split('.'),field=keys.pop();let target=keys.shift()==='gate'?gate:ticket;for(const key of keys)target=target[key];target[field]=[target[field]];}
  ticket=JSON.parse(JSON.stringify(ticket));gate=JSON.parse(JSON.stringify(gate));
- let config={control:{namespace:'synthetic_window',registry:{namespace:'synthetic_registry'},locks:[{tenant:A,key:'41'},{tenant:BID,key:'42'}],participants:peers}};
+ let config={control:{namespace:'synthetic_window',registry:{namespace:'synthetic_registry'},locks:[{tenant:A,key:'41'},{tenant:BID,key:'42'}]}};
  if(pipeline)Object.assign(config,{tenants:[{id:A},{id:BID}],namespaces:logical.namespaces,catalogues:logical.catalogues,drainTimeoutMs:1000});
  if(commissioner)config={version:1,operatorPrincipal:plan.lifecycleOperator.principal,tenants:[A,BID],namespace:'synthetic_window',registryNamespace:'synthetic_registry'};
- Module._load=function(name,...args){if(name==='./lifecycle-snapshot'&&flags.snapshotTransform)return fresh('../lifecycle-snapshot',flags.snapshotTransform);if(name==='./config'&&pipeline)return {layout(){return {};},lifecycle(){return {catalogues:logical.catalogues};}};if(name==='./lifecycle-artifact-catalogue'&&pipeline)return {...artifactIO,saveCapture(artifact){return artifactIO.saveCapture(artifact,artifactRoot);},load(ignored,digest){return artifactIO.load(artifactRoot,digest);}};if(name==='./lifecycle-operator-entry')return entry;if(['../../lib/server/serve/operation-cohort','../server/serve/operation-cohort'].includes(name))return cohort;return original.call(this,name,...args);};
+ Module._load=function(name,...args){if(name==='./lifecycle-snapshot'&&flags.snapshotTransform)return fresh('../lifecycle-snapshot',flags.snapshotTransform);if(name==='./config'&&pipeline)return {layout(){return {};},lifecycle(){return {catalogues:logical.catalogues};}};if(name==='./lifecycle-artifact-catalogue'&&pipeline)return {...artifactIO,saveCapture(artifact){return artifactIO.saveCapture(artifact,artifactRoot);},load(ignored,digest){return artifactIO.load(artifactRoot,digest);}};if(name==='./lifecycle-operator-entry')return entry;return original.call(this,name,...args);};
  let receipt,error;
  try{const work=entry.execute({ticket,gate,action:flags.fresh?intent:undefined,config,env:{NS_SOURCE_COMMIT:source.coreCommit,[commissioner?'NS_COMMISSIONER_PG':'NS_OPERATOR_PG']:credential.toString()},admission,pg:{Pool:pg.Pool,Client},clock:()=>BigInt(now)});
   if(flags.noEOF){await new Promise(resolve=>setImmediate(resolve));assert.equal(admission.health().liveConnections,1);assert.equal(admission.health().unconfirmedCleanup,false);instances[0].connection.stream.emit('close',true);}
   receipt=await work;
  }catch(cause){error=cause;}finally{Module._load=original;}
  if(artifactRoot&&!flags.artifactRoot)fs.rmSync(artifactRoot,{recursive:true,force:true});
- return {receipt,error,durable,tenantBindings,trace,instances,admission,statusCalls,changed,restoreState,logicalState:logical?.durable,setupRows};
+ return {receipt,error,durable,tenantBindings,trace,instances,admission,changed,restoreState,logicalState:logical?.durable,setupRows};
 }
-test('actual core admitted Pool/driver/restore/cohort chain commits append-only resume and clean Terminate+EOF',async()=>{const f=await run();assert.ifError(f.error);assert.equal(f.receipt.outcome,'COMPLETED');assert.equal(f.durable.phase,'active');assert.equal(f.durable.resumes.length,1);assert.equal(f.instances.length,1);assert(f.trace.includes('Terminate'));assert(f.tenantBindings.length>=3&&f.tenantBindings.every(tenant=>tenant===A),'SOURCE_SQL_SCOPED_TO_A');assert(f.statusCalls>=16);});
-test('diagnostic inspect omits unavailable peers and writes no audit',async()=>{const f=await run('inspect',{missing:true});assert.ifError(f.error);assert.equal(f.receipt.outcome,'COMPLETED');assert.equal(f.statusCalls,0);assert.equal(f.durable.resumes.length,0);assert(!f.trace.includes('COMMIT'));});
-test('both mutations refuse unavailable/partial/stale/unknown actor/current authority before durable audit',async()=>{for(const command of ['resume','clear-operations'])for(const flags of [{missing:true},{partial:true},{stale:true},{unknownActor:true},{revoked:true}]){const f=await run(command,flags);assert.ifError(f.error);assert.equal(f.receipt.outcome,'REFUSED',JSON.stringify(flags));assert.equal(f.durable.resumes.length+f.durable.clearance.length,0);assert(!f.trace.includes('COMMIT'));}});
-test('live/unknown owners retained; orphan-only clearance appends and leaves restore audit intact',async()=>{for(const flags of [{},{backendLive:true},{liveOperation:true}]){const f=await run('clear-operations',flags);assert.ifError(f.error);assert.equal(f.durable.clearance.length,flags.backendLive||flags.liveOperation?0:1);assert.equal(f.durable.auditState,'suspended');}const unknown=await run('resume',{ownerUnknown:true});assert.equal(unknown.receipt.outcome,'REFUSED');});
-test('wrong backend principal/epoch/claim refuses; finite auth/SQL/COMMIT lease and missing EOF stay uncertain',async()=>{for(const flags of [{wrongPrincipal:true},{wrongRoleOid:true},{wrongDatabaseOid:true},{wrongEpoch:true},{wrongClaim:true}]){const f=await run('resume',flags);assert.ifError(f.error);assert.equal(f.receipt.outcome,'REFUSED');assert.equal(f.durable.resumes.length,0);}for(const flags of [{authLate:true},{beforeCommit:true},{commitLate:true},{lostCommit:true},{noEOF:true}]){const f=await run('resume',flags);assert.equal(f.error?.code,'LIFECYCLE_OPERATOR_OUTCOME_UNCERTAIN',JSON.stringify(flags));assert.equal(f.receipt,undefined);if(flags.beforeCommit||flags.authLate)assert(!f.trace.includes('COMMIT'));}});
-
-test('actual cohort unknown-actor exemption mutant reaches mutation and fails refusal oracle; restored remains closed',async()=>{
- const original=fs.readFileSync(require.resolve('../../../lib/server/serve/operation-cohort'),'utf8');const transform=s=>s.replace("throw fail('RESTORE_COHORT_UNKNOWN_BACKEND');",'continue;');assert.notEqual(transform(original),original);
- const mutant=await run('resume',{unknownActor:true,cohortTransform:transform});assert.ifError(mutant.error);assert.throws(()=>assert.equal(mutant.receipt.outcome,'REFUSED'),/COMPLETED/);
- const restored=await run('resume',{unknownActor:true});assert.equal(restored.receipt.outcome,'REFUSED');assert.equal(restored.durable.resumes.length,0);
+test('actual core admitted Pool/driver/restore chain commits append-only resume and clean Terminate+EOF',async()=>{const f=await run();assert.ifError(f.error);assert.equal(f.receipt.outcome,'COMPLETED');assert.equal(f.durable.phase,'active');assert.equal(f.durable.resumes.length,1);assert.equal(f.instances.length,1);assert(f.trace.includes('Terminate'));assert(f.tenantBindings.length>=3&&f.tenantBindings.every(tenant=>tenant===A),'SOURCE_SQL_SCOPED_TO_A');});
+test('diagnostic inspect reports durable state and writes no audit',async()=>{const f=await run('inspect');assert.ifError(f.error);assert.equal(f.receipt.outcome,'COMPLETED');assert.equal(f.durable.resumes.length,0);assert(!f.trace.includes('COMMIT'));});
+test('resume refuses revoked authority and unknown restore owner before activation',async()=>{
+ for(const flags of [{revoked:true},{ownerUnknown:true}]){
+  const f=await run('resume',flags);assert.ifError(f.error);assert.equal(f.receipt.outcome,'REFUSED');
+  assert.equal(f.durable.resumes.length,0);assert(!f.trace.includes('COMMIT'));
+ }
 });
+test('wrong backend principal/epoch/claim refuses; finite auth/SQL/COMMIT lease and missing EOF stay uncertain',async()=>{for(const flags of [{wrongPrincipal:true},{wrongRoleOid:true},{wrongDatabaseOid:true},{wrongEpoch:true},{wrongClaim:true}]){const f=await run('resume',flags);assert.ifError(f.error);assert.equal(f.receipt.outcome,'REFUSED');assert.equal(f.durable.resumes.length,0);}for(const flags of [{authLate:true},{beforeCommit:true},{commitLate:true},{lostCommit:true},{noEOF:true}]){const f=await run('resume',flags);assert.equal(f.error?.code,'LIFECYCLE_OPERATOR_OUTCOME_UNCERTAIN',JSON.stringify(flags));assert.equal(f.receipt,undefined);if(flags.beforeCommit||flags.authLate)assert(!f.trace.includes('COMMIT'));}});
 
 test('source/image/unconfigured tenant/worker ticket substitutions refuse before backend construction',async()=>{for(const flags of [{wrongSource:true},{wrongImage:true},{wrongTenant:true},{workerTicket:true}]){const f=await run('inspect',flags);assert(f.error,JSON.stringify(flags));assert.equal(f.instances.length,0);assert.equal(f.durable.resumes.length,0);}});
 test('backend-principal fence mutant fails wrong-principal oracle and restored source refuses',async()=>{const transform=s=>s.replace('r.rows[0].role===op.principal.role','true');const source=fs.readFileSync(require.resolve('../lifecycle-operator-entry'),'utf8');assert.notEqual(transform(source),source);const mutant=await run('resume',{wrongPrincipal:true,entryTransform:transform});assert.ifError(mutant.error);assert.throws(()=>assert.equal(mutant.receipt.outcome,'REFUSED'),/COMPLETED/);const restored=await run('resume',{wrongPrincipal:true});assert.equal(restored.receipt.outcome,'REFUSED');assert.equal(restored.durable.resumes.length,0);});
@@ -146,7 +135,7 @@ test('fresh actual class refuses elevated backend and missing Ready response kee
 
 test('fresh fixed commissioner entry uses actual admitted driver and current role-OID setup action',async()=>{for(const flags of [{},{revoked:true},{commissionWrongOid:true},{commitLate:true}]){const f=await run('commission',{fresh:true,...flags});assert.equal(f.instances.length,1);if(flags.commitLate){assert.equal(f.error?.code,'LIFECYCLE_OPERATOR_OUTCOME_UNCERTAIN');assert.equal(f.receipt,undefined);}else{assert.ifError(f.error);assert.equal(f.receipt.class,'restore-commissioner');assert.equal(f.receipt.outcome,flags.revoked||flags.commissionWrongOid?'REFUSED':'COMPLETED');}if(flags.revoked||flags.commissionWrongOid)assert.equal(f.setupRows.length,0);else assert.equal(f.setupRows.length,2);}});
 test('fresh admitted capture exports actual bounded activity/clock core artifact on one snapshot backend',async()=>{const f=await run('capture',{fresh:true});assert.ifError(f.error);assert.equal(f.receipt.outcome,'COMPLETED',JSON.stringify(f.receipt.result));assert.equal(f.receipt.result.tenant,A);assert(/^[a-f0-9]{64}$/.test(f.receipt.result.digest));assert.equal(f.instances.length,1);assert(f.trace.includes('BEGIN ISOLATION LEVEL REPEATABLE READ'));assert(f.trace.includes('COMMIT'));assert(f.trace.includes('Terminate'));});
-test('fresh admitted restore traverses actual maintenance suspension/data/activation and actual logical activity restore',async()=>{const f=await run('restore',{fresh:true});assert.ifError(f.error);assert.equal(f.receipt.outcome,'COMPLETED',JSON.stringify(f.receipt.result));assert.equal(f.restoreState.window.phase,'active');assert.equal(f.restoreState.audit.state,'activated');assert.equal(f.instances.length,1);assert(f.trace.some(t=>t.includes('logical-restore-row')));assert(f.trace.some(t=>t.startsWith('invalidate:')));assert(f.trace.includes('Terminate'));});
+test('fresh admitted restore traverses actual maintenance suspension/data/activation and actual logical activity restore',async()=>{const f=await run('restore',{fresh:true});assert.ifError(f.error);assert.equal(f.receipt.outcome,'COMPLETED',JSON.stringify(f.receipt.result));assert.equal(f.restoreState.window.phase,'active');assert.equal(f.restoreState.audit.state,'activated');assert.equal(f.instances.length,1);assert(f.trace.some(t=>t.includes('logical-restore-row')));assert(f.trace.includes('Terminate'));});
 
 test('recorded error before Ready cannot be cleared by later Ready on actual fresh driver',async()=>{const f=await run('inspect',{fresh:true,errorBeforeReady:true});assert.equal(f.error?.code,'LIFECYCLE_OPERATOR_OUTCOME_UNCERTAIN');assert.equal(f.receipt,undefined);assert.equal(f.durable.resumes.length,0);assert(!f.trace.some(q=>q.startsWith('SELECT current_user')));});
 

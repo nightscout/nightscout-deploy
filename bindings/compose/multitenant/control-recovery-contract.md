@@ -21,7 +21,7 @@ ticket/control/gate objects and bounded integer fields before claims, credential
 reads in the fixed entry, admission install or PG constructors. Serialized array
 identities are refused rather than coerced. Legacy1 retains its valid schema.
 Fixed class ticket construction uses the same physical2 fields. The lifecycle
-entry supports that tuple for inspect/resume/clear-operations; capture/restore
+entry supports that tuple for inspect/resume; capture/restore
 explicitly refuse before admission until their artifact runtime joins. Fresh
 controller supports fresh ledger3 observations/stored-counts and the fixed
 lifecycle three-command protocol when its trusted host adapter advertises
@@ -75,7 +75,7 @@ entries bind to the same resource and budget. Names/OIDs, source/image, epoch,
 roster and action documents cannot be supplied by ordinary intent fields.
 
 Lifecycle intent2 is exactly `{version:2,command,tenant}`, with command inspect,
-clear-operations or capture; resume additionally requires only `claimId`, restore
+or capture; resume additionally requires only `claimId`, restore
 additionally requires only `artifactDigest`. Tenant and claim are nonzero UUIDs;
 digest is lowercase hex64. Plan roster admission remains the lifecycle binding's
 responsibility. Commission intent2 is exactly `{version:2,command:'commission'}`;
@@ -179,7 +179,7 @@ proves none of native RLS, clinical safety or interrupted-state origin.
 The trusted host port set is fixed: controlVersion2, controlFiles, controlTicket,
 controlStart, controlInspect, controlGate, controlWait and controlReceipt. It is
 an internal source seam, never a caller field, module selector or extension
-registry. Only lifecycle inspect/resume/clear-operations is currently bound by
+registry. Only lifecycle inspect/resume is currently bound by
 the fresh controller. Capture/restore and other fixed classes still refuse or
 remain unbound until their reviewed runtime joins. The Docker adapter does not
 advertise version2 until its private file publication/launch implementation joins.
