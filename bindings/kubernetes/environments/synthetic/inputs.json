@@ -1,0 +1,20 @@
+{
+  "namespace": "nightscout-synthetic",
+  "sourceCommit": "47588e9e15f8c43f37bf6a88928495687b41f05a",
+  "imageDeployCommit": "5c4614d69be447fcdc7ab001c4cf9b9d77b9c81d",
+  "bindingIdentity": "SYNTHETIC_RENDER_ONLY",
+  "profile": "existing-capacity",
+  "runId": "synthetic-commissioning",
+  "images": {
+    "app": "example.invalid/nightscout@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "postgres": "example.invalid/postgres-wal2json@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+  },
+  "storage": {
+    "mode": "disposable"
+  },
+  "imagePullSecrets": [
+    {
+      "name": "synthetic-registry-reference"
+    }
+  ]
+}

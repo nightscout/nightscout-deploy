@@ -3,32 +3,32 @@
 # written to the repository or printed. Local material lives in a private temporary directory
 # (umask 077) that is removed on exit.
 #
-#   scripts/secrets.sh seed    <namespace> <bindings/compose dir>
-#       generate the PostgreSQL superuser password and the Vault demo CA and server certificate
-#       (the Compose prepare.js material: 30 days, SAN DNS:vault), create the Secrets
-#       ns-postgres-password, ns-vault-tls and ns-ca, and the ConfigMap ownership-grants from the
-#       Compose ownership overlay's script. The CA signing key is discarded.
+#   NS_KUBE_CONTEXT=<explicit> NS_RUN_ID=<rendered> scripts/secrets.sh seed <namespace> <compat-arg>
+#       create ns-postgres-password, ns-vault-tls and ns-ca. The compatibility argument
+#       is retained from the old CLI; no Compose checkout is read. Discard the CA signing key.
+#   ... scripts/secrets.sh publish <namespace> <compat-image-arg>
+#       export from the owned provision Job's waiting done container before acknowledging
+#       completion. Include extensionless source token files and source-owned admin documents.
+#       The image argument is retained; no reader Pod or PVC is created by this helper.
 #
-#   scripts/secrets.sh publish <namespace> <app image>
-#       after Job/provision completes: copy each role's private documents out of the provision
-#       state volume through a short-lived reader Pod and create ns-config-<role> for api,
-#       realtime, evaluator, tenant-admin, ui and admin.
-#
-# Both refuse to replace an existing Secret: recreate the namespace for a fresh demonstration.
+# Both refuse to replace existing Secrets. Partial publication requires operator diagnosis;
+# do not automatically rerun provisioning or delete a namespace with unknown ownership.
 set -euo pipefail
 umask 077
 
 usage() { echo "usage: $0 seed <namespace> <compose dir> | publish <namespace> <app image>" >&2; exit 64; }
 [ $# -eq 3 ] || usage
 cmd=$1 ns=$2 arg=$3
+: "${NS_KUBE_CONTEXT:?Supply an explicit operator kube context}"
+: "${NS_RUN_ID:?Supply the rendered runId}"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-k() { kubectl -n "$ns" "$@"; }
+k() { kubectl --context "$NS_KUBE_CONTEXT" -n "$ns" "$@"; }
+owner=$(kubectl --context "$NS_KUBE_CONTEXT" get namespace "$ns" -o jsonpath='{.metadata.labels.nightscout\.org/run-id}')
+[ "$owner" = "$NS_RUN_ID" ] || { echo 'REFUSED: namespace run ownership does not match' >&2; exit 65; }
 
 seed() {
-  local compose=$1 grants
-  grants="$compose/ownership-admin/ownership-grants.js"
-  [ -f "$grants" ] || { echo "seed: $grants is missing (the Compose ownership overlay)" >&2; exit 66; }
+  local compose=$1 # retained CLI argument for compatibility; no external asset dependency
   head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$work/postgres-password"
   (
     cd "$work"
@@ -41,36 +41,49 @@ seed() {
   k create secret generic ns-postgres-password --from-file=postgres-password="$work/postgres-password" >/dev/null
   k create secret generic ns-vault-tls --from-file=server.crt="$work/server.crt" --from-file=server.key="$work/server.key" >/dev/null
   k create secret generic ns-ca --from-file=ca.crt="$work/ca.crt" >/dev/null
-  k create configmap ownership-grants --from-file=ownership-grants.js="$grants" >/dev/null
-  echo '{"state":"seeded","secrets":["ns-postgres-password","ns-vault-tls","ns-ca"],"configMaps":["ownership-grants"]}'
+  k label secret ns-postgres-password ns-vault-tls ns-ca "nightscout.org/run-id=$NS_RUN_ID" >/dev/null
+  echo '{"state":"seeded","secrets":["ns-postgres-password","ns-vault-tls","ns-ca"],"configMaps":[]}'
 }
 
 publish() {
-  local image=$1 role dir
-  k wait --for=condition=complete job/provision --timeout=15s >/dev/null
-  # A reader Pod with the state volume read-only, no network use, no service-account token.
-  k apply -f - >/dev/null <<EOF
-{"apiVersion":"v1","kind":"Pod","metadata":{"name":"provision-state-reader","labels":{"app.kubernetes.io/part-of":"nightscout-multitenant","app.kubernetes.io/component":"provision"}},
- "spec":{"restartPolicy":"Never","automountServiceAccountToken":false,"enableServiceLinks":false,
-  "securityContext":{"fsGroup":1000,"seccompProfile":{"type":"RuntimeDefault"}},
-  "containers":[{"name":"reader","image":"$image","imagePullPolicy":"IfNotPresent","command":["sleep","300"],
-   "securityContext":{"runAsUser":1000,"runAsGroup":1000,"runAsNonRoot":true,"readOnlyRootFilesystem":true,"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}},
-   "volumeMounts":[{"name":"state","mountPath":"/state","readOnly":true}]}],
-  "volumes":[{"name":"state","persistentVolumeClaim":{"claimName":"provision-state","readOnly":true}}]}}
-EOF
-  k wait --for=condition=Ready pod/provision-state-reader --timeout=120s >/dev/null
-  k exec provision-state-reader -- tar -C /state -cf - api realtime evaluator pgstream tenant-admin ui ownership-admin | tar -C "$work" -xf -
-  k delete pod provision-state-reader --wait=false >/dev/null
-  for role in api realtime evaluator tenant-admin ui; do
-    args=()
-    for file in "$work/$role"/*.json; do
-      [ "$(basename "$file")" = complete.json ] || args+=(--from-file="$(basename "$file")=$file")
+  local image=$1 role pod uid file member kind filename args # image retained as a compatibility argument; creates no reader Pod
+  mapfile -t pods < <(k get pods -l "job-name=provision,nightscout.org/run-id=$NS_RUN_ID" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
+  [ "${#pods[@]}" -eq 1 ] || { echo 'publish: requires exactly one owned provision Pod' >&2; exit 66; }
+  pod=${pods[0]}
+  uid=$(k get pod "$pod" -o jsonpath='{.metadata.uid}')
+  k exec "$pod" -c done -- test -f /state/.ready
+  # Private archive flows directly into a private temporary directory, never a log.
+  k exec "$pod" -c done -- tar -C /state -cf - api realtime evaluator pgstream tenant-admin ui admin primer | tar -C "$work" -xf -
+  [ "$(k get pod "$pod" -o jsonpath='{.metadata.uid}')" = "$uid" ] || { echo 'publish: provision Pod changed' >&2; exit 65; }
+  for member in api evaluator realtime; do
+    for kind in config env operation; do
+      test -f "$work/admin/verification/$member.$kind.json"
     done
+  done
+  test -f "$work/primer/expected-verification.json"
+  for role in api realtime evaluator tenant-admin ui admin primer; do
+    args=()
+    for file in "$work/$role"/*; do
+      [ -f "$file" ] && [ "$(basename "$file")" != complete.json ] && args+=(--from-file="$(basename "$file")=$file")
+    done
+    if [ "$role" = admin ]; then
+      for member in api evaluator realtime; do
+        for kind in config env operation; do
+          filename="$member.$kind.json"
+          test -f "$work/admin/verification/$filename"
+          args+=(--from-file="verification-$filename=$work/admin/verification/$filename")
+        done
+      done
+    fi
     k create secret generic "ns-config-$role" "${args[@]}" >/dev/null
+    k label secret "ns-config-$role" "nightscout.org/run-id=$NS_RUN_ID" >/dev/null
   done
   k create secret generic ns-config-pgstream --from-file=pgstream.yaml="$work/pgstream/pgstream.yaml" >/dev/null
-  k create secret generic ns-config-admin --from-file=env.json="$work/ownership-admin/env.json" --from-file=admin.json="$work/ownership-admin/admin.json" >/dev/null
-  echo '{"state":"published","secrets":["ns-config-api","ns-config-realtime","ns-config-evaluator","ns-config-pgstream","ns-config-tenant-admin","ns-config-ui","ns-config-admin"]}'
+  k label secret ns-config-pgstream "nightscout.org/run-id=$NS_RUN_ID" >/dev/null
+  k exec "$pod" -c done -- touch /state/.exported
+  k wait --for=condition=complete job/provision --timeout=30s >/dev/null
+  echo '{"state":"published","secrets":["ns-config-api","ns-config-realtime","ns-config-evaluator","ns-config-pgstream","ns-config-tenant-admin","ns-config-ui","ns-config-admin","ns-config-primer"]}'
+
 }
 
 case $cmd in

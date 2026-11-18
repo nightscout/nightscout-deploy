@@ -1,0 +1,144 @@
+{
+  "namespace": "ns-synth-k1-components-20261118",
+  "sourceCommit": "47588e9e15f8c43f37bf6a88928495687b41f05a",
+  "imageDeployCommit": "5c4614d69be447fcdc7ab001c4cf9b9d77b9c81d",
+  "bindingIdentity": "SYNTHETIC_RENDER_ONLY",
+  "profile": "existing-capacity",
+  "runId": "k1-components-tiny",
+  "images": {
+    "app": "example.invalid/nightscout@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "postgres": "example.invalid/postgres-wal2json@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+  },
+  "storage": {
+    "mode": "disposable"
+  },
+  "imagePullSecrets": [
+    {
+      "name": "synthetic-registry-reference"
+    }
+  ],
+  "applicationTopology": "separate-k1",
+  "tenantCount": 2,
+  "resourceAccounting": "requests-v1",
+  "resources": {
+    "api": {
+      "requests": {
+        "cpu": "250m",
+        "memory": "448Mi",
+        "ephemeral-storage": "64Mi"
+      }
+    },
+    "evaluator": {
+      "requests": {
+        "cpu": "250m",
+        "memory": "256Mi",
+        "ephemeral-storage": "64Mi"
+      }
+    },
+    "realtime": {
+      "requests": {
+        "cpu": "150m",
+        "memory": "192Mi",
+        "ephemeral-storage": "64Mi"
+      }
+    },
+    "tenant-admin": {
+      "requests": {
+        "cpu": "100m",
+        "memory": "128Mi",
+        "ephemeral-storage": "64Mi"
+      }
+    },
+    "vault-agent": {
+      "requests": {
+        "cpu": "30m",
+        "memory": "64Mi",
+        "ephemeral-storage": "64Mi"
+      }
+    },
+    "postgres": {
+      "requests": {
+        "cpu": "500m",
+        "memory": "512Mi",
+        "ephemeral-storage": "64Mi"
+      }
+    },
+    "vault": {
+      "requests": {
+        "cpu": "100m",
+        "memory": "128Mi",
+        "ephemeral-storage": "64Mi"
+      }
+    },
+    "pgstream": {
+      "requests": {
+        "cpu": "100m",
+        "memory": "192Mi",
+        "ephemeral-storage": "64Mi"
+      }
+    },
+    "admin": {
+      "requests": {
+        "cpu": "100m",
+        "memory": "128Mi",
+        "ephemeral-storage": "64Mi"
+      }
+    },
+    "ui": {
+      "requests": {
+        "cpu": "100m",
+        "memory": "128Mi",
+        "ephemeral-storage": "64Mi"
+      }
+    },
+    "nginx": {
+      "requests": {
+        "cpu": "50m",
+        "memory": "64Mi",
+        "ephemeral-storage": "64Mi"
+      }
+    },
+    "bootstrap": {
+      "requests": {
+        "cpu": "250m",
+        "memory": "512Mi",
+        "ephemeral-storage": "64Mi"
+      }
+    },
+    "vault-kubernetes-auth": {
+      "requests": {
+        "cpu": "100m",
+        "memory": "128Mi",
+        "ephemeral-storage": "64Mi"
+      }
+    },
+    "wait-stores": {
+      "requests": {
+        "cpu": "25m",
+        "memory": "32Mi",
+        "ephemeral-storage": "64Mi"
+      }
+    },
+    "done": {
+      "requests": {
+        "cpu": "25m",
+        "memory": "32Mi",
+        "ephemeral-storage": "64Mi"
+      }
+    },
+    "primer": {
+      "requests": {
+        "cpu": "250m",
+        "memory": "256Mi",
+        "ephemeral-storage": "64Mi"
+      }
+    },
+    "install-config": {
+      "requests": {
+        "cpu": "30m",
+        "memory": "64Mi",
+        "ephemeral-storage": "64Mi"
+      }
+    }
+  }
+}

@@ -1,0 +1,282 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/nightscout/staging-inputs.schema.json",
+  "title": "Synthetic staging Kubernetes binding inputs",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "namespace",
+    "sourceCommit",
+    "imageDeployCommit",
+    "bindingIdentity",
+    "runId",
+    "profile",
+    "images",
+    "storage"
+  ],
+  "properties": {
+    "namespace": {
+      "type": "string"
+    },
+    "prefix": {
+      "const": "nsdemo"
+    },
+    "sourceCommit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "imageDeployCommit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "bindingIdentity": {
+      "type": "string"
+    },
+    "runId": {
+      "type": "string"
+    },
+    "profile": {
+      "enum": [
+        "standard",
+        "existing-capacity"
+      ]
+    },
+    "tenantCount": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10000
+    },
+    "provisionDeadlineSeconds": {
+      "type": "integer",
+      "minimum": 60,
+      "maximum": 3600
+    },
+    "images": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "app",
+        "postgres"
+      ],
+      "properties": {
+        "app": {
+          "type": "string",
+          "pattern": "@sha256:[0-9a-f]{64}$"
+        },
+        "postgres": {
+          "type": "string",
+          "pattern": "@sha256:[0-9a-f]{64}$"
+        },
+        "vault": {
+          "type": "string",
+          "pattern": "@sha256:[0-9a-f]{64}$"
+        },
+        "nginx": {
+          "type": "string",
+          "pattern": "@sha256:[0-9a-f]{64}$"
+        }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "requests": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "cpu": {
+                "type": "string",
+                "pattern": "^[1-9][0-9]*(m|Mi|Gi)?$"
+              },
+              "memory": {
+                "type": "string",
+                "pattern": "^[1-9][0-9]*(m|Mi|Gi)?$"
+              },
+              "ephemeral-storage": {
+                "type": "string",
+                "pattern": "^[1-9][0-9]*(m|Mi|Gi)?$"
+              }
+            }
+          },
+          "limits": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "cpu": {
+                "type": "string",
+                "pattern": "^[1-9][0-9]*(m|Mi|Gi)?$"
+              },
+              "memory": {
+                "type": "string",
+                "pattern": "^[1-9][0-9]*(m|Mi|Gi)?$"
+              },
+              "ephemeral-storage": {
+                "type": "string",
+                "pattern": "^[1-9][0-9]*(m|Mi|Gi)?$"
+              }
+            }
+          }
+        }
+      }
+    },
+    "placement": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "nodeSelector": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "tolerations": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "affinity": {
+          "type": "object"
+        },
+        "topologySpreadConstraints": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "nodeName": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "placementByWorkload": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "nodeSelector": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "tolerations": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "affinity": {
+            "type": "object"
+          },
+          "topologySpreadConstraints": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    "storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "dynamic",
+            "disposable",
+            "existing-claim"
+          ]
+        },
+        "postgres": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*(m|Mi|Gi)?$"
+        },
+        "vault": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*(m|Mi|Gi)?$"
+        },
+        "provisionState": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*(m|Mi|Gi)?$"
+        },
+        "claims": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "postgres": {
+              "type": "string",
+              "minLength": 1
+            },
+            "vault": {
+              "type": "string",
+              "minLength": 1
+            },
+            "provisionState": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "cohort": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "replicas": {
+          "const": 1
+        },
+        "terminationGraceSeconds": {
+          "type": "integer",
+          "minimum": 30
+        }
+      }
+    },
+    "evaluatorPool": {
+      "type": "object",
+      "properties": {
+        "partition": {
+          "const": "off"
+        }
+      },
+      "additionalProperties": false
+    },
+    "vaultAgent": {
+      "type": "object"
+    },
+    "edge": {
+      "type": "object"
+    },
+    "applicationTopology": {
+      "enum": [
+        "cohort",
+        "separate-k1"
+      ]
+    }
+  }
+}

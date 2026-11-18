@@ -10,7 +10,8 @@
 //                                  ClusterIP only, NetworkPolicy admits operator Pods only
 //   ui, edge (Deployments)         the shipped pages and the reference nginx (consumer entry)
 //   postgres, vault (StatefulSets) the backing stores, same image digests as Compose
-//   provision (Job)                imported bootstrap -> Vault Kubernetes auth -> ownership grants
+//   provision (Job)                source bootstrap -> Vault Kubernetes auth -> document proof
+//   primer (Job)                   private admin tenant provision and platform verification
 //
 // No credential is rendered. Every private document reaches a Pod through a Secret that
 // scripts/secrets.sh creates at apply time from generated or provisioned material; this file
@@ -65,17 +66,51 @@
       serviceType: 'ClusterIP',
       port: 8080,
     },
-    storage: { postgres: '1Gi', vault: '256Mi', provisionState: '64Mi' },
+    imageDeployCommit: (import '../../assets/source-contract.json').deployCommit, // app bytes, not binding commit
+    bindingIdentity: 'UNSET',
+    runId: 'synthetic-preview',
+    profile: 'standard',
+    applicationTopology: 'cohort',
+    resourceAccounting: 'limits-v1',
+    tenantCount: 2,
+    provisionDeadlineSeconds: 900,
+    imagePullSecrets: [],
+    placement: {},
+    placementByWorkload: {},
+    resources: {
+      [name]: {
+        requests: { cpu: '25m', memory: '32Mi', 'ephemeral-storage': '16Mi' },
+        limits: { cpu: '500m', memory: '256Mi', 'ephemeral-storage': '128Mi' },
+      }
+      for name in ['install-config', 'vault-agent', 'wait-stores', 'bootstrap', 'vault-kubernetes-auth', 'done', 'primer', 'api', 'realtime', 'evaluator', 'tenant-admin', 'admin', 'ui', 'pgstream', 'postgres', 'nginx', 'vault']
+    },
+    storage: { mode: 'dynamic', postgres: '1Gi', vault: '256Mi', provisionState: '64Mi', claims: {} },
   },
 
-  new(overrides):: {
+  raw(overrides):: {
     local c = std.mergePatch($.defaults, overrides),
     local ns = c.namespace,
-    assert std.isString(c.sourceCommit) && std.length(c.sourceCommit) == 40 : 'sourceCommit must be the full 40-hex commit',
-    assert std.isString(c.images.app) : 'images.app is required',
+    local source = import '../../assets/source-contract.json',
+    local helper = if std.objectHas(source, 'runtimeBootstrapHelper') then source.runtimeBootstrapHelper else null,
+    local helperAnnotations = if helper == null then {} else {
+      'nightscout.org/bootstrap-helper-commit': helper.deployCommit,
+      'nightscout.org/bootstrap-helper-sha256': helper.sha256,
+      'nightscout.org/instance-acceptance': 'PENDING',
+    },
+    local verifiedRoles = ['api', 'evaluator', 'realtime'],
+    local adminFiles = ['env.json', 'config.json', 'vault-token', 'management-vault-token'],
+    local targetNames = [role + '.' + kind + '.json' for role in verifiedRoles for kind in ['config', 'env', 'operation']],
+    local docRefs(role) = if role == 'admin' then {
+      items: [{ key: name, path: name } for name in adminFiles] +
+             [{ key: 'verification-' + name, path: 'verification/' + name } for name in targetNames],
+    } else {},
+    assert std.isString(c.sourceCommit) && std.length(c.sourceCommit) == 40 && std.length([x for x in std.stringChars(c.sourceCommit) if !std.member(std.stringChars('0123456789abcdef'),x)]) == 0 : 'sourceCommit must be the full 40-hex commit',
+    assert c.sourceCommit == source.coreCommit && c.imageDeployCommit == source.deployCommit : 'C3 source contract mismatch',
+    assert std.isString(c.images.app) && std.length(std.split(c.images.app, '@')) == 2 && std.startsWith(std.split(c.images.app, '@')[1], 'sha256:') && std.length(std.split(c.images.app, '@')[1]) == 71 : 'images.app requires an immutable manifest digest',
     assert std.isString(c.images.postgres) && std.length(std.split(c.images.postgres, '@')) == 2 && std.startsWith(std.split(c.images.postgres, '@')[1], 'sha256:') && std.length(std.split(c.images.postgres, '@')[1]) == 71 : 'images.postgres requires an explicit maintained PostgreSQL/wal2json image digest',
+    assert c.prefix == 'nsdemo' : 'source bootstrap supports only prefix nsdemo',
     assert c.cohort.replicas == 1 : 'the preview renders exactly one cohort Pod',
-    assert std.member(['off', 'on'], c.evaluatorPool.partition) : 'evaluatorPool.partition is off or on',
+    assert c.evaluatorPool.partition == 'off' : 'C3 requires the native K=1 evaluator without pool placement',
 
     local uid = 1000,
     local part = 'nightscout-multitenant',
@@ -108,7 +143,7 @@
     // load-env.js refuses both, so an init step copies them into a memory-backed emptyDir as
     // regular 0400 files owned by the runtime uid. Kubernetes waits for the Secret to exist.
     local configVolumes(role) = [
-      { name: 'secret-' + role, secret: { secretName: 'ns-config-' + role, defaultMode: 288 } },
+      { name: 'secret-' + role, secret: { secretName: 'ns-config-' + role, defaultMode: 288 } + docRefs(role) },
       { name: 'config-' + role, emptyDir: { medium: 'Memory', sizeLimit: '1Mi' } },
     ],
     // An emptyDir root is root-owned 3777 under fsGroup (measured 2026-11-10). Core refuses
@@ -120,7 +155,27 @@
       name: 'install-config',
       image: c.images.app,
       imagePullPolicy: 'IfNotPresent',
-      command: ['sh', '-c', 'set -eu; umask 077; if [ -d /run/ns-ipc-volume ]; then mkdir -m 0700 -p /run/ns-ipc-volume/d; fi; for r in "$@"; do mkdir -m 0700 -p /run/ns-config/"$r"/d; cp /run/ns-secret/"$r"/*.json /run/ns-config/"$r"/d/; done', 'install-config'] + roles,
+      env: [{ name: 'NS_BIND_ADMIN_ADDRESS', valueFrom: { fieldRef: { fieldPath: 'status.podIP' } } }],
+      command: ['node', '-e', |||
+        const fs=require('node:fs');process.umask(0o077);
+        if(fs.existsSync('/run/ns-ipc-volume'))fs.mkdirSync('/run/ns-ipc-volume/d',{recursive:true,mode:0o700});
+        for(const role of process.argv.slice(1)){
+          const dir='/run/ns-config/'+role+'/d';fs.mkdirSync(dir,{recursive:true,mode:0o700});
+          const input='/run/ns-secret/'+role;
+          const copy=(from,to)=>{
+            for(const name of fs.readdirSync(from).filter(n=>!n.startsWith('.'))){
+              const source=from+'/'+name,destination=to+'/'+name;
+              if(role==='admin'&&from===input&&name==='verification'){
+                fs.mkdirSync(destination,{mode:0o700});copy(source,destination);continue;
+              }
+              let bytes=fs.readFileSync(source);
+              if(role==='admin'&&from===input&&name==='env.json'){const env=JSON.parse(bytes);env.ADMIN_HOSTNAME=process.env.NS_BIND_ADMIN_ADDRESS;bytes=Buffer.from(JSON.stringify(env));}
+              fs.writeFileSync(destination,bytes,{mode:0o400,flag:'wx'});
+            }
+          };
+          copy(input,dir);
+        }
+      |||] + roles,
       securityContext: hardened,
       volumeMounts: std.flattenArrays([
         [{ name: 'secret-' + r, mountPath: '/run/ns-secret/' + r, readOnly: true }, { name: 'config-' + r, mountPath: '/run/ns-config/' + r }]
@@ -223,7 +278,8 @@
               containers: [{
                 name: 'postgres',
                 image: c.images.postgres,
-                command: ['postgres', '-c', 'wal_level=logical', '-c', 'max_replication_slots=4', '-c', 'max_wal_senders=4', '-c', 'max_slot_wal_keep_size=256MB', '-c', 'output_plugin_libraries=wal2json'],
+                // Preserve docker-entrypoint.sh: it owns initdb before postgres starts.
+                args: ['postgres', '-c', 'wal_level=logical', '-c', 'max_replication_slots=4', '-c', 'max_wal_senders=4', '-c', 'max_slot_wal_keep_size=256MB', '-c', 'output_plugin_libraries=wal2json', '-c', 'max_connections=140', '-c', 'reserved_connections=40'],
                 env: [
                   { name: 'POSTGRES_DB', value: 'nightscout_compose_test' },
                   { name: 'POSTGRES_PASSWORD_FILE', value: '/run/secrets/postgres-password' },
@@ -292,7 +348,7 @@
                 ],
               }],
               volumes: [
-                { name: 'logs', emptyDir: {} },
+                { name: 'logs', emptyDir: { sizeLimit: '16Mi' } },
                 // Compose mounts server.key 0644 because the image drops to its own uid.
                 { name: 'tls', secret: { secretName: 'ns-vault-tls', defaultMode: 292, items: [{ key: 'server.crt', path: 'server.crt' }, { key: 'server.key', path: 'server.key' }] } },
                 ca,
@@ -465,21 +521,16 @@
                 name: 'admin',
                 image: c.images.app,
                 imagePullPolicy: 'IfNotPresent',
-                // admin-entrypoint.js of the Compose overlay, inline: private environment
-                // document, then core's CLI.
-                command: ['node', '-e', "require('/opt/app/deploy/multitenant/load-env');require('/opt/app/lib/cli').main(['multitenant','admin'])"],
-                env: [
-                  { name: 'ADMIN_HOSTNAME', valueFrom: { fieldRef: { fieldPath: 'status.podIP' } } },
-                  { name: 'ADMIN_PORT', value: '1342' },
-                  { name: 'ADMIN_INSECURE_BIND_ACKNOWLEDGED', value: 'true' },
-                  { name: 'MULTITENANT_ADMIN_CONFIG', value: '/run/ns-config/admin.json' },
-                ],
+                // Source-owned registry admin, with only the private bind address adapted.
+                command: ['node', 'deploy/multitenant/entrypoint.js', 'admin'],
+
                 ports: [{ name: 'int-admin', containerPort: 1342 }],
-                readinessProbe: { tcpSocket: { port: 'int-admin' }, periodSeconds: 2, timeoutSeconds: 3, failureThreshold: 30 },
+                env: [{ name: 'NODE_EXTRA_CA_CERTS', value: '/run/ns-ca/ca.crt' }],
+                readinessProbe: { exec: { command: ['node', 'deploy/multitenant/health.js', 'admin'] }, periodSeconds: 2, timeoutSeconds: 3, failureThreshold: 30 },
                 securityContext: hardened,
-                volumeMounts: [configMount('admin'), tmpMount],
+                volumeMounts: [configMount('admin'), caMount, tmpMount],
               }],
-              volumes: configVolumes('admin') + [tmp],
+              volumes: configVolumes('admin') + [ca, tmp],
             },
           },
         },
@@ -513,7 +564,7 @@
                 name: 'ui',
                 image: c.images.app,
                 imagePullPolicy: 'IfNotPresent',
-                command: ['node', 'deploy/multitenant/ui.js'],
+                command: ['node', '-r', './deploy/multitenant/load-env.js', 'deploy/multitenant/ui.js'],
                 env: [
                   { name: 'NODE_EXTRA_CA_CERTS', value: '/run/ns-ca/ca.crt' },
                   { name: 'UI_HOSTNAME', value: '0.0.0.0' },
@@ -543,8 +594,8 @@
         apiVersion: 'v1',
         kind: 'ConfigMap',
         metadata: meta('edge-nginx', 'edge'),
-        // The Compose tree's nginx.conf, byte for byte.
-        data: { 'nginx.conf': importstr '../../../compose/multitenant/nginx.conf' },
+        // Default source bytes stay exact; selected edge settings change only two directives.
+        data: { 'nginx.conf': (import 'edge-configuration.libsonnet').render(importstr '../../assets/nginx.conf', c.edge) },
       },
       deployment: {
         apiVersion: 'apps/v1',
@@ -582,6 +633,11 @@
 
     // ---------------------------------------------------------------- provisioning
     provision: {
+      [if helper != null then 'bootstrapHelper']: {
+        apiVersion: 'v1', kind: 'ConfigMap', immutable: true,
+        metadata: meta('bootstrap-diagnostic', 'provision') + { annotations: helperAnnotations },
+        data: { 'bootstrap.js': importstr '../../assets/bootstrap-helper.js' },
+      },
       state: {
         apiVersion: 'v1',
         kind: 'PersistentVolumeClaim',
@@ -592,7 +648,12 @@
         apiVersion: 'v1',
         kind: 'ConfigMap',
         metadata: meta('provision-scripts', 'provision'),
-        data: { 'vault-kubernetes-auth.js': importstr '../../ops/vault-kubernetes-auth.js' },
+        data: {
+          'vault-kubernetes-auth.js': importstr '../../ops/vault-kubernetes-auth.js',
+          'candidate-documents.cjs': importstr '../../ops/candidate-documents.cjs',
+          'source-contract.json': std.manifestJson((import '../../assets/source-contract.json') + { applicationTopology: c.applicationTopology }),
+          'network-documents.cjs': importstr '../../ops/network-documents.cjs',
+        },
       },
       // Explicit provisioning, separate from serving startup. Steps run in order as init
       // containers; no retry (backoffLimit 0) so an uncertain result is never re-run silently.
@@ -600,11 +661,12 @@
       job: {
         apiVersion: 'batch/v1',
         kind: 'Job',
-        metadata: meta('provision', 'provision'),
+        metadata: meta('provision', 'provision') + (if helper != null then { annotations: helperAnnotations } else {}),
         spec: {
           backoffLimit: 0,
+          activeDeadlineSeconds: c.provisionDeadlineSeconds,
           template: {
-            metadata: { labels: labels('provision') },
+            metadata: { labels: labels('provision') } + (if helper != null then { annotations: helperAnnotations } else {}),
             spec: {
               restartPolicy: 'Never',
               automountServiceAccountToken: false,
@@ -619,16 +681,19 @@
                   { name: 'NODE_EXTRA_CA_CERTS', value: '/run/ns-ca/ca.crt' },
                   { name: 'VAULT_ADDR', value: 'https://vault:8200' },
                   { name: 'NS_BOOTSTRAP_OUTPUT', value: '/state' },
+                  { name: 'NS_SOURCE_COMMIT', value: c.sourceCommit },
+                  { name: 'NS_DEPLOY_COMMIT', value: if c.imageDeployCommit == null then c.sourceCommit else c.imageDeployCommit },
                 ] + env,
                 securityContext: hardened,
                 volumeMounts: [
                   { name: 'state', mountPath: '/state' },
-                  { name: 'postgres-password', mountPath: '/run/secrets', readOnly: true },
                   caMount,
                   { name: 'scripts', mountPath: '/run/ns-overlay', readOnly: true },
-                  { name: 'ownership-grants', mountPath: '/run/ns-overlay-ownership', readOnly: true },
                   tmpMount,
-                ],
+                ] + (if name == 'bootstrap' then [{ name: 'postgres-password', mountPath: '/run/secrets', readOnly: true }] else []) +
+                    (if helper != null && name == 'bootstrap' then [{
+                      name: 'bootstrap-diagnostic', mountPath: helper.mountPath, subPath: 'bootstrap.js', readOnly: true,
+                    }] else []),
               },
               initContainers: [
                 // Compose depends_on: postgres and vault healthy. TCP reachability here; the
@@ -640,6 +705,9 @@
                 |||], []),
                 step('bootstrap', ['node', 'deploy/multitenant/bootstrap.js'], [
                   { name: 'NS_COMPOSE_BOOTSTRAP', value: '1' },
+                  { name: 'NS_PGSTREAM', value: '1' },
+                  { name: 'NS_DEMO_TENANTS', value: std.toString(c.tenantCount) },
+                  { name: 'NS_API_REPLICAS', value: '1' },
                   { name: 'NS_POSTGRES_HOST', value: 'postgres' },
                   { name: 'NS_POSTGRES_DATABASE', value: 'nightscout_compose_test' },
                   { name: 'NS_POSTGRES_PASSWORD_FILE', value: '/run/secrets/postgres-password' },
@@ -652,26 +720,60 @@
                   { name: 'NS_VAULT_AGENT_TOKEN_TTL', value: c.vaultAgent.tokenTtl },
                   { name: 'NS_VAULT_AGENT_TOKEN_MAX_TTL', value: c.vaultAgent.tokenMaxTtl },
                 ]),
-                step('ownership-grants', ['node', '/run/ns-overlay-ownership/ownership-grants.js', 'provision'], [
-                  { name: 'NS_OWNERSHIP_GRANTS', value: '1' },
-                  { name: 'NS_POSTGRES_PASSWORD_FILE', value: '/run/secrets/postgres-password' },
-                ]),
+
               ],
               containers: [
-                step('done', ['node', '-e', "const fs=require('node:fs');for(const f of ['bootstrap/complete.json','vault-agent/complete.json','ownership-admin/complete.json'])if(!fs.existsSync('/state/'+f))process.exit(1);process.stdout.write(JSON.stringify({state:'provisioned'})+'\\n')"], []),
+                // Keep this container alive for private tar export, including disposable state.
+                // Publisher acknowledges only after every Secret has been created. No private log.
+                step('done', ['node', '/run/ns-overlay/candidate-documents.cjs', 'hold'], [
+                  { name: 'NS_FIXTURE_NAMESPACE', valueFrom: { fieldRef: { fieldPath: 'metadata.namespace' } } },
+                  { name: 'NS_FIXTURE_RUN_ID', valueFrom: { fieldRef: { fieldPath: "metadata.labels['nightscout.org/run-id']" } } },
+                ]),
               ],
               volumes: [
                 { name: 'state', persistentVolumeClaim: { claimName: 'provision-state' } },
                 { name: 'postgres-password', secret: { secretName: 'ns-postgres-password', defaultMode: 288 } },
                 ca,
                 { name: 'scripts', configMap: { name: 'provision-scripts' } },
-                // The Compose ownership overlay's script, from a ConfigMap made at apply time
-                // (scripts/secrets.sh seed) out of ../compose/ownership-admin/ownership-grants.js.
-                { name: 'ownership-grants', configMap: { name: 'ownership-grants' } },
                 tmp,
-              ],
+              ] + (if helper == null then [] else [{
+                name: 'bootstrap-diagnostic', configMap: {
+                  name: 'bootstrap-diagnostic', defaultMode: 292,
+                },
+              }]),
             },
           },
+        },
+      },
+    },
+
+    // Explicit tenant provisioning through the source-owned admin API. Apply/unsuspend
+    // after document export and admin readiness. Verify before starting the serving cohort.
+    primer: {
+      job: {
+        apiVersion: 'batch/v1', kind: 'Job', metadata: meta('primer', 'operator'),
+        spec: { suspend: true, backoffLimit: 0, activeDeadlineSeconds: c.provisionDeadlineSeconds,
+          template: { metadata: { labels: labels('operator') }, spec: {
+            restartPolicy: 'Never', automountServiceAccountToken: false, enableServiceLinks: false,
+            securityContext: podSecurity,
+            initContainers: [installConfig(['primer']), { name: 'primer', image: c.images.app,
+              command: ['node', 'deploy/multitenant/prime.js', 'provision'],
+              env: [{ name: 'NS_PRIMER_STATE', value: '/run/ns-primer' }],
+              securityContext: hardened,
+              volumeMounts: [{ name: 'config-primer', mountPath: '/run/ns-primer', subPath: 'd' }, tmpMount],
+            }],
+            containers: [{ name: 'done', image: c.images.app, securityContext: hardened,
+              command: ['node', '/run/ns-overlay/candidate-documents.cjs', 'verify'],
+              env: [
+                { name: 'NS_FIXTURE_NAMESPACE', valueFrom: { fieldRef: { fieldPath: 'metadata.namespace' } } },
+                { name: 'NS_FIXTURE_RUN_ID', valueFrom: { fieldRef: { fieldPath: "metadata.labels['nightscout.org/run-id']" } } },
+              ],
+              readinessProbe: { exec: { command: ['test', '-s', '/run/ns-primer/verified.json'] }, periodSeconds: 2 },
+              volumeMounts: [{ name: 'config-primer', mountPath: '/run/ns-primer', subPath: 'd' },
+                { name: 'scripts', mountPath: '/run/ns-overlay', readOnly: true }, tmpMount],
+            }],
+            volumes: configVolumes('primer') + [tmp, { name: 'scripts', configMap: { name: 'provision-scripts' } }],
+          } },
         },
       },
     },
@@ -698,9 +800,10 @@
       cohortFromEdge: np('cohort-from-edge', { matchLabels: labels('cohort') }, [sel('edge')], [{ port: 1337, protocol: 'TCP' }, { port: 1339, protocol: 'TCP' }]),
       uiFromEdge: np('ui-from-edge', { matchLabels: labels('ui') }, [sel('edge')], [{ port: 1340, protocol: 'TCP' }]),
       adminFromOperator: np('admin-from-operator', { matchLabels: labels('admin') }, [sel('operator')], [{ port: 1342, protocol: 'TCP' }]),
+      cohortFromOperator: np('cohort-from-operator', { matchLabels: labels('cohort') }, [sel('operator')], [{ port: 1337, protocol: 'TCP' }, { port: 1339, protocol: 'TCP' }]),
       cohortFromPgstream: np('cohort-from-pgstream', { matchLabels: labels('cohort') }, [sel('pgstream')], [{ port: 19913, protocol: 'TCP' }]),
-      postgresFromApp: np('postgres-from-app', { matchLabels: labels('postgres') }, [sel('cohort'), sel('pgstream'), sel('admin'), sel('provision'), sel('operator')], [{ port: 5432, protocol: 'TCP' }]),
-      vaultFromApp: np('vault-from-app', { matchLabels: labels('vault') }, [sel('cohort'), sel('provision'), sel('vault')], [{ port: 8200, protocol: 'TCP' }]),
+      postgresFromApp: np('postgres-from-app', { matchLabels: labels('postgres') }, [sel('cohort'), sel('pgstream'), sel('admin'), sel('ui'), sel('provision')], [{ port: 5432, protocol: 'TCP' }]),
+      vaultFromApp: np('vault-from-app', { matchLabels: labels('vault') }, [sel('cohort'), sel('admin'), sel('provision'), sel('vault')], [{ port: 8200, protocol: 'TCP' }]),
     },
 
     // ---------------------------------------------------------------- inventory (not applied)
@@ -711,14 +814,115 @@
       prefix: c.prefix,
       sourceCommit: c.sourceCommit,
       evaluatorPool: c.evaluatorPool,
-      postgresIdentities: {
-        api: ['alarm', 'api', 'lifetime_api', 'readiness', 'root_writer'],
-        realtime: ['lifetime_realtime', 'realtime'],
-        evaluator: ['evaluator', 'lifetime_evaluator', 'outbox', 'suppression'],
-        pgstream: ['pgstream'],
-        'tenant-admin': ['lifetime_tenant_admin', 'owner_reader', 'owner_writer'],
-        admin: ['ownership_operator'],
-      },
+      postgresIdentities: source.postgresIdentities,
+
     },
   },
+
+  // Platform binding only: no role document construction or application lifecycle logic here.
+  new(overrides)::
+    local c = std.mergePatch($.defaults, overrides);
+    local original = $.raw(overrides);
+    assert std.member(['cohort', 'separate-k1'], c.applicationTopology) : 'unknown applicationTopology';
+    local source = import '../../assets/source-contract.json';
+    local helper = if std.objectHas(source, 'runtimeBootstrapHelper') then source.runtimeBootstrapHelper else null;
+    assert std.member(['limits-v1', 'requests-v1'], c.resourceAccounting) : 'unknown resource accounting';
+    local raw = if c.applicationTopology == 'separate-k1' then (import 'components.libsonnet').render(original, c) else original;
+    local collect(v) = if std.isArray(v) then std.flattenArrays([collect(x) for x in v]) else if !std.isObject(v) then [] else if std.objectHas(v, 'apiVersion') && std.objectHas(v, 'kind') then [v] else std.flattenArrays([collect(v[k]) for k in std.objectFields(v)]);
+    assert std.member(['standard', 'existing-capacity'], c.profile) : 'unknown profile';
+    assert std.member(['dynamic', 'disposable', 'existing-claim'], c.storage.mode) : 'unknown storage mode';
+    assert c.profile != 'existing-capacity' || (c.storage.mode != 'dynamic' && c.edge.serviceType == 'ClusterIP') : 'existing-capacity forbids dynamic storage and public Services';
+    assert c.tenantCount >= 1 && c.tenantCount <= 10000 : 'tenantCount out of source bounds';
+    local ownership = { 'nightscout.org/run-id': c.runId };
+    local identity = {
+      'nightscout.org/source-commit': c.sourceCommit,
+      'nightscout.org/image-deploy-commit': if c.imageDeployCommit == null then c.sourceCommit else c.imageDeployCommit,
+      'nightscout.org/binding-identity': c.bindingIdentity,
+      'nightscout.org/app-image': c.images.app,
+    };
+    local stateVolume(key, name) =
+      if c.storage.mode == 'disposable' then { name: name, emptyDir: { sizeLimit: c.storage[key] } }
+      else { name: name, persistentVolumeClaim: { claimName: c.storage.claims[key] } };
+    local decorate(v) =
+      if std.isArray(v) then [decorate(x) for x in v]
+      else if !std.isObject(v) then v
+      else if std.objectHas(v, 'apiVersion') && std.objectHas(v, 'kind') then
+        local base = if v.kind == 'StatefulSet' && c.storage.mode != 'dynamic' then v + { spec: { [k]: v.spec[k] for k in std.objectFields(v.spec) if k != 'volumeClaimTemplates' } } else v;
+        base + { metadata+: { labels+: ownership, annotations+: identity } } +
+        (if std.member(['Deployment', 'StatefulSet', 'Job'], v.kind) then
+          local name = v.metadata.name;
+          local spec = v.spec.template.spec;
+          local resources(name) =
+            local selected = c.resources[name];
+            local authored = std.objectHas(overrides, 'resources') && std.objectHas(overrides.resources, name) && std.objectHas(overrides.resources[name], 'limits');
+            if c.resourceAccounting == 'requests-v1' then
+              { [k]: selected[k] for k in std.objectFields(selected) if k != 'limits' } +
+              (if authored && overrides.resources[name].limits != null then { limits: overrides.resources[name].limits } else {})
+            else selected;
+          local containers(key) = [x + { resources: resources(x.name) } for x in spec[key]];
+          local placement = c.placement + (if std.objectHas(c.placementByWorkload, name) then c.placementByWorkload[name] else {});
+          { spec+: {
+            template+: { metadata+: { labels+: ownership, annotations+: identity }, spec+: placement + {
+              imagePullSecrets: c.imagePullSecrets,
+              containers: containers('containers'),
+              [if std.objectHas(spec,'initContainers') then 'initContainers']: containers('initContainers'),
+              volumes: [if name == 'provision' && x.name == 'state' && c.storage.mode != 'dynamic' then stateVolume('provisionState','state') else x for x in spec.volumes] +
+                (if c.storage.mode != 'dynamic' && std.member(['postgres','vault'],name) then [stateVolume(name,'data')] else []),
+            } },
+          } }
+        else {})
+      else { [k]: decorate(v[k]) for k in std.objectFields(v) if !(k == 'state' && std.objectHas(v,'job') && c.storage.mode != 'dynamic') };
+    local rendered = decorate(raw);
+    rendered + {
+      inventory:: original.inventory + {
+        applicationTopology: c.applicationTopology,
+        schemaVersion: 1,
+        namespace: c.namespace,
+        runId: c.runId,
+        bindingIdentity: c.bindingIdentity,
+        imageDeployCommit: if c.imageDeployCommit == null then c.sourceCommit else c.imageDeployCommit,
+        images: c.images,
+        profile: c.profile,
+        [if (import 'edge-configuration.libsonnet').selected(c.edge) then 'edgeConfiguration']: (import 'edge-configuration.libsonnet').record(c.edge),
+        resourceAccounting: c.resourceAccounting,
+        storage: c.storage,
+        qualification: { application: 'INHERITED_SEPARATELY', cluster: 'UNMEASURED', capacity: 'UNMEASURED', persistence: 'UNMEASURED' },
+        documents: {
+          api: ['env.json','config.json','operation.json','evaluator-metadata.json','vault-token'],
+          realtime: ['env.json','config.json','operation.json'],
+          evaluator: ['env.json','config.json','operation.json'],
+          'tenant-admin': ['env.json','config.json','operation.json','vault-token'],
+          admin: ['env.json','config.json','vault-token','management-vault-token'] +
+                 [item.path for item in rendered.admin.deployment.spec.template.spec.volumes[0].secret.items if std.startsWith(item.path, 'verification/')],
+          ui: ['env.json','config.json'], pgstream: ['pgstream.yaml'], primer: ['config.json','expected-verification.json'],
+        },
+        ownership: { namespace: c.namespace, label: { 'nightscout.org/run-id': c.runId }, clusterScoped: [{ kind: 'ClusterRoleBinding', name: c.namespace + '-vault-tokenreview' }] },
+        services: { [v.metadata.name]: { selector: v.spec.selector, type: if std.objectHas(v.spec,'type') then v.spec.type else 'ClusterIP', ports: if std.objectHas(v.spec,'ports') then v.spec.ports else [] } for v in [v for v in collect(rendered) if v.kind == 'Service'] },
+        configMaps: ['vault-config','vault-agent-config','edge-nginx','provision-scripts'] + (if helper == null then [] else ['bootstrap-diagnostic']),
+        candidateContract: {
+          platformVerification: (import '../../assets/source-contract.json').platformVerification,
+          diagnosticSha256: (import '../../assets/source-contract.json').diagnosticSha256,
+          imageConfigId: (import '../../assets/source-contract.json').localImageId,
+          producerBinarySha256: (import '../../assets/source-contract.json').producerBinarySha256,
+          nativeCatalogueSha256: (import '../../assets/source-contract.json').nativeCatalogueSha256,
+          sourceAcceptance: source.sourceAcceptance,
+        } + (if helper == null then {} else {runtimeBootstrapHelper: helper, imageSourceAcceptance: source.imageSourceAcceptance}),
+        imagePullSecrets: c.imagePullSecrets,
+        placement: c.placement,
+        placementByWorkload: c.placementByWorkload,
+        export: { provision: { job: 'provision', container: 'done', readyFile: '/state/.ready', acknowledgeFile: '/state/.exported' }, primer: { job: 'primer', container: 'done', privateResult: '/run/ns-primer/provisioned.json', verificationProof: '/run/ns-primer/verified.json', acknowledgeFile: '/run/ns-primer/.exported' } },
+        order: ['seed Secrets', 'apply stores and policies', 'apply provision Job', 'export documents and acknowledge', 'apply private admin', 'apply explicit primer Job and collect admin verification proof', 'apply serving workloads', 'observe correctness', 'delete only owned namespace and tokenreview binding'],
+        workloads: {
+          [v.metadata.name]: {
+            kind: v.kind, replicas: if v.kind == 'Job' then 1 else v.spec.replicas,
+            component: v.spec.template.metadata.labels['app.kubernetes.io/component'],
+            containers: [{ name: x.name, image: x.image, resources: x.resources, command: if std.objectHas(x,'command') then x.command else if std.objectHas(x,'args') then x.args else [],
+              init: !std.member([z.name for z in v.spec.template.spec.containers],x.name) } for x in
+                v.spec.template.spec.containers + (if std.objectHas(v.spec.template.spec,'initContainers') then v.spec.template.spec.initContainers else [])],
+            secrets: [x.secret.secretName for x in v.spec.template.spec.volumes if std.objectHas(x,'secret')],
+          }
+          for v in [v for v in collect(rendered) if std.member(['Deployment', 'StatefulSet', 'Job'], v.kind)]
+        },
+      },
+    },
 }
