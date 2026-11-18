@@ -11,15 +11,17 @@ function documents(docs, layout, urls) {
     const role = name.split('-')[0];
     if (ROLES.includes(role)) config.platformVerification = { namespace, role };
   }
-  docs.admin.config.platformVerification = { namespace, maxAgeMs: 300000, refreshMs: 60000, connectionEnv: 'NS_PLATFORM_VERIFY_PG',
+  // The proof has no lease: the pre-start step issues it once and serving
+  // roles check it at start (core decision platform-application-boundary).
+  docs.admin.config.platformVerification = { namespace, connectionEnv: 'NS_PLATFORM_VERIFY_PG',
     targets: ROLES.map(role => ({ role, configFile: BASE + '/' + role + '.config.json',
       environmentFile: BASE + '/' + role + '.env.json', operationConfigFile: BASE + '/' + role + '.operation.json' })) };
   docs.admin.environment.NS_PLATFORM_VERIFY_PG = urls.platform_verifier;
   return docs;
 }
 function selection(docs) {
-  const { namespace, maxAgeMs, refreshMs } = docs.admin.config.platformVerification;
-  return { namespace, maxAgeMs, refreshMs, roles: [...ROLES] };
+  const { namespace } = docs.admin.config.platformVerification;
+  return { namespace, roles: [...ROLES] };
 }
 async function install(admin, layout) {
   return require('../../lib/server/serve/platform-verification').install(admin, {

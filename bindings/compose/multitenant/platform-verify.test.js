@@ -3,8 +3,8 @@ const { test } = require('node:test'), assert = require('node:assert/strict'), h
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path'), { spawn } = require('node:child_process');
 const verifierPath = process.env.PLATFORM_VERIFY_MODULE || path.join(__dirname, 'platform-verify.js');
 const { verify, selection } = require(verifierPath);
-const selected = () => ({ namespace: 'synthetic_platform_verification', maxAgeMs: 300000, refreshMs: 60000, roles: ['api', 'evaluator', 'realtime'] });
-const good = () => ({ version: 1, status: 'verified', namespace: 'synthetic_platform_verification', refreshMs: 60000, validityMs: 300000, roles: ['api', 'evaluator', 'realtime'].map(role => ({ role, generation: 'a'.repeat(64), expiresAt: new Date(Date.now() + 300000).toISOString() })) });
+const selected = () => ({ namespace: 'synthetic_platform_verification', roles: ['api', 'evaluator', 'realtime'] });
+const good = () => ({ version: 1, status: 'verified', namespace: 'synthetic_platform_verification', roles: ['api', 'evaluator', 'realtime'].map(role => ({ role, generation: 'a'.repeat(64) })) });
 async function upstream(reply, run) {
   const calls = [];
   const server = http.createServer(async (req, res) => {
@@ -29,7 +29,7 @@ test('failed verification stops without retry; foreign, missing and duplicate ge
   await upstream(() => ({ status: 503, body: { error: 'PRIVATE_SENTINEL' } }), async (config, calls) => {
     await assert.rejects(verify(config), { code: 'PLATFORM_VERIFICATION_REFUSED_503' }); assert.equal(calls.length, 1);
   });
-  for (const change of [v => { v.roles.pop(); }, v => { v.roles[0].generation = 'old'; }, v => { v.roles[0].role = 'foreign'; }, v => { v.roles[0] = v.roles[1]; }, v => { v.status = 'pending'; }, v => { v.validityMs = 3600000; }, v => { v.roles[0].expiresAt = '2000-01-01T00:00:00.000Z'; }, v => { v.roles[0] = null; }, v => { v.namespace = 'foreign'; }, v => { v.refreshMs = 120000; }]) {
+  for (const change of [v => { v.roles.pop(); }, v => { v.roles[0].generation = 'old'; }, v => { v.roles[0].role = 'foreign'; }, v => { v.roles[0] = v.roles[1]; }, v => { v.status = 'pending'; }, v => { v.roles[0] = null; }, v => { v.namespace = 'foreign'; }]) {
     const bad = good(); change(bad);
     await upstream(() => ({ body: bad }), async config => { await assert.rejects(verify(config), { code: 'PLATFORM_VERIFICATION_RECEIPT_INVALID' }); });
   }
@@ -53,10 +53,11 @@ test('verification refuses credentials in endpoint configuration before making a
   for (const adminOrigin of ['http://user:private@example.test/', 'https://example.test/', 'http://example.test/private', 'http://example.test/?private=1']) assert.throws(() => selection({ adminOrigin }), { code: 'PLATFORM_VERIFICATION_ORIGIN_INVALID' });
 });
 
-test('selection rejects a missing or unbounded refresh schedule before issuing an operation', () => {
+test('selection is the namespace and every serving role, with no lease, before issuing an operation', () => {
   const base = { adminOrigin: 'http://example.test/', platformVerification: selected() };
-  assert.equal(selection(base).refreshMs, 60000);
-  for (const value of [undefined, { ...selected(), refreshMs: 0 }, { ...selected(), refreshMs: 300000 }, { ...selected(), maxAgeMs: 3600001 }, { ...selected(), roles: ['api', 'realtime'] }]) {
+  assert.deepEqual(selection(base).roles, ['api', 'evaluator', 'realtime']);
+  // The retired lease fields are refused like any other unknown field.
+  for (const value of [undefined, { ...selected(), refreshMs: 60000 }, { ...selected(), maxAgeMs: 300000 }, { ...selected(), roles: ['api', 'realtime'] }]) {
     assert.throws(() => selection({ ...base, platformVerification: value }), { code: 'PLATFORM_VERIFICATION_SELECTION_INVALID' });
   }
 });
