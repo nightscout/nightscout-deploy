@@ -8,6 +8,10 @@ const { isDeepStrictEqual: equal } = require('node:util');
 
 const ROLES = ['api', 'evaluator', 'realtime'];
 const BASE = '/run/ns-config/verification';
+const STARTUP_VERSIONS = Object.freeze({
+  'startup-v2': 'platform-verification-v2',
+  'startup-v3': 'platform-verification-v3',
+});
 const sha256 = value => createHash('sha256').update(value).digest('hex');
 const fail = code => Object.assign(new Error(code), { code });
 const need = (ok, code) => { if (!ok) throw fail(code); };
@@ -23,9 +27,16 @@ function fixture(namespace, runId) {
   return { namespace, runId };
 }
 
+function startupProof(contract) {
+  return Object.hasOwn(STARTUP_VERSIONS, contract.platformVerification) &&
+    STARTUP_VERSIONS[contract.platformVerification] === contract.platformVerificationVersion;
+}
+
 function sourceCheck(app, contract) {
   const embedded = read(app, 'deploy/multitenant/.image-source.json', 'K8S_CANDIDATE_SOURCE_CHANGED');
   need(['coreCommit', 'deployCommit'].every(k => embedded[k] === contract[k]), 'K8S_CANDIDATE_SOURCE_CHANGED');
+  need(startupProof(contract) && require(path.join(app, 'lib/server/serve/platform-verification')).VERSION ===
+    contract.platformVerificationVersion, 'K8S_CANDIDATE_PLATFORM_VERSION_CHANGED');
   for (const key of ['diagnosticSha256', 'nativeCatalogueSha256', 'producerBinarySha256']) {
     need(/^[0-9a-f]{64}$/.test(contract[key] || ''), 'K8S_CANDIDATE_CONTRACT_REQUIRED');
   }
@@ -70,7 +81,7 @@ function bootstrapProof(root, app, contract, identity) {
     writer.hostname === 'postgres' && writer.port === '5432' && writer.username === l.roles.platform_verifier &&
     !Object.keys(primer).some(k => /credential|password|vault|connection/i.test(k)), 'K8S_CANDIDATE_ADMIN_PROOF_REQUIRED');
   const { namespace, refreshMs, maxAgeMs } = admin.platformVerification;
-  const startup = contract.platformVerification === 'startup-v2';
+  const startup = startupProof(contract);
   if (startup) need(refreshMs === undefined && maxAgeMs === undefined && selection.refreshMs === undefined && selection.maxAgeMs === undefined, 'K8S_CANDIDATE_ADMIN_PROOF_REQUIRED');
   need(namespace === selection.namespace && refreshMs === selection.refreshMs && maxAgeMs === selection.maxAgeMs &&
     equal(admin.platformVerification.targets, ROLES.map(role => ({
@@ -130,7 +141,7 @@ function checkVerification(expected, proof, identity, contract, now = Date.now()
     'K8S_CANDIDATE_ADMIN_PROOF_REQUIRED');
   need(Array.isArray(proof.roles) && equal(proof.roles.map(row => row.role), ROLES) &&
     equal(proof.roles.map(({ role, generation }) => ({ role, generation })), expected.roles) &&
-    (contract.platformVerification === 'startup-v2' || proof.roles.every(row => Date.parse(row.expiresAt) > now)), 'K8S_CANDIDATE_VERIFICATION_GENERATION_CHANGED');
+    (startupProof(contract) || proof.roles.every(row => Date.parse(row.expiresAt) > now)), 'K8S_CANDIDATE_VERIFICATION_GENERATION_CHANGED');
   return { ...expected, roles: proof.roles, credentialBoundary: proof.credentialBoundary };
 }
 

@@ -59,6 +59,11 @@ test('frozen image constructor and fixture verification refuse meaningful change
       assert.deepEqual(boot(), expected);
     }
     refuse(() => boot({ ...contract, coreCommit: '0'.repeat(40) }), 'K8S_CANDIDATE_SOURCE_CHANGED');
+    refuse(() => boot({ ...contract, platformVerificationVersion: 'platform-verification-v0' }), 'K8S_CANDIDATE_PLATFORM_VERSION_CHANGED');
+    refuse(() => boot({ ...contract, platformVerification: 'startup-v0' }), 'K8S_CANDIDATE_PLATFORM_VERSION_CHANGED');
+    const otherVersion = contract.platformVerification === 'startup-v2' ? 'v3' : 'v2';
+    refuse(() => boot({ ...contract, platformVerification: 'startup-' + otherVersion,
+      platformVerificationVersion: 'platform-verification-' + otherVersion }), 'K8S_CANDIDATE_PLATFORM_VERSION_CHANGED');
     refuse(() => boot({ ...contract, producerBinarySha256: '0'.repeat(64) }), 'K8S_CANDIDATE_PRODUCER_CHANGED');
     refuse(() => boot({ ...contract, nativeCatalogueSha256: '0'.repeat(64) }), 'K8S_CANDIDATE_CATALOGUE_CHANGED');
     for (const [name, mutate, code] of [

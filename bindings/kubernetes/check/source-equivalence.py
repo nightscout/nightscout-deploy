@@ -33,8 +33,9 @@ def default(s):
 commands={k:[default(x) for x in v['command']] for k,v in services.items() if 'command' in v}
 imageId=subprocess.check_output(['docker','image','inspect',a.image,'--format','{{.Id}}'],text=True).strip()
 contract={'schemaVersion':1,'coreCommit':result['receipt']['coreCommit'],'deployCommit':result['receipt']['deployCommit'],'localImageId':imageId,'published':False,'producerBinarySha256':result['producerBinarySha256'],'commands':commands,'postgresIdentities':result['postgresIdentities'],'sourceFilesSha256':hashes,'scope':'Offline constructor and byte equivalence; cluster and capacity UNMEASURED'}
-if result['platformVerificationVersion'] != 'platform-verification-v2':raise SystemExit('FAIL platform proof contract is not P startup-v2')
-contract.update(bindingInputsVersion=1,nativeCatalogueSha256=result['nativeCatalogueSha256'],platformVerification='startup-v2',platformVerificationVersion=result['platformVerificationVersion'])
+startup_versions={'platform-verification-v2':'startup-v2','platform-verification-v3':'startup-v3'}
+if result['platformVerificationVersion'] not in startup_versions:raise SystemExit('FAIL platform proof contract is unsupported')
+contract.update(bindingInputsVersion=1,nativeCatalogueSha256=result['nativeCatalogueSha256'],platformVerification=startup_versions[result['platformVerificationVersion']],platformVerificationVersion=result['platformVerificationVersion'])
 if a.diagnostic:
     payload=a.diagnostic.read_bytes()
     diagnostic=json.loads(payload)
@@ -47,8 +48,10 @@ if a.diagnostic:
             contract['coreCommit'],contract['deployCommit'],imageId,contract['producerBinarySha256']):
         raise SystemExit('FAIL diagnostic-image-source-equivalence')
     deploy_root=compose.parents[1]
-    if subprocess.check_output(['git','-C',deploy_root,'rev-parse','HEAD'],text=True).strip()!=contract['deployCommit']:
-        raise SystemExit('FAIL diagnostic deployment checkout identity')
+    # A later binding-only commit may consume the same runtime image. The
+    # complete selected Compose tree must still match its image-source commit.
+    if subprocess.run(['git','-C',deploy_root,'diff','--quiet',contract['deployCommit'],'--','bindings/compose/multitenant']).returncode:
+        raise SystemExit('FAIL diagnostic deployment runtime tree identity')
     contract.update(diagnosticSha256=hashlib.sha256(payload).hexdigest(),imageReceiptSha256=diagnostic['imageReceiptSha256'],
                     nativeCatalogueSha256=result['nativeCatalogueSha256'],sourceAcceptance='PENDING')
 file=root/'assets/source-contract.json'

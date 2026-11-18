@@ -21,6 +21,11 @@ to the deployment bytes in the image and `bindingIdentity` to the package commit
 image ID is not a pullable OCI manifest digest. Image delivery needs operator-supplied, verified
 registry references or another explicitly qualified delivery path.
 
+The capture supports platform verification v2 and v3. The constructor checks the selected
+version against the installed source and preserves each version's startup proof without a lease.
+Unknown versions and a v2/v3 mismatch refuse preparation. A later binding commit can use an
+existing image only while its complete Compose runtime tree still matches `imageDeployCommit`.
+
 | Source capability | Kubernetes binding |
 |---|---|
 | API, realtime, evaluator, tenant-admin | `separate-k1`: one Deployment per role, Recreate, one replica; private HTTP. `cohort`: one StatefulSet with private Unix sockets |
