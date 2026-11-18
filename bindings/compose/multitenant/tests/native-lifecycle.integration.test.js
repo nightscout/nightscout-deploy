@@ -60,7 +60,7 @@ test('actual tiny native generated provisioning, export, logical restore and pri
   const evaluator=require('../../../lib/server/serve/evaluator-config').parse(docs.evaluator,input,require('../../../lib/server/internal-api/listener-config').resolve(['evaluator'],input));
   const selected=require('../../../lib/server/serve/operation-cohort-config').load({...input,MULTITENANT_OPERATION_CONFIG:path.join(output,'evaluator/operation.json')});
   const verifier=require('../../../lib/server/serve/platform-verification').create({namespace:evaluator.platformVerification.namespace,connectionString:urls.platform_verifier,targets:[{
-    role:'evaluator',config:evaluator,operationProfileDigest:selected.intakeProfile.digest,check:()=>require('../../../lib/server/serve/platform-verification-admin').checkTarget({role:'evaluator',config:evaluator,operationConfig:selected})
+    role:'evaluator',config:evaluator,operationProfileDigest:selected.nativeSelection.digest,check:()=>require('../../../lib/server/serve/platform-verification-admin').checkTarget({role:'evaluator',config:evaluator,operationConfig:selected})
   }]});
   config=bridge.validateConfig(raw,env);
   await assert.rejects(bridge.capture(config,plan.A,env),{code:'COMPOSE_OPERATOR_SELECTION_UNVERIFIED'});
