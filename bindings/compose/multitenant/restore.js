@@ -13,7 +13,8 @@ const validName = value => typeof value === 'string' && NAME.test(value) && valu
 const exact = (v, keys) => v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).every(k => keys.includes(k)) && keys.every(k => Object.hasOwn(v, k));
 
 function validateConfig (value, env = process.env, requireTokens = true) {
-  if (!exact(value, ['version', 'tenants', 'apiOrigin', 'control', 'namespaces', 'catalogues', 'drainTimeoutMs', ...(Object.hasOwn(value || {}, 'intakeProfile') ? ['intakeProfile'] : []), ...(Object.hasOwn(value || {}, 'nativeSelection') ? ['nativeSelection'] : [])]) || value.version !== 1 ||
+  operationPlacement(env);
+  if (!exact(value, ['version', 'tenants', 'apiOrigin', 'control', 'namespaces', 'catalogues', 'drainTimeoutMs', ...(Object.hasOwn(value || {}, 'intakeProfile') ? ['intakeProfile'] : []), ...(Object.hasOwn(value || {}, 'nativeSelection') ? ['nativeSelection'] : [])]) || ![1,2].includes(value.version) || value.version===2&&(value.nativeSelection===undefined||value.intakeProfile!==undefined) ||
       !Number.isSafeInteger(value.drainTimeoutMs) || value.drainTimeoutMs < 1 || value.drainTimeoutMs > 2147483647 ||
       !Array.isArray(value.tenants) || value.tenants.length !== 2 ||
       !value.tenants.every(t => exact(t, ['id', 'host', 'tokenEnv']) && UUID.test(t.id) && /^[a-z0-9.-]+$/.test(t.host) &&
@@ -80,6 +81,7 @@ function tenantFor (config, tenant) {
 }
 
 async function capture (config, tenant, env = process.env) {
+  operationPlacement(env);
   tenantFor(config, tenant);
   const lifecycle = lifecycleFor(config);
   if(config.nativeSelection)await ready(config,env);
@@ -143,7 +145,7 @@ function admittedContext(context) {
   context.check();
 }
 async function admittedCapture(config, tenant, context, env = process.env) {
-  admittedContext(context); tenantFor(config, tenant);
+  admittedContext(context); operationPlacement(env); tenantFor(config, tenant);
   const lifecycle = lifecycleFor(config);
   if(config.nativeSelection){await ready(config,env);context.check();}
   const snapshot = require('./lifecycle-snapshot').create(context,{catalogues:lifecycle.admittedCatalogue(),namespaces:config.namespaces,sourceCommit:env.NS_SOURCE_COMMIT});

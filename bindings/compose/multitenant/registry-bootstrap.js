@@ -57,7 +57,7 @@ async function finish({ options, request, rootToken, layout, roleURLs, writePriv
   const seed = ids.map((id, index) => ({ id, hosts: [plan.tenantAlias(index)], issueRootSecret: true }));
   writePrivate(path.join(output, 'primer', 'config.json'), { version: 1, adminOrigin: 'http://admin:1342', apiOrigin: docs.apiOrigin || 'http://api:1337', ownerConsumer: docs.configs['tenant-admin'].management.consumer, seed }, own);
   const lifecycle = plan.lifecycle(l);
-  writePrivate(path.join(output, 'ops', 'config.json'), { version: 1, drainTimeoutMs: 10000,
+  writePrivate(path.join(output, 'ops', 'config.json'), { version: nativeSelection?2:1, drainTimeoutMs: 10000,
     tenants: ids.map((id, i) => ({ id, host: plan.tenantAlias(i), tokenEnv: i === 0 ? 'NS_DEMO_TOKEN_A' : i === 1 ? 'NS_DEMO_TOKEN_B' : 'NS_DEMO_TOKEN_' + i })),
     ...(nativeSelection?{nativeSelection:structuredClone(nativeSelection.binding)}:{}),
     apiOrigin: docs.apiOrigin || 'http://api:1337', control: { namespace: l.namespaces.control, registry: { namespace: l.namespaces.registry }, locks: docs.locks, participants: docs.remote }, ...lifecycle }, own);
