@@ -54,7 +54,7 @@ function catalogues() {
 function layout(prefix = 'nsdemo') {
   quote(prefix);
   if (prefix.length > 24) throw new TypeError('Deployment prefix too long');
-  const names = ['pgstream','api','readiness','realtime','evaluator','alarm','suppression','outbox','owner_writer','owner_reader','owner_credentials','root_writer','operator','provisioner','display_reader','activity_reader','placement_publisher','ownership_operator','connector_writer','management_issuer','ui_registry',
+  const names = ['platform_verifier','pgstream','api','readiness','realtime','evaluator','alarm','suppression','outbox','owner_writer','owner_reader','owner_credentials','root_writer','operator','provisioner','display_reader','activity_reader','placement_publisher','ownership_operator','connector_writer','management_issuer','ui_registry',
     ...serviceRoles.map(name=>'lifetime_'+name.replace('-','_'))];
   return {prefix,owner:prefix+'_owner',managementAuthorityOwner:prefix+'_management_authority',namespaces:Object.fromEntries(Object.keys(catalogues()).map(name=>[name,prefix+'_'+name])),
     roles:Object.fromEntries(names.map(name=>[name,prefix+'_'+name])),mount:prefix+'_transit'};
@@ -111,7 +111,7 @@ function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress,
   let docs = {configs,environments,operations,admission,remote,locks,ui:{version:1,tenants:aliases.map(aliases=>({aliases,theme:'default'}))}};
   docs = require('./registry-plan').expand(docs,{layout:l,urls,vaultAddress});
   const evaluatorWorkers = require('./evaluator-workers');
-  return evaluatorWorkers.expand(require('./realtime-workers').expand(require('./replicas').expand(docs), realtimeOwnership), evaluatorWorkers.selection());
+  return require('./platform-startup').documents(evaluatorWorkers.expand(require('./realtime-workers').expand(require('./replicas').expand(docs), realtimeOwnership), evaluatorWorkers.selection()), l, urls);
 }
 function lifecycle(l) {
   const aliases={rt_checkpoint:'checkpoint',eval_checkpoint:'evaluator_checkpoint',alarm:'alarm_suppression',outbox:'notification_outbox',display_settings:'tenant_settings'};

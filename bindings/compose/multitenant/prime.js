@@ -12,16 +12,29 @@ function load(file) {
   if (typeof config.ownerConsumer !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(config.ownerConsumer)) throw fail('PRIMER_CONFIG_INVALID');
   return config;
 }
-function request(origin, route, { method = 'GET', body, headers = {}, timeoutMs = 60000 } = {}) {
+const CONNECTION_CAUSES = new Set(['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EPIPE', 'ENOTFOUND', 'EAI_AGAIN', 'EHOSTUNREACH', 'ENETUNREACH', 'PRIMER_TIMEOUT', 'PRIMER_RESPONSE_TOO_LARGE']);
+const REQUEST_CLASSES = new Set(['roles-ready', 'roles-read', 'roles-create', 'subjects-read', 'subjects-create', 'entries-read', 'entries-create', 'other-data-read', 'other-data-create', 'other-data-other', 'tenants-provision', 'management-session-create', 'platform-verify']);
+function connectionFailure(error, classification, code = 'PRIMER_CONNECTION_FAILED') {
+  return Object.assign(fail(code), { requestClass: classification,
+    connectionCause: CONNECTION_CAUSES.has(error?.code) ? error.code : 'UNCLASSIFIED' });
+}
+function diagnostic(error) {
+  return { error: /^[A-Z0-9_]{1,100}$/.test(error?.code || '') ? error.code : 'PRIMER_FAILED',
+    ...(REQUEST_CLASSES.has(error?.requestClass) ? { requestClass: error.requestClass } : {}),
+    ...(error?.responseError ? { responseError: error.responseError } : {}),
+    ...(error?.connectionCause ? { connectionCause: CONNECTION_CAUSES.has(error.connectionCause) ? error.connectionCause : 'UNCLASSIFIED' } : {}) };
+}
+function request(origin, route, { method = 'GET', body, headers = {}, timeoutMs = 60000, classification = requestClass(route, method) } = {}) {
+  if (!REQUEST_CLASSES.has(classification)) throw fail('PRIMER_REQUEST_CLASS_INVALID');
   const url = new URL(route, origin), bytes = body === undefined ? undefined : Buffer.from(JSON.stringify(body));
   return new Promise((resolve, reject) => {
     const req = http.request(url, { method, headers: { accept: 'application/json', ...headers, ...(bytes ? { 'content-type': 'application/json', 'content-length': bytes.length } : {}) }, timeout: timeoutMs }, res => {
       const chunks = []; let size = 0;
       res.on('data', chunk => { size += chunk.length; if (size > 16777216) req.destroy(fail('PRIMER_RESPONSE_TOO_LARGE')); else chunks.push(chunk); });
       res.on('end', () => { try { resolve({ status: res.statusCode, body: JSON.parse(Buffer.concat(chunks).toString('utf8')) }); } catch { reject(fail('PRIMER_RESPONSE_INVALID')); } });
-      res.on('error', () => reject(fail('PRIMER_RESPONSE_INCOMPLETE')));
+      res.on('error', error => reject(connectionFailure(error, classification, 'PRIMER_RESPONSE_INCOMPLETE')));
     });
-    req.on('timeout', () => req.destroy(fail('PRIMER_TIMEOUT'))); req.on('error', () => reject(fail('PRIMER_CONNECTION_FAILED'))); req.end(bytes);
+    req.on('timeout', () => req.destroy(fail('PRIMER_TIMEOUT'))); req.on('error', error => reject(connectionFailure(error, classification))); req.end(bytes);
   });
 }
 // Fixed diagnostic classes only; never retain response text, route parameters,
@@ -39,11 +52,15 @@ function requestClass(route, method = 'GET') {
   const names = { '/api/v2/authorization/roles': 'roles', '/api/v2/authorization/subjects': 'subjects', '/api/v1/entries': 'entries' };
   return (names[route] || 'other-data') + '-' + (method === 'POST' ? 'create' : method === 'GET' ? 'read' : 'other');
 }
+let firstUsefulResponse = false;
 async function waitForTenant(origin, headers, { timeoutMs = 60000, pollMs = 200, now = Date.now, delay = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
   const deadline = now() + timeoutMs;
   while (now() < deadline) {
-    const response = await request(origin, '/api/v2/authorization/roles', { headers, timeoutMs: Math.min(5000, deadline - now()) });
-    if (response.status === 200 && Array.isArray(response.body)) return response.body;
+    const response = await request(origin, '/api/v2/authorization/roles', { headers, timeoutMs: Math.min(5000, deadline - now()), classification: 'roles-ready' });
+    if (response.status === 200 && Array.isArray(response.body)) {
+      if (!firstUsefulResponse) { firstUsefulResponse = true; console.error(JSON.stringify({ phase: 'primer', event: 'first-useful-response', requestClass: 'roles-ready', status: 200, atMs: Date.now() })); }
+      return response.body;
+    }
     if (response.status !== 503 || response.body.error !== 'TENANT_WARMING') throw refusal(response, 'roles-ready');
     await delay(Math.min(pollMs, Math.max(0, deadline - now())));
   }
@@ -67,7 +84,7 @@ async function provisionOwned(config, directory) {
   const saved = new Map(known.map(row => [row.id, row]));
   for (let index = 0; index < config.seed.length; index += 100) {
     const rows = config.seed.slice(index, index + 100);
-    const response = await request(config.adminOrigin, '/v1/tenants/batch', { method: 'POST', body: { tenants: rows } });
+    const response = await request(config.adminOrigin, '/v1/tenants/batch', { method: 'POST', body: { tenants: rows }, classification: 'tenants-provision' });
     if (response.status !== 200 || !Array.isArray(response.body.results) || response.body.results.length !== rows.length) throw fail('PRIMER_PROVISION_FAILED');
     // Save every successfully issued root before reporting a refused peer.
     let refused = false;
@@ -165,7 +182,7 @@ async function primeOwned(config, directory, { concurrency, maxTenants, signal }
     if (!managementRequests[row.id]) { managementRequests[row.id] = crypto.randomUUID(); privateWrite(requestFile, managementRequests); }
     const requestId = managementRequests[row.id];
     const management = await request(config.adminOrigin, '/v1/tenants/' + row.id + '/management-sessions', {
-      method: 'POST', body: { subjectId: ownerSubject._id, requestId }, headers: { 'idempotency-key': requestId } });
+      method: 'POST', classification: 'management-session-create', body: { subjectId: ownerSubject._id, requestId }, headers: { 'idempotency-key': requestId } });
     if (![200, 201].includes(management.status) || typeof management.body.token !== 'string' || !Number.isSafeInteger(management.body.expiresAt)) throw fail('PRIMER_MANAGEMENT_SESSION_REFUSED');
     const now = Date.now();
     entryState.tenants[row.id] = { state: 'outcome-uncertain' }; privateWrite(entryFile, entryState);
@@ -226,9 +243,10 @@ async function main() {
   try {
     const config = load(path.join(directory, 'config.json'));
     const result = await ({ provision, prime, add }[operation](config, directory, { ...options, signal: controller.signal }));
+    if (result.state === 'synthetic-data-primed') console.error(JSON.stringify({ phase: 'primer', event: 'completed', atMs: Date.now(), tenants: result.tenants }));
     console.log(JSON.stringify(result));
     if (stopped || result.state === 'synthetic-data-prime-partial') process.exitCode = stopped || 2;
   } finally { process.removeListener('SIGINT', interrupt); process.removeListener('SIGTERM', terminate); }
 }
-if (require.main === module) main().catch(error => { console.error(JSON.stringify({ error: /^[A-Z0-9_]{1,100}$/.test(error.code || '') ? error.code : 'PRIMER_FAILED', ...(error.requestClass ? { requestClass: error.requestClass, responseError: error.responseError } : {}) })); process.exitCode = 1; });
-module.exports = { refusal, requestClass, load, request, waitForTenant, provision, prime, add, privateWrite, primeOptions, parsePrimeOptions };
+if (require.main === module) main().catch(error => { console.error(JSON.stringify(diagnostic(error))); process.exitCode = 1; });
+module.exports = { diagnostic, connectionFailure, refusal, requestClass, load, request, waitForTenant, provision, prime, add, privateWrite, primeOptions, parsePrimeOptions };
