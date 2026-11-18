@@ -34,12 +34,11 @@ const coreModule = (name, former) => {
   process.stderr.write('UI: core has no ' + name + ' module; ' + former.note + '\n');
   return former;
 };
-const { PREVIEW_MAX_TENANTS } = coreModule('tenant-ceiling', { PREVIEW_MAX_TENANTS: 1000, note: 'using the former fixed ceiling of 1000 tenants' });
 
 function parseConfig(value) {
   if (value?.version === 2) return require('./ui-registry').parse(value);
   if (!exact(value, ['version', 'tenants']) || value.version !== 1 ||
-      !Array.isArray(value.tenants) || !value.tenants.length || value.tenants.length > PREVIEW_MAX_TENANTS) {
+      !Array.isArray(value.tenants) || !value.tenants.length) {
     throw new TypeError('UI_PUBLIC_CONFIG_INVALID');
   }
   const hosts = new Map();

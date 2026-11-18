@@ -9,20 +9,10 @@ const A = '11111111-1111-4111-8111-111111111111', B = '22222222-2222-4222-8222-2
 const subject = '000000000000000000000001';
 // Synthetic tenant count: NS_DEMO_TENANTS (default 2 keeps the A/B demonstration
 // byte-identical). Tenants 0 and 1 are A and B; later ids are fixed synthetic UUIDs.
-// The upper bound is core's preview tenant ceiling (lib/server/serve/tenant-ceiling.js);
-// a core without that module keeps this plan's former bound of 10,000 and says so.
-let ceiling;
-function maxTenants() {
-  if (ceiling === undefined) {
-    const file = path.join(__dirname, '../../lib/server/serve/tenant-ceiling.js');
-    if (require('node:fs').existsSync(file)) ceiling = require(file).PREVIEW_MAX_TENANTS;
-    else { ceiling = 10000; process.stderr.write('config: core has no tenant-ceiling module; using the former bound of 10000 tenants\n'); }
-  }
-  return ceiling;
-}
+// No fixed tenant ceiling: limits come from measurement, not from this plan.
 function tenantCount(env = process.env) {
-  const raw = env.NS_DEMO_TENANTS === undefined ? '2' : env.NS_DEMO_TENANTS, max = maxTenants();
-  if (!/^[1-9][0-9]{0,5}$/.test(raw) || Number(raw) > max) throw new TypeError('NS_DEMO_TENANTS must be 1..' + max);
+  const raw = env.NS_DEMO_TENANTS === undefined ? '2' : env.NS_DEMO_TENANTS;
+  if (!/^[1-9][0-9]*$/.test(raw) || !Number.isSafeInteger(Number(raw))) throw new TypeError('NS_DEMO_TENANTS must be a positive integer');
   return Number(raw);
 }
 function tenantIds(n = tenantCount()) {

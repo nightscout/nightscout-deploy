@@ -9,7 +9,7 @@ const request = (host, extra = {}) => ({ headers: { host, ...extra }, rawHeaders
 const resolverFactory = core ? require(path.join(core, 'lib/tenant-registry/resolver')).createRegistryResolver : null;
 test('registry UI accepts exact v2 config and rejects source paths, static rosters and unbounded inputs', () => {
   assert.equal(ui.parse(config()).theme, 'modern');
-  for (const mutate of [c => { c.tenants = []; }, c => { c.registry.module = '/tmp/provider'; }, c => { c.registry.maxInflight = 0; }, c => { c.registry.maxTenants = 100001; }, c => { c.registry.namespace = 'public'; }, c => { c.registry.connectionEnv = 'invalid'; }, c => { c.theme = 'other'; }]) {
+  for (const mutate of [c => { c.tenants = []; }, c => { c.registry.module = '/tmp/provider'; }, c => { c.registry.maxInflight = 0; }, c => { c.registry.maxTenants = 0; }, c => { c.registry.namespace = 'public'; }, c => { c.registry.connectionEnv = 'invalid'; }, c => { c.theme = 'other'; }]) {
     const value = config(); mutate(value); assert.throws(() => ui.parse(value), /UI_REGISTRY_CONFIG_INVALID/);
   }
 });

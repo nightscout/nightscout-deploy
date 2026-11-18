@@ -77,17 +77,17 @@ test('config cap option is off by default and bounded when set',()=>{
   assert.throws(()=>bootstrap.input({...env,NS_BOOTSTRAP_CONFIG_MAX_BYTES:'67108865'}),/BOOTSTRAP_CONFIG_MAX_BYTES_INVALID/);
   assert.equal(bootstrap.input({...env,NS_BOOTSTRAP_CONFIG_MAX_BYTES:'67108864'}).configMaxBytes,67108864);
 });
-test('bootstrap validation runs the ui parser: a ui config over the tenant ceiling refuses at bootstrap',()=>{
+test('bootstrap validation runs the ui parser: an empty ui roster refuses at bootstrap',()=>{
   const {docs}=generated(),directory=files(docs);
   try{
     plan.validateFiles(directory,docs);
-    const over={...docs,ui:{version:1,tenants:Array.from({length:10001},(_,i)=>({aliases:['t'+i+'.example.test'],theme:'default'}))}};
+    const over={...docs,ui:{version:1,tenants:[]}};
     assert.throws(()=>plan.validateFiles(directory,over),/UI_PUBLIC_CONFIG_INVALID/);
   }finally{fs.rmSync(directory,{recursive:true});}
 });
 test('realtime emits no removed process-wide socket cap',()=>{
   const {docs}=generated();
   assert(!Object.hasOwn(docs.configs.realtime,'maxSockets'));
-  assert.throws(()=>plan.tenantCount({NS_DEMO_TENANTS:'10001'}),/NS_DEMO_TENANTS must be 1\.\.10000/);
-  assert.equal(plan.tenantCount({NS_DEMO_TENANTS:'10000'}),10000);
+  assert.equal(plan.tenantCount({NS_DEMO_TENANTS:'10001'}),10001);
+  for(const raw of ['0','-1','1.5','9007199254740993'])assert.throws(()=>plan.tenantCount({NS_DEMO_TENANTS:raw}),/NS_DEMO_TENANTS must be a positive integer/);
 });

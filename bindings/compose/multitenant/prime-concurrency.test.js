@@ -80,7 +80,7 @@ test('only one process or invocation owns a primer directory',async()=>fixture(1
  await assert.rejects(prime(x.config,x.dir),{code:'PRIMER_STATE_IN_USE'});assert.equal(x.calls.length,before);
 }));
 test('default remains serial; invalid bounds, duplicate identities and unknown CLI options refuse before traffic',async()=>fixture(3,async x=>{
- for(const options of [{concurrency:0},{concurrency:33},{maxTenants:0},{maxTenants:10001},{concurrency:1.5},{other:1}])await assert.rejects(prime(x.config,x.dir,options),{code:'PRIMER_OPTIONS_INVALID'});
+ for(const options of [{concurrency:0},{concurrency:33},{maxTenants:0},{maxTenants:1.5},{concurrency:1.5},{other:1}])await assert.rejects(prime(x.config,x.dir,options),{code:'PRIMER_OPTIONS_INVALID'});
  for(const values of [['--concurrency','0'],['--concurrency','2','--concurrency','3'],['--other','2'],['--max-tenants']])assert.throws(()=>parsePrimeOptions(values),{code:'PRIMER_OPTIONS_INVALID'});
  assert.equal(x.calls.length,0);write(x.dir,'provisioned.json',[x.rows[0],x.rows[0]]);
  await assert.rejects(prime(x.config,x.dir,{concurrency:2}),{code:'PRIMER_CUSTODY_INVALID'});assert.equal(x.calls.length,0);

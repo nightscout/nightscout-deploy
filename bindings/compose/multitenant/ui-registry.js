@@ -12,7 +12,7 @@ function parse(config) {
       !exact(config.registry, ['connectionEnv', 'namespace'], ['maxTenants', 'refreshMs', 'maxInflight'])) throw fail('UI_REGISTRY_CONFIG_INVALID');
   const r = { maxTenants: 10000, refreshMs: 2000, maxInflight: 32, ...config.registry };
   if (!/^[A-Z][A-Z0-9_]*$/.test(r.connectionEnv) || !NAME.test(r.namespace) || ['public', 'information_schema'].includes(r.namespace) || r.namespace.startsWith('pg_') ||
-      !Number.isSafeInteger(r.maxTenants) || r.maxTenants < 1 || r.maxTenants > 100000 || !Number.isSafeInteger(r.refreshMs) || r.refreshMs < 250 || r.refreshMs > 60000 ||
+      !Number.isSafeInteger(r.maxTenants) || r.maxTenants < 1 || !Number.isSafeInteger(r.refreshMs) || r.refreshMs < 250 || r.refreshMs > 60000 ||
       !Number.isSafeInteger(r.maxInflight) || r.maxInflight < 1 || r.maxInflight > 256) throw fail('UI_REGISTRY_CONFIG_INVALID');
   return Object.freeze({ ...r, theme: config.theme });
 }

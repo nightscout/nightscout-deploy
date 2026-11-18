@@ -110,17 +110,14 @@ describe('Compose ui startup refusal names its cause', function () {
   it('prints the ui configuration code for a refused roster', function () {
     // Version 2 selects the registry contract; a static roster is refused by that parser.
     assert.equal(start(JSON.stringify({ version: 2, tenants: [] })).stderr, 'UI_STARTUP_REFUSED: UI_REGISTRY_CONFIG_INVALID\n');
-    // One over the preview's tenant ceiling, inside a raised byte bound: refused for its count.
-    assert.equal(start(tenants(10001), { MULTITENANT_CONFIG_MAX_BYTES: '4194304' }).stderr, 'UI_STARTUP_REFUSED: UI_PUBLIC_CONFIG_INVALID\n');
+    // An empty static roster is refused for its shape; there is no tenant-count ceiling.
+    assert.equal(start(JSON.stringify({ version: 1, tenants: [] })).stderr, 'UI_STARTUP_REFUSED: UI_PUBLIC_CONFIG_INVALID\n');
   });
 
-  it('accepts up to the preview tenant ceiling, the same constant as the admin roster', function () {
-    const { PREVIEW_MAX_TENANTS } = require('../../../lib/server/serve/tenant-ceiling');
-    assert.equal(PREVIEW_MAX_TENANTS, 10000);
+  it('accepts a roster above the former 10,000 ceiling; limits come from measurement', function () {
     const roster = n => ({ version: 1, tenants: Array.from({ length: n }, (_, i) => ({ aliases: ['t' + i + '.example.test'], theme: i % 2 ? 'modern' : 'default' })) });
     assert.equal(ui.parseConfig(roster(3000)).size, 3000, 'UI_3000_TENANTS_ACCEPTED');
-    assert.equal(ui.parseConfig(roster(PREVIEW_MAX_TENANTS)).size, PREVIEW_MAX_TENANTS);
-    assert.throws(() => ui.parseConfig(roster(PREVIEW_MAX_TENANTS + 1)), /^TypeError: UI_PUBLIC_CONFIG_INVALID$/);
+    assert.equal(ui.parseConfig(roster(10001)).size, 10001);
   });
 
   it('starts the actual entrypoint on a 3,000-tenant configuration and serves its hosts', async function () {

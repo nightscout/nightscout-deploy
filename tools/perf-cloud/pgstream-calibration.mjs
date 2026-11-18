@@ -16,7 +16,6 @@ export const REPAIRED_PINS={...PRIMER_PINS,core:'7291af9b9cc48dbe58c488e892e7b34
 export const MINIMUM_PINS={...PRIMER_PINS,core:'8aeefaefc88c79c3d548f7683d5651bec9cf5c01',app:'sha256:382e44696c4415e710698ee6135c499ae2d480d9f39a2fb85c59675fdd8d2150'};
 // Experimental ordinary deployment; full acceptance remains independent.
 export const PERFORMANCE_PINS={...PINS,core:'d5ec3998986365034c3189485339ec12960ba3f7',deploy:'bf8327f4de096bb342a65ecb75ef7a356a21ffc9',app:'sha256:0775fcd95b0a1807b2de7345caa9547584265a3c1495af75d89fffe7350c49e2'};
-export const COHORTS=[10,1000,3000,5000,10000];
 export function discoveryMode(spec){const mode=spec.reportMode===undefined?'strict':spec.reportMode;need(['strict','discovery'].includes(mode),'PGCAL_REPORT_MODE');return mode==='discovery';}
 export function topologyBinding(spec){
   const selected=spec.pgstreamTopology!==undefined||spec.diagnosticResourceProfile!==undefined;
@@ -74,7 +73,7 @@ export function validate(spec){
   need(!discovery||spec.componentCases===undefined,'PGCAL_DISCOVERY_COMPONENTS_UNSUPPORTED');
   const components=componentCases(spec.componentCases,spec.tenants);
   need(components===null||equal(spec.receipt?.remoteComponentCases,components),'PGCAL_COMPONENT_RECEIPT');
-  need(spec.profile===PROFILE&&Number.isInteger(spec.tenants)&&(discovery?spec.tenants>=1&&spec.tenants<=10000:COHORTS.includes(spec.tenants))&&Number.isSafeInteger(spec.logicalPollingClients)&&spec.logicalPollingClients>=0&&spec.logicalPollingClients<=80000&&(discovery||spec.logicalPollingClients===2*spec.tenants),'PGCAL_FIXED_PROFILE');
+  need(spec.profile===PROFILE&&Number.isInteger(spec.tenants)&&spec.tenants>=1&&Number.isSafeInteger(spec.logicalPollingClients)&&spec.logicalPollingClients>=0&&spec.logicalPollingClients<=80000&&(discovery||spec.logicalPollingClients===2*spec.tenants),'PGCAL_FIXED_PROFILE');
   // Discovery configuration is an unverified request. packet() binds a genuine
   // image qualification; the SUT still executes source/image/loader preflight.
   const requestedPins=spec.pins;

@@ -7,7 +7,7 @@ const fs = require('node:fs'), path = require('node:path'), http = require('node
 const fail = code => Object.assign(new Error(code), { code });
 function load(file) {
   const config = JSON.parse(fs.readFileSync(file, 'utf8'));
-  if (config.version !== 1 || !Array.isArray(config.seed) || !config.seed.length || config.seed.length > 10000) throw fail('PRIMER_CONFIG_INVALID');
+  if (config.version !== 1 || !Array.isArray(config.seed) || !config.seed.length) throw fail('PRIMER_CONFIG_INVALID');
   for (const raw of [config.adminOrigin, config.apiOrigin]) { const url = new URL(raw); if (url.protocol !== 'http:' || url.username || url.password || url.search || url.hash || url.pathname !== '/') throw fail('PRIMER_ORIGIN_INVALID'); }
   if (typeof config.ownerConsumer !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(config.ownerConsumer)) throw fail('PRIMER_CONFIG_INVALID');
   return config;
@@ -104,7 +104,7 @@ function primeOptions(options = {}) {
   if (!options || typeof options !== 'object' || Array.isArray(options) || Object.keys(options).some(key => !['concurrency','maxTenants','signal'].includes(key))) throw fail('PRIMER_OPTIONS_INVALID');
   const concurrency = options.concurrency === undefined ? 1 : options.concurrency;
   const maxTenants = options.maxTenants === undefined ? 10000 : options.maxTenants;
-  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 32 || !Number.isInteger(maxTenants) || maxTenants < 1 || maxTenants > 10000 ||
+  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 32 || !Number.isSafeInteger(maxTenants) || maxTenants < 1 ||
       (options.signal !== undefined && typeof options.signal?.aborted !== 'boolean')) throw fail('PRIMER_OPTIONS_INVALID');
   return { concurrency, maxTenants, signal: options.signal };
 }

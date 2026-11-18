@@ -81,7 +81,7 @@ function selectApi (config, environment, { selected = false } = {}) {
   let mode;
   if (next.registry && next.tenants === undefined && next.vault && typeof next.vault.tokenFile === 'string' && next.vault.tokenEnv === undefined) {
     mode = 'registry'; if (next.vault.tokenFile !== (selected ? SINK : '/run/ns-config/vault-token')) throw fail('IMPORTED_API_CONFIG_INVALID'); next.vault.tokenFile = SINK;
-  } else if (!next.registry && Array.isArray(next.tenants) && next.tenants.length && next.tenants.length <= 10000) {
+  } else if (!next.registry && Array.isArray(next.tenants) && next.tenants.length) {
     mode = 'static'; const ids = new Set();
     for (const tenant of next.tenants) {
       if (typeof tenant.id !== 'string' || ids.has(tenant.id) || !tenant.vault) throw fail('IMPORTED_API_CONFIG_INVALID'); ids.add(tenant.id);

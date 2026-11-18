@@ -5,7 +5,7 @@ const need=(v,c)=>{if(!v)throw Error('PGCAL_COMPONENT_'+c);};
 const hash=c=>createHash('sha256').update('{'+Object.keys(c).sort().map(k=>JSON.stringify(k)+':'+JSON.stringify(c[k])).join(',')+'}').digest('hex');
 export function componentCases(value,cohort){
  if(value===undefined)return null;
- need(Number.isInteger(cohort)&&cohort>=16&&cohort<=10000,'COHORT');
+ need(Number.isInteger(cohort)&&cohort>=16,'COHORT');
  need(value&&equal(Object.keys(value).sort(),['cases','version'])&&value.version===1&&Array.isArray(value.cases)&&value.cases.length>=1&&value.cases.length<=6,'PLAN');
  const ids=[];
  for(const c of value.cases){

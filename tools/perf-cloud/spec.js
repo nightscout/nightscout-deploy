@@ -40,7 +40,7 @@ function validate(s) {
   if(s.profile==='joined-diagnostic-v1')assert(s.topology==='colocated'&&s.appNodes===1&&s.generatorNodes===0&&integer(s.tenants,1,10)&&integer(s.apiReplicas,1,2)&&s.warmSeconds===0&&integer(s.loadSeconds,1,180)&&s.socketsPerTenant===1,'Invalid joined diagnostic bounds');
   else if(!['joined-pilot-v1','joined-baseline-diagnostic-v1','joined-external-generator-v1'].includes(s.profile))assert(s.apiReplicas===undefined,'API replica override requires joined diagnostic profile or joined pilot profile');
   if(s.profile==='colocated-capacity-v1') {
-    assert(Array.isArray(s.capacityLevels) && s.capacityLevels.length>=1 && s.capacityLevels.length<=5 && s.capacityLevels.every((n,i)=>integer(n,1,10000) && (i===0 || n>s.capacityLevels[i-1])),'Invalid capacity levels');
+    assert(Array.isArray(s.capacityLevels) && s.capacityLevels.length>=1 && s.capacityLevels.length<=5 && s.capacityLevels.every((n,i)=>integer(n,1,Number.MAX_SAFE_INTEGER) && (i===0 || n>s.capacityLevels[i-1])),'Invalid capacity levels');
     assert(s.tenants===s.capacityLevels.at(-1),'Capacity tenants must name maximum level');
   } else if(!['joined-pilot-v1','joined-baseline-diagnostic-v1','joined-external-generator-v1'].includes(s.profile))assert(s.capacityLevels===undefined,'Capacity levels require capacity profile or joined pilot profile');
   assert(/^[a-z][a-z0-9-]{2,39}$/.test(s.runId), 'Invalid runId');
@@ -48,7 +48,7 @@ function validate(s) {
   assert(['colocated','separated'].includes(s.topology), 'Invalid topology');
   assert(integer(s.appNodes,1,4) && integer(s.generatorNodes,0,8) && (s.generatorNodes>0 || s.topology==='colocated' && s.appNodes===1), 'Invalid node counts');
   assert([s.appSize,s.databaseSize,s.generatorSize].every(k => Object.hasOwn(SIZES,k)), 'Unknown size');
-  assert(integer(s.tenants,1,10000) && integer(s.socketsPerTenant,0,20), 'Invalid workload size');
+  assert(integer(s.tenants,1,Number.MAX_SAFE_INTEGER) && integer(s.socketsPerTenant,0,20), 'Invalid workload size');
   assert(['legacy','local-token','mixed'].includes(s.credentialProfile), 'Invalid credential profile');
   assert(integer(s.seed,0,2147483647), 'Invalid seed');
   assert(integer(s.historyHours,1,8760) && integer(s.hotFactor,1,100) && integer(s.acceleration,1,100), 'Invalid synthetic workload parameters');

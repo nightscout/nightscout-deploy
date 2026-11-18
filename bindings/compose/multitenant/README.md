@@ -139,8 +139,8 @@ writes against the same value. It never enters `env.json`. `load-env.js` takes i
 bound on `env.json` from core's reader (`lib/server/serve/config-file.js`), and
 keeps the fixed 1 MiB bound with a core that has no such module.
 
-The synthetic seed count (`NS_DEMO_TENANTS`) is bounded by core's preview
-ceiling of 10,000. It is provisioning input. Runtime roles read tenant membership
+The synthetic seed count (`NS_DEMO_TENANTS`) is any positive integer; there is no
+fixed tenant ceiling (limits come from measurement). It is provisioning input. Runtime roles read tenant membership
 and keys from the registry, not a copied tenant list. Realtime has no process-wide
 socket cap; the edge budgets described below govern new handshakes and per-IP
 connection/request concurrency.

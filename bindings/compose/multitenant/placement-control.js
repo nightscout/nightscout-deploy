@@ -40,10 +40,9 @@ async function eligibleReady({ before, candidate, registry, activity, fetchImpl 
     const revision = await registry.revision(), tenants = [];
     let after = null;
     for (;;) {
-      const page = await registry.page(after, Math.min(1000, 10001 - tenants.length));
+      const page = await registry.page(after, 1000);
       if (page.revision !== revision) throw fail('REALTIME_PLACEMENT_REGISTRY_CHANGED');
       tenants.push(...page.tenants);
-      if (tenants.length > 10000) throw fail('REALTIME_PLACEMENT_OVER_BOUND');
       if (page.tenants.length < 1000) break;
       after = page.tenants.at(-1);
     }
