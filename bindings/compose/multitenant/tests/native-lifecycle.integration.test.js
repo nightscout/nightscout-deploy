@@ -8,6 +8,7 @@ const docker=args=>execFileSync('docker',args,{encoding:'utf8',stdio:['ignore','
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function ready(fn){let last;for(const until=Date.now()+30000;Date.now()<until;){try{return await fn();}catch(e){last=e;await sleep(200);}}throw last;}
 test('actual tiny native generated provisioning, export, logical restore and private recovery retain B and queue IDs',{skip:process.env.NS_NATIVE_LIFECYCLE_BIND_TEST!=='1',timeout:180000},async()=>{
+ assert.match(process.env.NS_NATIVE_BIND_CORE_COMMIT||'',/^[a-f0-9]{40}$/);assert.match(process.env.NS_NATIVE_BIND_DEPLOY_COMMIT||'',/^[a-f0-9]{40}$/);
  const previous=scope.getTenancyMode();scope.setTenancyMode('multi');
  const id=crypto.randomBytes(4).toString('hex'),owner='native_bind_'+id,containers=[],peers=[],backends=[],directory=fs.mkdtempSync(path.join(os.tmpdir(),'ns-native-bind-'));
  const l=plan.layout(),q=plan.quote,ns=l.namespaces,table=(kind,name)=>q(ns[kind])+'.'+q(name),password=crypto.randomBytes(24).toString('hex'),vaultToken=crypto.randomBytes(24).toString('hex');
