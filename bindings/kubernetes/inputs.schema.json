@@ -277,6 +277,12 @@
         "cohort",
         "separate-k1"
       ]
+    },
+    "resourceAccounting": {
+      "enum": [
+        "limits-v1",
+        "requests-v1"
+      ]
     }
   }
 }
