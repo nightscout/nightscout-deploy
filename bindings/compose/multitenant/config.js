@@ -34,7 +34,7 @@ function quote(name) {
   if (typeof name !== 'string' || !/^[a-z][a-z0-9_]{0,62}$/.test(name) || name.startsWith('pg_')) throw new TypeError('Explicit deployment SQL identifier required');
   return '"' + name + '"';
 }
-function catalogues() {
+function catalogues({nativeSelection}={}) {
   require('./pgstream').enabled();
   const domains = require('../../lib/server/serve/postgres-domains');
   const successors = require('../../lib/server/tenant-socket-order-port').catalogues;
@@ -43,7 +43,7 @@ function catalogues() {
     legacy:require('../../lib/secrets/legacy-credentials-candidate.json'), access:require('../../lib/tenant-authorization/access-candidate.json'),
     clock:require('../../migrations/candidates/postgres-write-clock-v1.json'), rt_checkpoint:require('../../migrations/candidates/postgres-realtime-output-v2.json'),
     eval_checkpoint:require('../../migrations/candidates/postgres-evaluator-work-v2.json'), alarm:require('../../migrations/candidates/postgres-alarm-suppression-v1.json'),
-    outbox:require('../../lib/tenant-notifications/postgres-candidate.json'),control:require('../../lib/tenant-lifecycle/postgres-candidate.json'),
+    outbox:require('../../lib/tenant-notifications/postgres-candidate.json'),control:nativeSelection?require('../../lib/tenant-lifecycle/native-selection').catalogue(nativeSelection):require('../../lib/tenant-lifecycle/postgres-candidate.json'),
     registry:require('../../lib/tenant-registry/postgres-candidate.json'),
     display_settings:require('../../lib/tenant-settings/postgres-candidate.json'),
     operator_policy:require('../../lib/operator-policy/postgres-candidate.json'),
@@ -129,6 +129,8 @@ function lifecycle(l) {
 }
 function validateFiles(directory, docs) {
   const evaluated=docs.configs.evaluator;
+  const rawNative=docs.operations.evaluator.nativeSelection,native=rawNative===undefined?undefined:require('../../lib/tenant-lifecycle/native-selection').create(rawNative);
+  if(native&&(native.binding.namespace!==evaluated.postgres.namespaces.checkpoint||native.binding.consumer!==evaluated.consumer||native.binding.generation!==evaluated.pgstream.generation||native.binding.source.slot!==evaluated.pgstream.slot))throw new TypeError('COMPOSE_NATIVE_SELECTION_MISMATCH');
   if(evaluated.pgstream)for(const [role,config]of Object.entries(docs.configs))if(role==='realtime'||role.startsWith('realtime-')){
     if(config.changeFeed||config.completedOutput?.namespace!==evaluated.postgres.namespaces.checkpoint||config.completedOutput?.consumer!==evaluated.consumer)throw new TypeError('PGSTREAM_COMPLETED_SOURCE_MISMATCH');
   }
@@ -140,6 +142,7 @@ function validateFiles(directory, docs) {
     const env=Object.fromEntries(Object.entries(docs.environments[role]).map(([key,value])=>[key,typeof value==='string'?value.replace('/run/ns-config',path.join(directory,role)):value]));
     const internal=require('../../lib/server/internal-api/listener-config').resolve([productRole],env);
     const parsed=parsers[productRole](env,internal),operation=require('../../lib/server/serve/operation-cohort-config').load(env,internal);
+    if((operation.intakeProfile?.selectionDigest)!==(native?.selectionDigest))throw new TypeError('COMPOSE_NATIVE_SELECTION_MISMATCH');
     const participant=operation.participants.find(row=>row.id===operation.participantId);
     require('./evaluator-workers').validate(docs, role, parsed, operation);
     if(JSON.stringify(namespaces(parsed).filter(name => name !== operation.namespace).sort())!==JSON.stringify(participant.namespaces))throw new TypeError('Deployment participant namespace mismatch');

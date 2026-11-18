@@ -133,7 +133,9 @@ async function bootstrap(options) {
     const managementGrants=require('../../lib/management-sessions/authority').grants({namespaces:{registry:l.namespaces.registry,authorization:l.namespaces.authorization,access:l.namespaces.access,control:l.namespaces.control},issuer:l.roles.management_issuer,authorityOwner:l.managementAuthorityOwner});
     for(const sql of [...managementGrants.authorityOwner,...managementGrants.issuer])await admin.query(sql);
     await require('./platform-startup').install(admin,l);
-    await require('./pgstream').init({admin,adminURL:pg.toString(),layout:l,config:require('./pgstream').descriptor(l,evaluatorWorkers)});
+    const streamDescriptor=require('./pgstream').descriptor(l,evaluatorWorkers);
+    await require('./pgstream').init({admin,adminURL:pg.toString(),layout:l,config:streamDescriptor});
+    const nativeSource=await require('./native-lifecycle').source(admin,streamDescriptor.pgstream.slot);
     if(options.connectionBudgetProfile&&require('./connection-budget-files').read(options.connectionBudgetProfile).version===2){
       const database=(await admin.query('SELECT current_database() AS database,(SELECT oid::text FROM pg_database WHERE datname=current_database()) AS "databaseOid"')).rows;
       if(database.length!==1)throw fail('WORKER_DATABASE_IDENTITY');
@@ -147,7 +149,7 @@ async function bootstrap(options) {
       }
     }
     if(options.lifecycleOperator){const identity=await admin.query('SELECT current_database() AS database,(SELECT oid::text FROM pg_database WHERE datname=current_database()) AS "databaseOid",rolname AS role,oid::text AS "roleOid" FROM pg_roles WHERE rolname=$1',[l.roles.operator]);if(identity.rows.length!==1)throw fail('LIFECYCLE_OPERATOR_PRINCIPAL');options.lifecycleOperatorPrincipal=identity.rows[0];}
-    return require('./registry-bootstrap').finish({options,request,rootToken:initialization.root_token,layout:l,roleURLs,writePrivate});
+    return require('./registry-bootstrap').finish({options,request,rootToken:initialization.root_token,layout:l,roleURLs,writePrivate,admin,adminURL:pg.toString(),nativeSource});
   }finally{await admin.end();}
 }
 // Failure report: the stable code first (unchanged contract), then the underlying message and the
