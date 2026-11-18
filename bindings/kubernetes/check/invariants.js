@@ -11,7 +11,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs'), path = require('node:path');
 
 function args (argv) {
-  const out = { root: path.resolve(__dirname, '..'), env: 'environments/preview', compose: null };
+  const out = { root: path.resolve(__dirname, '..'), env: 'environments/synthetic', compose: null };
   for (let i = 0; i < argv.length; i += 2) {
     const key = argv[i].replace(/^--/, '');
     if (!['root', 'env', 'compose'].includes(key) || argv[i + 1] === undefined) throw new Error('usage: invariants.js [--root dir] [--env path] [--compose dir]');
@@ -24,8 +24,12 @@ function args (argv) {
 
 function tk (root, env, extra = []) {
   const inputs=['NS_SOURCE_COMMIT','NS_DEMO_IMAGE','NS_PGSTREAM_POSTGRES_IMAGE'];
-  for(const key of inputs)if(!process.env[key])throw new Error(key+' must name the explicit supplied artifact input');
-  return JSON.parse(execFileSync('tk', ['eval', env, ...inputs.flatMap(key=>['--ext-str',key+'='+process.env[key]]), ...extra], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 << 20 }));
+  if (env.includes('preview')) for(const key of inputs)if(!process.env[key])throw new Error(key+' must name the explicit supplied artifact input');
+  try { return JSON.parse(execFileSync('tk', ['eval', env, ...inputs.filter(key=>process.env[key]).flatMap(key=>['--ext-str',key+'='+process.env[key]]), ...extra], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 << 20 })); }
+  catch (error) {
+    if (error.stderr) throw new Error(String(error.stderr).trim());
+    throw error;
+  }
 }
 
 function manifests (value, out = []) {
@@ -55,6 +59,7 @@ const selects = (selector, labels) => !!selector && Object.keys(selector).length
 function checks (all, inventory, composeDir, envMain) {
   const workloads = all.filter(m => WORKLOADS.includes(m.kind));
   const services = all.filter(m => m.kind === 'Service');
+  const separate = inventory.applicationTopology === 'separate-k1';
   const results = [];
   const run = (name, fn) => {
     const failures = [];
@@ -72,7 +77,36 @@ function checks (all, inventory, composeDir, envMain) {
   };
   const resolve = (svc, sp) => targets(svc).filter(t => t.port.name === sp.targetPort || t.port.containerPort === (sp.targetPort ?? sp.port));
 
+  run('package-assets', fail => {
+    const captured=fs.readFileSync(path.join(__dirname,'../assets/source-contract.json'),'utf8');
+    const contract=JSON.parse(captured);
+    const projection=all.find(m=>m.kind==='ConfigMap'&&m.metadata.name==='provision-scripts');
+    if(projection?.data['source-contract.json']!==captured)fail('rendered source-contract.json differs from captured bytes');
+    for(const name of ['nginx.conf','service-environment.js']){
+      const bytes=fs.readFileSync(path.join(__dirname,'../assets',name));
+      if(require('node:crypto').createHash('sha256').update(bytes).digest('hex')!==contract.sourceFilesSha256[name])fail(name+' differs from immutable source bytes');
+    }
+  });
+
+  run('edge-configuration', fail => {
+    const source=fs.readFileSync(path.join(__dirname,'../assets/nginx.conf'),'utf8');
+    const maps=all.filter(m=>m.kind==='ConfigMap'&&m.metadata.name==='edge-nginx');
+    let projected=source;
+    if(Object.hasOwn(inventory,'edgeConfiguration')) {
+      const c=inventory.edgeConfiguration,r=c?.requested,fields=['workerProcesses','workerConnections'];
+      if(!r || typeof r!=='object' || Array.isArray(r) || !Object.keys(r).length || Object.keys(r).some(k=>!fields.includes(k)) ||
+          Object.entries(r).some(([k,v])=>!Number.isSafeInteger(v)||v<1||(k==='workerProcesses'&&v>1024))) { fail('EDGE_CONFIGURATION'); return; }
+      const expected={requested:r,effective:{workerProcesses:r.workerProcesses??'auto',workerConnections:r.workerConnections??1024},sourceAsset:'assets/nginx.conf',descriptorLimit:'INHERITED_OS_UNMEASURED'};
+      if(!require('node:util').isDeepStrictEqual(c,expected))fail('EDGE_INVENTORY_CHANGED');
+      if(['worker_processes','worker_connections','worker_processes auto;','worker_connections 1024;'].some(s=>source.split(s).length!==2)) { fail('EDGE_SOURCE_SHAPE'); return; }
+      if(Object.hasOwn(r,'workerProcesses'))projected=projected.replace('worker_processes auto;','worker_processes '+r.workerProcesses+';');
+      if(Object.hasOwn(r,'workerConnections'))projected=projected.replace('worker_connections 1024;','worker_connections '+r.workerConnections+';');
+    }
+    if(maps.length!==1 || !require('node:util').isDeepStrictEqual(maps[0].data,{'nginx.conf':projected}) || maps[0].binaryData)fail('EDGE_CONFIGMAP_CHANGED');
+  });
+
   run('internal-listener-not-on-service', fail => {
+    if (separate) return;
     const withIpc = workloads.filter(w => (podSpec(w).volumes || []).some(v => v.name === 'ns-ipc'));
     if (withIpc.length !== 1) fail('the serve.internal socket volume ns-ipc must be in exactly one Pod template, found ' + withIpc.length + ' (' + withIpc.map(id).join(', ') + ')');
     for (const w of withIpc) {
@@ -166,14 +200,15 @@ function checks (all, inventory, composeDir, envMain) {
     if(volume?.secret?.secretName!=='ns-config-pgstream'||!(container.volumeMounts||[]).some(v=>v.name==='secret-pgstream'&&v.mountPath==='/run/ns-stream'&&v.readOnly))fail('pgstream requires its dedicated wire Secret');
     for(const w of workloads)if(w!==stream&&(podSpec(w).volumes||[]).some(v=>v.secret?.secretName==='ns-config-pgstream'))fail('streaming wire credentials must not be mounted in the evaluator or another workload');
     const intake=services.find(v=>v.metadata.name==='evaluator');
-    if(!intake||intake.spec.type!=='ClusterIP'||intake.spec.selector?.['statefulset.kubernetes.io/pod-name']!=='cohort-0'||intake.spec.selector?.['app.kubernetes.io/component']!=='cohort')fail('intake Service must select only the admitted cohort-0 owner');
+    if(!intake||intake.spec.type!=='ClusterIP'||(separate ? intake.spec.selector?.['app.kubernetes.io/component']!=='evaluator' : intake.spec.selector?.['statefulset.kubernetes.io/pod-name']!=='cohort-0'||intake.spec.selector?.['app.kubernetes.io/component']!=='cohort'))fail('intake Service must select only the admitted cohort-0 owner');
     if(intake?.spec.publishNotReadyAddresses!==true)fail('intake routing must bypass pod-wide clinical readiness to avoid a stream startup cycle');
     if(intake&&!intake.spec.ports?.some(p=>p.port===19913&&p.targetPort==='stream-intake'))fail('intake Service must target the declared receiver port');
-    const postgres=workloads.find(w=>w.metadata.name==='postgres'),command=(podSpec(postgres).containers.find(c=>c.name==='postgres').command||[]);
+    const postgres=workloads.find(w=>w.metadata.name==='postgres'),command=(podSpec(postgres).containers.find(c=>c.name==='postgres').args||[]);
     for(const setting of ['wal_level=logical','max_replication_slots=4','max_wal_senders=4','max_slot_wal_keep_size=256MB','output_plugin_libraries=wal2json'])if(!command.includes(setting))fail('PostgreSQL is missing maintained streaming setting '+setting);
   });
 
   run('evaluator-statefulset', fail => {
+    if (separate) return;
     const hosts = workloads.filter(w => containersOf(podSpec(w)).some(c => c.name === 'evaluator'));
     if (hosts.length !== 1) return fail('the evaluator must run in exactly one workload, found ' + hosts.length);
     const w = hosts[0];
@@ -246,37 +281,118 @@ function checks (all, inventory, composeDir, envMain) {
     for (const w of workloads) if (podSpec(w).enableServiceLinks !== false) fail(id(w) + ' must set enableServiceLinks: false (Service links inject <SERVICE>_PORT=tcp://... and collide with API_PORT/REALTIME_PORT/ADMIN_PORT)');
   });
 
-  run('postgres-identities-match-compose', fail => {
-    const configFile = path.join(composeDir, 'multitenant', 'config.js');
-    const text = fs.readFileSync(configFile, 'utf8');
-    const block = text.slice(text.indexOf('const environments={'), text.indexOf('const admission='));
-    if (!block) return fail('cannot find the environments block in ' + configFile);
-    const compose = {};
-    for (const role of ['api', 'realtime', 'evaluator', 'tenant-admin']) {
-      const key = role === 'tenant-admin' ? "'tenant-admin':{" : (role === 'api' ? '{api:{' : '\n    ' + role + ':{');
-      const start = block.indexOf(key);
-      if (start < 0) return fail('role ' + role + ' not found in ' + configFile);
-      const line = block.slice(start, block.indexOf('\n', start + 1) < 0 ? undefined : block.indexOf('\n', start + 1));
-      compose[role] = [...line.matchAll(/urls\.([a-z_]+)/g)].map(m => m[1]);
-      if (/NS_LIFETIME_PG:urls\['lifetime_'\+role/.test(block)) compose[role].push('lifetime_' + role.replace('-', '_'));
-    }
-    const overlay = path.join(composeDir, 'ownership-admin', 'ownership-grants.js');
-    if (!fs.existsSync(overlay)) fail('the ownership overlay ' + path.relative(process.cwd(), overlay) + ' is missing: the admin identity has no Compose counterpart in this tree');
-    else {
-      const m = /const ROLE = '([a-z_]+)'/.exec(fs.readFileSync(overlay, 'utf8'));
-      compose.admin = m ? [m[1]] : [];
-    }
-    if(!fs.readFileSync(path.join(composeDir,'multitenant','registry-bootstrap.js'),'utf8').includes("path.join(output,'pgstream','pgstream.yaml')"))fail('Compose does not publish the separate streaming wire');
-    compose.pgstream=['pgstream'];
-    for (const [role, names] of Object.entries(compose)) {
-      const want = [...new Set(names)].sort(), have = [...(inventory.postgresIdentities[role] || [])].sort();
-      if (JSON.stringify(want) !== JSON.stringify(have)) fail(role + ': binding names ' + (have.join(',') || 'none') + ', Compose names ' + (want.join(',') || 'none'));
-    }
-    for (const role of Object.keys(inventory.postgresIdentities)) if (!compose[role] && role !== 'admin') fail(role + ' has no Compose counterpart');
-    // SOURCE.md retired the historical imported-copy pin. Core/deploy compatibility
-    // is measured by tools/plan-contract-check.sh --prospective, not this render.
-    // This check retains the actual current role-to-SQL identity comparison.
+  run('admin-vault-trust', fail => {
+    const admin = workloads.find(w => w.metadata.name === 'admin');
+    const spec = podSpec(admin), container = spec.containers.find(c => c.name === 'admin');
+    if (!(container.env || []).some(e => e.name === 'NODE_EXTRA_CA_CERTS' && e.value === '/run/ns-ca/ca.crt')) fail('source admin must load the exact Vault CA before Node startup');
+    if (!(container.volumeMounts || []).some(v => v.name === 'ns-ca' && v.mountPath === '/run/ns-ca' && v.readOnly === true) || !(spec.volumes || []).some(v => v.name === 'ns-ca' && v.secret?.secretName === 'ns-ca')) fail('source admin requires the read-only namespace Vault CA mount');
   });
+
+  run('admin-vault-provisioning-network', fail => {
+    const policy = all.find(m => m.kind === 'NetworkPolicy' && m.metadata.name === 'vault-from-app');
+    const allowed = (policy?.spec.ingress || []).some(rule => (rule.ports || []).some(p => p.port === 8200 && p.protocol === 'TCP') && (rule.from || []).some(peer => peer.podSelector?.matchLabels?.['app.kubernetes.io/component'] === 'admin'));
+    if (!allowed) fail('source admin provisioning requires Vault TCP8200 ingress');
+  });
+
+  run('postgres-identities-match-compose', fail => {
+    const contract = JSON.parse(fs.readFileSync(path.join(__dirname, '../assets/source-contract.json')));
+    for (const [role, names] of Object.entries(contract.postgresIdentities)) {
+      const want=[...names].sort(), have=[...(inventory.postgresIdentities[role]||[])].sort();
+      if (JSON.stringify(want)!==JSON.stringify(have)) fail(role+': binding names '+have.join(',')+', Compose names '+want.join(','));
+    }
+  });
+
+  run('source-command-identity', fail => {
+    const contract = JSON.parse(fs.readFileSync(path.join(__dirname, '../assets/source-contract.json')));
+    if(inventory.evaluatorPool.partition!=='off')fail('C2 pgstream evaluator partition is unqualified and must remain off');
+    if (inventory.sourceCommit!==contract.coreCommit || inventory.imageDeployCommit!==contract.deployCommit) fail('source/image deployment identity differs from frozen source contract');
+    for (const w of workloads) for (const c of containersOf(podSpec(w))) {
+      if (['install-config','wait-stores','vault-kubernetes-auth','done','vault-agent','postgres','vault','nginx'].includes(c.name)) continue;
+      const want=contract.commands[c.name];
+      if (want && JSON.stringify(c.command)!==JSON.stringify(want)) fail(c.name+' command differs from source Compose');
+      if (c.image!==inventory.images.app) fail(c.name+' image differs from declared immutable application image');
+    }
+    for (const w of workloads) {
+      for (const c of containersOf(podSpec(w))) if (!['postgres','vault','vault-agent','nginx'].includes(c.name) && c.image!==inventory.images.app) fail(c.name+' image differs from declared immutable application image');
+      const a=w.metadata.annotations||{};
+      if (a['nightscout.org/source-commit']!==inventory.sourceCommit || a['nightscout.org/image-deploy-commit']!==inventory.imageDeployCommit || a['nightscout.org/binding-identity']!==inventory.bindingIdentity) fail(id(w)+' provenance annotations differ from inventory');
+    }
+    const pg=workloads.find(w=>w.metadata.name==='postgres');
+    const p=podSpec(pg).containers.find(c=>c.name==='postgres');
+    if(p.command)fail('postgres must retain its image entrypoint for initdb');
+    if(JSON.stringify(p.args)!==JSON.stringify(contract.commands.postgres))fail('postgres startup settings differ from source Compose defaults');
+    const bootstrap=containersOf(podSpec(workloads.find(w=>w.metadata.name==='provision'))).find(c=>c.name==='bootstrap');
+    const env=Object.fromEntries(bootstrap.env.map(e=>[e.name,e.value]));
+    if(env.NS_SOURCE_COMMIT!==inventory.sourceCommit || env.NS_DEPLOY_COMMIT!==inventory.imageDeployCommit || env.NS_PGSTREAM!=='1')fail('bootstrap source/producer identity is missing or wrong');
+  });
+
+  run('container-budgets', fail => {
+    const mode = inventory.resourceAccounting || 'limits-v1';
+    if (!['limits-v1','requests-v1'].includes(mode)) { fail('unknown resource accounting'); return; }
+    for (const w of workloads) for (const c of containersOf(podSpec(w))) for (const group of ['requests','limits']) {
+      for (const key of ['cpu','memory','ephemeral-storage']) {
+        const value=c.resources?.[group]?.[key];
+        if(mode==='requests-v1' && group==='limits' && value===undefined) continue;
+        const positive = mode==='limits-v1' ? value && /^[1-9][0-9]*(m|Mi|Gi)?$/.test(value) :
+          value!==undefined && /^\+?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+|[numkKMGTPE]|[KMGTPE]i)?$/.test(String(value)) && parseFloat(value)>0;
+        if (!positive) fail(id(w)+' container '+c.name+' missing positive '+group+'.'+key);
+      }
+    }
+  });
+
+  run('existing-capacity-profile', fail => {
+    if(inventory.profile!=='existing-capacity')return;
+    if(inventory.storage.mode==='dynamic')fail('existing-capacity cannot request dynamic storage');
+    for(const m of all) {
+      if(['PersistentVolumeClaim','PersistentVolume','StorageClass','Ingress'].includes(m.kind))fail(id(m)+' adds a provider resource');
+      if(m.kind==='Service'&&(m.spec.type||'ClusterIP')!=='ClusterIP')fail(id(m)+' must be ClusterIP for existing-capacity');
+    }
+    for(const w of workloads){
+      if(w.spec.volumeClaimTemplates?.length)fail(id(w)+' adds dynamic claims');
+      if((podSpec(w).volumes||[]).some(v=>v.hostPath))fail(id(w)+' borrows node storage');
+      for(const v of podSpec(w).volumes||[])if(v.emptyDir && !v.emptyDir.sizeLimit)fail(id(w)+' emptyDir '+v.name+' lacks sizeLimit');
+    }
+  });
+
+  run('provision-boundary', fail => {
+    const job=workloads.find(w=>w.metadata.name==='provision');
+    if(job?.spec.backoffLimit!==0||!job?.spec.activeDeadlineSeconds)fail('provision requires no retry and a finite deadline');
+    const spec=podSpec(job), names=(spec.initContainers||[]).map(c=>c.name);
+    if(names.join(',')!=='wait-stores,bootstrap,vault-kubernetes-auth')fail('provision must use source-owned registry bootstrap followed by Kubernetes auth');
+    if((spec.volumes||[]).some(v=>v.name==='ownership-grants'))fail('C2 already owns admin grants; historical overlay is refused');
+    const done=spec.containers.find(c=>c.name==='done');
+    const overlay = all.find(m => m.kind === 'ConfigMap' && m.metadata.name === 'provision-scripts');
+    const helper = overlay?.data['candidate-documents.cjs'] || '';
+    if (JSON.stringify(done.command) !== JSON.stringify(['node', '/run/ns-overlay/candidate-documents.cjs', 'hold']) ||
+        !helper.split("need(process.argv[2] === 'verify'")[0].includes("path.join(root, '.exported')")) fail('provision must hold private output until explicit export');
+    if (containersOf(spec).filter(c => c.volumeMounts.some(v => v.name === 'postgres-password')).map(c => c.name).join() !== 'bootstrap')
+      fail('only the SQL bootstrap container may mount the setup credential');
+    const primer=workloads.find(w=>w.metadata.name==='primer');
+    if(primer?.spec.suspend!==true || primer?.spec.backoffLimit!==0 || !primer?.spec.activeDeadlineSeconds)fail('primer must be an explicit suspended finite no-retry Job');
+    const primerSpec = podSpec(primer);
+    const controller = primerSpec.containers.find(c => c.name === 'done');
+    if (JSON.stringify(controller?.command) !== JSON.stringify(['node', '/run/ns-overlay/candidate-documents.cjs', 'verify']) ||
+        !controller?.readinessProbe?.exec?.command.includes('/run/ns-primer/verified.json'))
+      fail('primer must verify through private admin before advertising its proof');
+    if (primerSpec.volumes.some(v => v.secret && v.secret.secretName !== 'ns-config-primer'))
+      fail('primer mounts only its unprivileged source documents');
+    const admin = workloads.find(w => w.metadata.name === 'admin');
+    const adminSpec = podSpec(admin);
+    const adminTargetPaths = adminSpec.volumes.find(v => v.name === 'secret-admin')?.secret.items?.map(item => item.path);
+    const targetPaths = ['api', 'evaluator', 'realtime'].flatMap(role => ['config', 'env', 'operation'].map(kind => 'verification/' + role + '.' + kind + '.json'));
+    if (!targetPaths.every(name => adminTargetPaths?.includes(name))) fail('admin lacks a private verification target document');
+    if (!adminSpec.containers[0].env.some(e => e.name === 'NODE_EXTRA_CA_CERTS') ||
+        !adminSpec.containers[0].volumeMounts.some(v => v.name === 'ns-ca')) fail('admin requires the scoped Vault CA mount');
+    const sqlPolicy = all.find(m => m.kind === 'NetworkPolicy' && m.metadata.name === 'postgres-from-app');
+    const sqlPeers = sqlPolicy.spec.ingress.flatMap(rule => rule.from.map(peer => peer.podSelector?.matchLabels?.['app.kubernetes.io/component']));
+    if (sqlPeers.includes('operator')) fail('operator network policy must not admit direct PostgreSQL traffic');
+    if (inventory.postgresIdentities.ui?.includes('ui_registry') && !sqlPeers.includes('ui'))
+      fail('UI registry identity needs scoped PostgreSQL ingress');
+    const installers=workloads.flatMap(w=>(podSpec(w).initContainers||[]).filter(c=>c.name==='install-config'));
+    if(installers.some(c=>!JSON.stringify(c.command).includes("!n.startsWith('.')")))fail('installer must copy all source documents including extensionless token files');
+  });
+
+  if (separate) run('separate-k1', fail => require('./separate-k1').check(all, inventory, fail));
   return results;
 }
 

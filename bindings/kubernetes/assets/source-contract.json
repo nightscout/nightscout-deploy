@@ -1,0 +1,166 @@
+{
+  "bindingInputsVersion": 1,
+  "commands": {
+    "admin": [
+      "node",
+      "deploy/multitenant/entrypoint.js",
+      "admin"
+    ],
+    "api": [
+      "node",
+      "deploy/multitenant/entrypoint.js",
+      "api"
+    ],
+    "bootstrap": [
+      "node",
+      "deploy/multitenant/bootstrap.js"
+    ],
+    "demo": [
+      "node",
+      "-r",
+      "./deploy/multitenant/load-env.js",
+      "deploy/multitenant/demo.js"
+    ],
+    "evaluator": [
+      "node",
+      "deploy/multitenant/entrypoint.js",
+      "evaluator"
+    ],
+    "pgstream": [
+      "/usr/local/bin/pgstream",
+      "run",
+      "-c",
+      "/run/ns-stream/pgstream.yaml",
+      "--log-level",
+      "info"
+    ],
+    "placement-operator": [
+      "node",
+      "-r",
+      "./deploy/multitenant/load-env.js",
+      "deploy/multitenant/placement-control.js"
+    ],
+    "postgres": [
+      "postgres",
+      "-c",
+      "wal_level=logical",
+      "-c",
+      "max_replication_slots=4",
+      "-c",
+      "max_wal_senders=4",
+      "-c",
+      "max_slot_wal_keep_size=256MB",
+      "-c",
+      "output_plugin_libraries=wal2json",
+      "-c",
+      "max_connections=140",
+      "-c",
+      "reserved_connections=40"
+    ],
+    "primer": [
+      "node",
+      "deploy/multitenant/prime.js",
+      "provision"
+    ],
+    "realtime": [
+      "node",
+      "deploy/multitenant/entrypoint.js",
+      "realtime"
+    ],
+    "tenant-admin": [
+      "node",
+      "deploy/multitenant/entrypoint.js",
+      "tenant-admin"
+    ],
+    "ui": [
+      "node",
+      "-r",
+      "./deploy/multitenant/load-env.js",
+      "deploy/multitenant/ui.js"
+    ],
+    "vault": [
+      "vault",
+      "server",
+      "-config=/vault/config/demo.hcl"
+    ]
+  },
+  "coreCommit": "47588e9e15f8c43f37bf6a88928495687b41f05a",
+  "deployCommit": "5c4614d69be447fcdc7ab001c4cf9b9d77b9c81d",
+  "diagnosticSha256": "668991467d150f15f7a448bb155c97a34dbab385597572f9d2a03e4aeea46643",
+  "imageReceiptSha256": "ea087cba13be9bd8a9973fb6d5166b1e01dfcabc2ef6dde247ada0f5e230fa2b",
+  "localImageId": "sha256:b5b1adac8dc3b9552ea66925913eaae58ce3934f22428c1ff1854f33c3d7e3dc",
+  "nativeCatalogueSha256": "814ff611c51b7dec3cabbbce68b4e1a9ec547b9d08b77482c61f56003ecb72af",
+  "platformVerification": "startup-v2",
+  "platformVerificationVersion": "platform-verification-v2",
+  "postgresIdentities": {
+    "admin": [
+      "connector_writer",
+      "management_issuer",
+      "ownership_operator",
+      "platform_verifier",
+      "provisioner"
+    ],
+    "api": [
+      "alarm",
+      "api",
+      "display_reader",
+      "lifetime_api",
+      "readiness",
+      "root_writer"
+    ],
+    "evaluator": [
+      "activity_reader",
+      "display_reader",
+      "evaluator",
+      "lifetime_evaluator",
+      "outbox",
+      "pgstream",
+      "suppression"
+    ],
+    "pgstream": [
+      "pgstream"
+    ],
+    "realtime": [
+      "display_reader",
+      "lifetime_realtime",
+      "realtime"
+    ],
+    "tenant-admin": [
+      "lifetime_tenant_admin",
+      "owner_credentials",
+      "owner_reader",
+      "owner_writer"
+    ],
+    "ui": [
+      "ui_registry"
+    ]
+  },
+  "producerBinarySha256": "cc47552319c1a2ec9c85d7286e366496a5149c9e355a2a891f578333634e5465",
+  "published": false,
+  "schemaVersion": 1,
+  "scope": "Offline constructor and byte equivalence; cluster and capacity UNMEASURED",
+  "sourceAcceptance": "PENDING",
+  "sourceFilesSha256": {
+    "Dockerfile": "e0420512585f4a301a102165c5226ae8c983c395a3800b5bc9fd7c16412acbae",
+    "Dockerfile.postgres": "da9e4a8e51042f7d1014766b910ba389308bced43233fa9ee90a27f246a8c1a2",
+    "bootstrap.js": "0955c71bde6936401888a634c8f9da3ac68c545dc397bba8b2045b135f3af2c3",
+    "compose.yaml": "58c080c2ab62ae58feccbc6c7e7af4596e8c3864f8f0896f6d366667142a164b",
+    "config.js": "be3393793db3c412e6bb840602aadeb4008a8aaec8be5a51d34aabba091153a4",
+    "entrypoint.js": "1a4b909cabbc66756793d464e34f19f140a0ee2784cf5c395b47f51a37ebd085",
+    "evaluator-workers.js": "069db60cbb612dad30ddaba3348e20423319083ee027bd56f6919d1e32692e92",
+    "health.js": "9767c5f4a30266ca3624664bbae17803a6ea331833e31a29a152003ba22f037b",
+    "load-env.js": "3eb3b0d9f9ce69a9c7b0ec0ae8c371f4a51b1eee3c7ff65d29bb90e7f2df831c",
+    "native-lifecycle.js": "9cff30ad021e921ccd3fcf7f753a20098cc5a0b3424bb4ffda654def95787876",
+    "nginx.conf": "d8334b2aad073b5d8803c9219f8f1c29b44985c497403d8714642d3f50d72e21",
+    "pgstream-exact-handover.patch": "791d9aa13ef87673a21b54b41772e6763212d0c514dda99a0d4ce7754993c70c",
+    "pgstream-source.json": "7bf008f4de37a9a5b3ef500599605aa2da1acc8fe0122589a32117c0114bf49c",
+    "pgstream.js": "ed13be0b50f81dbc685d5b74114cecb5346b4dc82d4c21a25eff970d152e7fbb",
+    "platform-startup.js": "121e791b11cdd1a3793ee37b76a43665c5e4dbf5a1f26003010fb66d491c1f59",
+    "platform-verify.js": "901875bd216ad5eee1cebf969dfe70403b52fbf611df34af00bc838cbc4ea19c",
+    "prime.js": "352f8d25fba0d52419f32904c9c4620c84694749cc48f6e1cd774921c6f9b1fb",
+    "realtime-workers.js": "a35ef6462a014eecc4a111e8eed43a35f4ebcdfedf00690f29d58af227a82a85",
+    "registry-bootstrap.js": "e68fbe7660d34cbbec8b99da3a2fdda353c4339bcf1e1dd047d6e483dcbda31d",
+    "registry-plan.js": "a9b080c24460ee7ae38d319325f56506c6ff04b687da98bb43cc4b2044cc340c",
+    "service-environment.js": "5e44e58963adef7b59a2c1b34305475366f986d8b3b0b7b412f377a6a59ff4d6"
+  }
+}

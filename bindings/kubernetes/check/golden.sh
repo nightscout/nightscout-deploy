@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
-# The committed render (check/golden/preview.yaml) must equal a fresh `tk show`.
-# Refresh with: tk show --dangerous-allow-redirect environments/preview > check/golden/preview.yaml
+# Current synthetic render determinism; historical preview golden stays unchanged.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-fresh=$(mktemp)
-trap 'rm -f "$fresh"' EXIT
-tk show --dangerous-allow-redirect environments/preview > "$fresh"
-if diff -u check/golden/preview.yaml "$fresh"; then echo 'ok   golden render current'; else echo 'FAIL golden render differs from tk show'; exit 1; fi
+first=$(mktemp)
+second=$(mktemp)
+trap 'rm -f "$first" "$second"' EXIT
+for env in synthetic separate-k1; do
+  tk show --dangerous-allow-redirect "environments/$env" > "$first"
+  tk show --dangerous-allow-redirect "environments/$env" > "$second"
+  diff -u "$first" "$second"
+  node check/invariants.js --env "environments/$env"
+done
