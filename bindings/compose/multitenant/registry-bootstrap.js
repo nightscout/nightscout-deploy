@@ -3,7 +3,7 @@
 // Infrastructure only. Tenant rows and keys are provisioned later through the
 // admin REST API; lab subjects and data are a separate API client job.
 const path = require('node:path');
-async function finish({ options, request, rootToken, layout, roleURLs, writePrivate }) {
+async function finish({ options, request, rootToken, layout, roleURLs, writePrivate, admin, adminURL, nativeSource }) {
   if(options.connectionBudgetProfile)require('./connection-budget-bootstrap').selection(options,require('./connection-budget-files').read(options.connectionBudgetProfile));
   const plan = require('./config'), { output, uid, gid, sourceCommit, configMaxBytes } = options;
   const l = layout, own = { uid, gid }, compact = { compact: true };
@@ -25,6 +25,12 @@ async function finish({ options, request, rootToken, layout, roleURLs, writePriv
   const provisioningToken = await token('provisioner', [rule('keys/tenant-*', ['create','read','update']), rule('encrypt/tenant-data-*', ['update'])]);
   const realtimeOwnership = require('./realtime-workers').initial(require('./realtime-workers').selection());
   const docs = plan.documents({ layout: l, urls: roleURLs, tokens: [], publicKeys: [], managementKeys: [], vaultAddress: options.vault.origin, registryMode: true, realtimeOwnership });
+  let nativeSelection;
+  if(nativeSource){
+    const binding=require('./native-lifecycle');nativeSelection=binding.select(l,docs,nativeSource);
+    await binding.install({admin,adminURL,layout:l,selection:nativeSelection});
+    binding.attach(docs,nativeSelection);
+  }
   if(options.connectionBudgetProfile)for(const env of [...Object.values(docs.environments),docs.admin.environment,docs.uiEnvironment])env.NS_SOURCE_COMMIT=sourceCommit;
   for (const role of Object.keys(docs.configs)) {
     const dir = path.join(output, role);
@@ -53,6 +59,7 @@ async function finish({ options, request, rootToken, layout, roleURLs, writePriv
   const lifecycle = plan.lifecycle(l);
   writePrivate(path.join(output, 'ops', 'config.json'), { version: 1, drainTimeoutMs: 10000,
     tenants: ids.map((id, i) => ({ id, host: plan.tenantAlias(i), tokenEnv: i === 0 ? 'NS_DEMO_TOKEN_A' : i === 1 ? 'NS_DEMO_TOKEN_B' : 'NS_DEMO_TOKEN_' + i })),
+    ...(nativeSelection?{nativeSelection:structuredClone(nativeSelection.binding)}:{}),
     apiOrigin: docs.apiOrigin || 'http://api:1337', control: { namespace: l.namespaces.control, registry: { namespace: l.namespaces.registry }, locks: docs.locks, participants: docs.remote }, ...lifecycle }, own);
   writePrivate(path.join(output, 'ops', 'env.json'), { NS_OPERATOR_PG: roleURLs.operator, NS_AUTH_AUDIT_PG:roleURLs.api, NS_SOURCE_COMMIT: sourceCommit,
      }, own);
