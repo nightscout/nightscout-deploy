@@ -33,7 +33,8 @@ test('separated roles start without a tenant Job gate and have independent probe
     const pod = component.deployment.spec.template.spec;
     const actor = pod.containers.find(c => c.name === role);
     assert.deepEqual(actor.startupProbe.exec, actor.readinessProbe.exec);
-    assert.deepEqual(actor.livenessProbe.exec, actor.readinessProbe.exec);
+    assert.deepEqual(actor.livenessProbe.tcpSocket, { port: 'int-role' });
+    assert.equal(actor.livenessProbe.exec, undefined);
     assert.ok(!pod.initContainers.some(c => c.name === 'wait-for-jobs'));
   }
   const budget = result.value.budget;
