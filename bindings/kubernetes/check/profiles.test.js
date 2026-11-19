@@ -26,6 +26,23 @@ test('request defaults and authored overrides reach the rendered container', () 
   assert.deepEqual(actual.resources, { requests: { ...profile.postgres, cpu: '42m' } });
 });
 
+test('separated roles start without a tenant Job gate and have independent probes', () => {
+  const result = render({ applicationTopology: 'separate-k1' });
+  assert.equal(result.status, 0, result.error);
+  for (const [role, component] of Object.entries(result.value.components)) {
+    const pod = component.deployment.spec.template.spec;
+    const actor = pod.containers.find(c => c.name === role);
+    assert.deepEqual(actor.startupProbe.exec, actor.readinessProbe.exec);
+    assert.deepEqual(actor.livenessProbe.exec, actor.readinessProbe.exec);
+    assert.ok(!pod.initContainers.some(c => c.name === 'wait-for-jobs'));
+  }
+  const budget = result.value.budget;
+  assert.ok(Number(budget.resourceQuota.spec.hard.pods) >= 2 * (4 + 3));
+  assert.deepEqual(budget.limitRange.spec.limits[0], {
+    type:'Container', defaultRequest:{cpu:'25m', memory:'32Mi','ephemeral-storage':'16Mi'}
+  });
+});
+
 test('existing claims and placement remain explicit without new provider resources',()=>{
   const r=render({storage:{mode:'existing-claim',claims:{postgres:'synthetic-existing-pg',vault:'synthetic-existing-vault',provisionState:'synthetic-existing-state'}},placement:{nodeName:'synthetic-existing-node'},placementByWorkload:{cohort:{nodeSelector:{'synthetic.example/purpose':'commissioning'}}}});
   assert.equal(r.status,0,r.error);const x=r.value;

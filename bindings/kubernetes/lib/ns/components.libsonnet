@@ -19,6 +19,8 @@
         }] + (if agent then [source.initContainers[1]] else []),
         containers: [x + {
           ports: x.ports + [{ name: 'int-role', containerPort: $.ports[role] }],
+          startupProbe: { exec: x.readinessProbe.exec, periodSeconds: 5, timeoutSeconds: 3, failureThreshold: 180 },
+          livenessProbe: { exec: x.readinessProbe.exec, periodSeconds: 10, timeoutSeconds: 5, failureThreshold: 6 },
           volumeMounts: [v for v in x.volumeMounts if std.member(keep, v.name)],
         } for x in source.containers if x.name == role],
         volumes: [v for v in source.volumes if std.member(keep, v.name)],

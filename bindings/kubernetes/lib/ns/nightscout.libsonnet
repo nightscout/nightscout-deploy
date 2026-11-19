@@ -889,7 +889,9 @@
           } }
         else {})
       else { [k]: decorate(v[k]) for k in std.objectFields(v) if !(k == 'state' && std.objectHas(v,'job') && c.storage.mode != 'dynamic') };
-    local rendered = decorate(raw);
+    local resources = decorate(raw);
+    local workloads = [w for w in collect(resources) if std.member(['Deployment','StatefulSet','Job'], w.kind)];
+    local rendered = resources + { budget: (import 'namespace-budget.libsonnet')(workloads, c.namespace, c.runId) };
     rendered + {
       inventory:: original.inventory + {
         applicationTopology: c.applicationTopology,

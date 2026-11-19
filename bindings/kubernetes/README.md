@@ -86,9 +86,11 @@ unplanned replacements. This profile supplies K=1 placement; K>1 and HA need the
 ## Inputs and storage
 
 All init containers, Vault sidecars and serving/provisioning containers have explicit CPU, memory
-and ephemeral-storage requests. The default `requests-v1` mode renders limits only when supplied in
-`resources.<container-name>.limits`. Set per-role requests for the workload using the measured
-scenario profile. Explicit `limits-v1` selects the legacy bounded profile. `placement` sets Pod scheduling fields;
+and ephemeral-storage requests. The namespace quota allows two copies of each
+declared workload so a controller can replace its Pod. It accounts CPU, memory,
+ephemeral storage and Pod count. The LimitRange supplies requests when a
+container omits them. The default `requests-v1` mode renders limits only when supplied in
+`resources.<container-name>.limits`. The shared typical request profile is in `lib/ns/typical-requests.json`. Explicit `limits-v1` selects the legacy bounded profile. `placement` sets Pod scheduling fields;
 `placementByWorkload.<name>` overrides them. Supported staging fields include nodeName,
 nodeSelector, tolerations, affinity and topologySpreadConstraints. An explicit existing nodeName
 requires environment-owned headroom/admission checks; it does not reserve resources.
