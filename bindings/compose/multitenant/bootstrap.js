@@ -35,6 +35,10 @@ function writePrivate(filename,value) {
   fs.mkdirSync(path.dirname(filename),{recursive:true,mode:0o700});
   fs.writeFileSync(filename,JSON.stringify(value,null,2)+'\n',{mode:0o600,flag:'wx'});
 }
+function loginSQL(role,password) {
+  if(!/^[a-f0-9]{64}$/.test(password))throw fail('SEEDED_CREDENTIAL_INVALID');
+  return 'CREATE ROLE '+plan.quote(role)+" LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD '"+password+"'";
+}
 async function bootstrap(options) {
   require('./pgstream').enabled();
   const workers=require('./evaluator-workers'),evaluatorWorkers=workers.selection();
@@ -80,7 +84,13 @@ async function bootstrap(options) {
     if(complete.evaluatorWorkers!==evaluatorWorkers?.workers)throw fail('BOOTSTRAP_EVALUATOR_ROSTER_CHANGED_RECREATE_DEMO');
     const l=plan.layout(),admin=new (require('pg').Client)({connectionString:pg.toString(),connectionTimeoutMillis:10000,statement_timeout:10000});
     await admin.connect();
-    try{await migrate(admin,pg,l,plan.catalogues(),false);}finally{await admin.end();}
+    try{
+      const seeded=require('./credentials').read(options.credentials,Object.keys(l.roles));
+      if(!(await admin.query('SELECT 1 FROM pg_roles WHERE rolname=$1',[l.roles.owner_settings])).rowCount){
+        await admin.query(loginSQL(l.roles.owner_settings,seeded.postgres.owner_settings));
+      }
+      await migrate(admin,pg,l,plan.catalogues(),false);
+    }finally{await admin.end();}
     const seededFrom=complete.seededFrom||complete.sourceCommit;
     if(complete.sourceCommit!==sourceCommit||complete.deployCommit!==deployCommit){
       require('./render').write(completeFile,JSON.stringify({...complete,sourceCommit,deployCommit,seededFrom},null,2)+'\n');
@@ -104,7 +114,7 @@ async function bootstrap(options) {
     await admin.query('CREATE ROLE '+q(l.owner)+' NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION');
     await admin.query('CREATE ROLE '+q(l.managementAuthorityOwner)+' NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION');
     // credentials.read admits hex only, so the literal cannot break out of its quotes.
-    for(const [kind,role]of Object.entries(l.roles))await admin.query('CREATE ROLE '+q(role)+" LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD '"+seeded.postgres[kind]+"'");
+    for(const [kind,role]of Object.entries(l.roles))await admin.query(loginSQL(role,seeded.postgres[kind]));
     // Clinical output producers/deliverers may use PostgreSQL's reserved_connections
     // slots; REST-serving roles may not (clinical-isolation.js).
     for(const sql of require('./clinical-isolation').grants(l))await admin.query(sql);

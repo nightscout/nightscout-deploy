@@ -20,6 +20,23 @@ test('seeded credentials are private hex values, one per role and token, and ref
   fs.writeFileSync(path.join(seeded,'vault','api'),"x' OR '1\n");
   assert.throws(()=>credentials.read(seeded),{code:'SEEDED_CREDENTIAL_INVALID'});
 });
+test('extends an existing seed once and mounts the settings login only in tenant-admin',t=>{
+  const {seeded,output,env}=fixture(t),previous=credentials.read(seeded);
+  fs.unlinkSync(path.join(seeded,'postgres','owner_settings'));
+  credentials.addOwnerSettings(seeded);
+  const upgraded=credentials.read(seeded);
+  assert.notEqual(upgraded.postgres.owner_settings,previous.postgres.owner_settings);
+  assert.deepEqual({...upgraded.postgres,owner_settings:previous.postgres.owner_settings},previous.postgres);
+  assert.deepEqual(upgraded.vault,previous.vault);
+  credentials.addOwnerSettings(seeded);assert.deepEqual(credentials.read(seeded),upgraded);
+  render.render(render.input(env));
+  const ownerConfig=require('../../../lib/server/serve/owner-preview-config').load({NS_SECRETS_DIR:path.join(output,'tenant-admin'),NS_VAULT_ADDR:'https://vault.example.test:8200'});
+  assert.equal(new URL(ownerConfig.ownerSettings.connectionString).username,plan.layout().roles.owner_settings);
+  assert.equal(ownerConfig.ownerSettings.namespaces.authority,plan.layout().namespaces.owner_configuration);
+  for(const role of Object.keys(render.connections).filter(name=>name!=='tenant-admin')){
+    assert.equal(fs.existsSync(path.join(output,role,'ns_owner_settings_pg')),false);
+  }
+});
 test('mounts only the declared database credentials and tokens for each role',t=>{
   const {seeded,output,env}=fixture(t),values=credentials.read(seeded),layout=plan.layout();
   assert.equal(render.render(render.input(env)).state,'credentials-rendered');

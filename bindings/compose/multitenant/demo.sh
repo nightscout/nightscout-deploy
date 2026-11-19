@@ -52,11 +52,13 @@ case "${1:-}" in
     ;;
   bootstrap)
     node build.js --check-image
+    node credentials.js add-owner-settings "$(dirname "$replica_file")/credentials"
     exec "${compose[@]}" run --rm bootstrap
     ;;
   up)
     node build.js --check-image
     [ "$#" -eq 1 ] || exit 64
+    node credentials.js add-owner-settings "$(dirname "$replica_file")/credentials"
     # admin and every role wait for the one-shot bootstrap (render, then provision) to complete.
     "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 90 admin
     replicas=$(node -e 'const fs=require("node:fs"),lines=fs.readFileSync(".env","utf8").split("\n");const n=Number((lines.find(x=>x.startsWith("NS_API_REPLICAS="))||"NS_API_REPLICAS=1").slice(16));if(!Number.isSafeInteger(n)||n<1||n>16)process.exit(1);console.log(Array.from({length:n},(_,i)=>i?"api-"+(i+1):"api").join(" "));')

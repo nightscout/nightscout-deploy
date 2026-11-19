@@ -4,6 +4,11 @@ const { execFileSync } = require('node:child_process');
 test('admin uses its mounted Secret and pod IP; standalone UI receives private regular files', t => {
   const root = path.resolve(__dirname, '..');
   const rendered = JSON.parse(execFileSync('tk', ['eval', 'environments/synthetic'], { cwd: root }));
+  const {documents} = JSON.parse(execFileSync('tk', ['eval', 'environments/synthetic', '-e', 'inventory'], { cwd: root }));
+  assert.deepEqual(Object.keys(documents).filter(role => documents[role].includes('ns_owner_settings_pg')), ['tenant-admin']);
+  const owner = rendered.components['tenant-admin'].deployment.spec.template.spec;
+  assert(owner.volumes.some(v => v.name === 'secret-tenant-admin' && v.secret.secretName === 'ns-config-tenant-admin'));
+  assert(owner.containers[0].volumeMounts.some(m => m.name === 'secret-tenant-admin' && m.mountPath === '/run/ns-config' && m.readOnly));
   const admin = rendered.admin.deployment.spec.template.spec;
   assert.equal(admin.initContainers.length, 0);
   const app = admin.containers[0];

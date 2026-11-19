@@ -782,7 +782,7 @@
           api: ['ns_api_pg','ns_readiness_pg','ns_api_root_writer_pg','ns_alarm_pg','ns_display_pg','ns_lifetime_pg'],
           realtime: ['ns_realtime_pg','ns_display_pg','ns_lifetime_pg'],
           evaluator: ['ns_evaluator_pg','ns_outbox_pg','ns_suppression_pg','ns_activity_pg','ns_display_pg','ns_stream_recovery_pg','ns_lifetime_pg','ns_pgstream_generation'],
-          'tenant-admin': ['ns_owner_writer_pg','ns_owner_reader_pg','ns_owner_credentials_pg','ns_lifetime_pg','vault-token'],
+          'tenant-admin': ['ns_owner_writer_pg','ns_owner_reader_pg','ns_owner_credentials_pg','ns_owner_settings_pg','ns_lifetime_pg','vault-token'],
           admin: ['ns_provisioner_pg','ns_ownership_pg','ns_connector_sources_pg','ns_management_sessions_pg','vault-token','management-vault-token'],
           ui: ['env.json','config.json'], pgstream: ['pgstream.yaml'], primer: ['config.json'],
         },

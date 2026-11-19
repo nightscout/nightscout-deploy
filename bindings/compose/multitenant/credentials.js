@@ -31,6 +31,21 @@ function seed (directory, kinds = roleKinds()) {
   return { postgres: kinds.length, vault: TOKENS.length };
 }
 
+// Carry a complete earlier seed forward without changing any credential. Publish the
+// new password atomically so two concurrent up commands cannot see a partial file.
+function addOwnerSettings (directory, kinds = roleKinds()) {
+  read(directory, kinds.filter(kind => kind !== 'owner_settings'));
+  const file = path.join(directory, 'postgres', 'owner_settings');
+  if (!fs.existsSync(file)) {
+    const temporary = file + '-' + crypto.randomBytes(16).toString('hex');
+    fs.writeFileSync(temporary, crypto.randomBytes(32).toString('hex') + '\n', { mode: 0o600, flag: 'wx' });
+    try { fs.linkSync(temporary, file); }
+    catch (error) { if (error.code !== 'EEXIST') throw error; }
+    finally { fs.unlinkSync(temporary); }
+  }
+  value(file);
+}
+
 function value (file) {
   let text;
   try { text = fs.readFileSync(file, 'utf8').trim(); } catch { throw fail('SEEDED_CREDENTIAL_MISSING'); }
@@ -57,12 +72,13 @@ function urls (layout, passwords, { host = 'postgres', port = 5432, database = '
 
 if (require.main === module) {
   try {
-    if (process.argv[2] !== 'seed' || process.argv.length !== 4) throw fail('CREDENTIALS_USAGE');
+    if (!['seed', 'add-owner-settings'].includes(process.argv[2]) || process.argv.length !== 4) throw fail('CREDENTIALS_USAGE');
     process.umask(0o077);
-    console.log(JSON.stringify({ state: 'seeded', ...seed(path.resolve(process.argv[3])) }));
+    if (process.argv[2] === 'add-owner-settings') addOwnerSettings(path.resolve(process.argv[3]));
+    else console.log(JSON.stringify({ state: 'seeded', ...seed(path.resolve(process.argv[3])) }));
   } catch (error) {
     console.error(JSON.stringify({ error: /^[A-Z0-9_]{1,80}$/.test(error?.code || '') ? error.code : 'CREDENTIALS_SEED_FAILED' }));
     process.exitCode = 1;
   }
 }
-module.exports = { TOKENS, seed, read, urls };
+module.exports = { TOKENS, seed, addOwnerSettings, read, urls };

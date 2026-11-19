@@ -34,3 +34,25 @@ and realtime binding during pgstream setup.
    realtime receipt readiness check before any retry. A conflicting existing subscription
    requires operator inspection.
 4. Restart the roles with the new role files. Record the migration checksums.
+
+## Enable owner display editing on an existing deployment
+
+The regular Compose `up` or `bootstrap` action extends an existing private credential seed
+with one password for `owner_settings`. The existing-database bootstrap creates the missing
+login and applies its grants. Only tenant-admin receives its connection file. Other role
+passwords and the tenant settings rows remain in place.
+
+On an existing Kubernetes deployment, add the same two fields that a fresh offline seed
+produces. In private operator custody generate a new 32-byte hex password for the
+`owner_settings` field in `ns-credentials-postgres`. Use the ordinary renderer with that seed
+and the same PostgreSQL host and database to produce `tenant-admin/ns_owner_settings_pg`.
+Merge this one file into `ns-config-tenant-admin` and retain both existing Secrets' other
+fields. Rerun the provision Job with its existing state volume, then restart tenant-admin.
+Use the original private seed or other operator custody for existing credentials.
+
+The private operator's next add, transfer or recovery assigns configure to a newly assigned
+owner. For a tenant with a pre-upgrade owner, list its current owners and repeat the private
+ownership add for the selected principal and management consumer, supplying the returned
+expected owner list and its intended delegation. This initializes only a missing configure
+row. An existing inactive row or explicit denial remains in place, including after a former
+owner is reassigned. Owner settings requests use the resulting owner's management session.

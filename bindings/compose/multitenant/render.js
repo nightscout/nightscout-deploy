@@ -36,7 +36,7 @@ const connections = {
   api: { NS_API_PG: 'api', NS_READINESS_PG: 'readiness', NS_API_ROOT_WRITER_PG: 'root_writer', NS_ALARM_PG: 'alarm', NS_DISPLAY_PG: 'display_reader', NS_LIFETIME_PG: 'lifetime_api' },
   realtime: { NS_REALTIME_PG: 'realtime', NS_DISPLAY_PG: 'display_reader', NS_LIFETIME_PG: 'lifetime_realtime' },
   evaluator: { NS_EVALUATOR_PG: 'evaluator', NS_OUTBOX_PG: 'outbox', NS_SUPPRESSION_PG: 'suppression', NS_ACTIVITY_PG: 'activity_reader', NS_DISPLAY_PG: 'display_reader', NS_STREAM_RECOVERY_PG: 'pgstream', NS_LIFETIME_PG: 'lifetime_evaluator' },
-  'tenant-admin': { NS_OWNER_WRITER_PG: 'owner_writer', NS_OWNER_READER_PG: 'owner_reader', NS_OWNER_CREDENTIALS_PG: 'owner_credentials', NS_LIFETIME_PG: 'lifetime_tenant_admin' },
+  'tenant-admin': { NS_OWNER_WRITER_PG: 'owner_writer', NS_OWNER_READER_PG: 'owner_reader', NS_OWNER_CREDENTIALS_PG: 'owner_credentials', NS_OWNER_SETTINGS_PG: 'owner_settings', NS_LIFETIME_PG: 'lifetime_tenant_admin' },
   admin: { NS_PROVISIONER_PG: 'provisioner', NS_OWNERSHIP_PG: 'ownership_operator', NS_CONNECTOR_SOURCES_PG: 'connector_writer', NS_MANAGEMENT_SESSIONS_PG: 'management_issuer' },
 };
 

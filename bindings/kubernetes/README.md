@@ -85,7 +85,9 @@ in the application image (`ops/seed.cjs`, which runs the deployment's
 `ns-credentials-postgres` and `ns-credentials-vault` Secrets to create the PostgreSQL roles and the
 Vault tokens with the seeded ids. Vault's own unseal key and root token come from its
 initialization and stay on the Job's `provision-state` volume. No container holds output for
-export and nothing waits for an acknowledgement.
+export and nothing waits for an acknowledgement. The tenant-admin Secret also carries its
+dedicated owner settings login. Existing installations follow the
+[owner display settings upgrade](../compose/multitenant/PLATFORM-UPGRADE.md#enable-owner-display-editing-on-an-existing-deployment).
 
 Recreate and one replica express rollout intent. They do not prove old-backend termination for a
 manual Pod delete, partition or restore. Qualification must observe the actual old process/backend
