@@ -275,6 +275,9 @@
             spec: {
               enableServiceLinks: false,
               serviceAccountName: 'vault',
+              // The image runs as its vault user (uid 100, gid 1000) and chowns nothing, so a
+              // block volume (fixture or existing claim) is writable only through its group.
+              securityContext: { fsGroup: 1000 },
               containers: [{
                 name: 'vault',
                 image: c.images.vault,
