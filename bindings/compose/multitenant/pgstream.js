@@ -80,6 +80,9 @@ async function init({admin,adminURL,layout,config,binary='/usr/local/bin/pgstrea
  await admin.query('GRANT UPDATE('+columns.join(',')+') ON '+table+' TO '+evaluator);
  if(hasRealtime){
   const realtime=q(layout.roles.realtime),realtimeTable=q(layout.namespaces.rt_checkpoint)+'.tenant_consumer_checkpoint';
+  await require('../../lib/pgstream/realtime-obligation').install(admin,{
+    source:layout.namespaces.eval_checkpoint,target:layout.namespaces.rt_checkpoint,producer:config.consumer,consumers:realtimeConsumers
+  });
   const selectedConsumers=realtimeConsumers.map(value=>"'"+value+"'").join(',');
   await admin.query('GRANT USAGE ON SCHEMA '+q(layout.namespaces.eval_checkpoint)+' TO '+realtime);
   await admin.query('GRANT SELECT ON '+table+' TO '+realtime);
