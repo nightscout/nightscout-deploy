@@ -56,6 +56,7 @@ async function finish({ options, request, rootToken, layout, roleURLs, writePriv
   const lifecycle = plan.lifecycle(l);
   writePrivate(path.join(output, 'ops', 'config.json'), { version: 3, drainTimeoutMs: 10000,
     ...(nativeSelection?{nativeSelection:structuredClone(nativeSelection.binding),evaluatorProof:require('./operator-selection').inputs(docs,nativeSelection)}:{}),
+    floorVerification: { adminOrigin: 'http://admin:1342', namespace: require('./platform-startup').selection(docs).namespace },
     apiOrigin: docs.apiOrigin || 'http://api:1337', control: { namespace: l.namespaces.control, registry: { namespace: l.namespaces.registry } }, ...lifecycle }, own);
   writePrivate(path.join(output, 'ops', 'env.json'), { NS_OPERATOR_PG: roleURLs.operator, NS_AUTH_AUDIT_PG:roleURLs.api, NS_SOURCE_COMMIT: sourceCommit,
      }, own);

@@ -24,10 +24,27 @@ function selection(docs) {
   return { namespace, roles: [...ROLES] };
 }
 async function install(admin, layout) {
-  return require('../../lib/server/serve/platform-verification').install(admin, {
+  await require('../../lib/server/serve/platform-verification').install(admin, {
     namespace: layout.prefix + '_platform_verification', writer: layout.roles.platform_verifier,
     readers: [layout.roles.api, layout.roles.readiness, layout.roles.evaluator, layout.roles.realtime]
   });
+  await floorEnumeration(admin, layout);
+}
+async function upgrade(admin, layout) {
+  const result = await require('../../lib/server/serve/platform-verification').upgrade(admin, {
+    namespace: layout.prefix + '_platform_verification', writer: layout.roles.platform_verifier,
+    readers: [layout.roles.api, layout.roles.readiness, layout.roles.evaluator, layout.roles.realtime]
+  });
+  await floorEnumeration(admin, layout);
+  return result;
+}
+async function floorEnumeration(admin, layout) {
+  // Admin enumerates tenant IDs for migration postconditions; serving API
+  // retains its existing host resolver authority and cannot enumerate.
+  const quote = name => '"' + name + '"';
+  const registry = quote(layout.namespaces.registry), writer = quote(layout.roles.platform_verifier);
+  await admin.query('GRANT USAGE ON SCHEMA ' + registry + ' TO ' + writer);
+  await admin.query('GRANT EXECUTE ON FUNCTION ' + registry + '.tenant_registry_revision(),' + registry + '.tenant_registry_tenants(uuid,integer) TO ' + writer);
 }
 function files({ output, docs, writePrivate, own, compact }) {
   for (const role of ROLES) if (!docs.configs[role] || !docs.operations[role] || !docs.environments[role]) {
@@ -44,4 +61,4 @@ function files({ output, docs, writePrivate, own, compact }) {
     writePrivate(target + '.env.json', environment, own, compact);
   }
 }
-module.exports = { ROLES, BASE, documents, selection, install, files };
+module.exports = { ROLES, BASE, documents, selection, install, upgrade, files };

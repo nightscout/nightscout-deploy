@@ -15,7 +15,7 @@ const exact = (v, keys) => v && typeof v === 'object' && !Array.isArray(v) && Ob
 function validateConfig (value, env = process.env, requireTokens = true) {
   operationPlacement(env);
   const registryTarget = value?.version === 3;
-  if (!exact(value, ['version', ...(registryTarget ? [] : ['tenants']), 'apiOrigin', 'control', 'namespaces', 'catalogues', 'drainTimeoutMs', ...(Object.hasOwn(value || {}, 'intakeProfile') ? ['intakeProfile'] : []), ...(Object.hasOwn(value || {}, 'nativeSelection') ? ['nativeSelection'] : []), ...(Object.hasOwn(value || {}, 'evaluatorProof') ? ['evaluatorProof'] : [])]) || ![1,2,3].includes(value.version) || value.version===2&&(value.nativeSelection===undefined||value.intakeProfile!==undefined) ||
+  if (!exact(value, ['version', ...(registryTarget ? [] : ['tenants']), 'apiOrigin', 'control', 'namespaces', 'catalogues', 'drainTimeoutMs', ...(Object.hasOwn(value || {}, 'intakeProfile') ? ['intakeProfile'] : []), ...(Object.hasOwn(value || {}, 'nativeSelection') ? ['nativeSelection'] : []), ...(Object.hasOwn(value || {}, 'evaluatorProof') ? ['evaluatorProof'] : []), ...(Object.hasOwn(value || {}, 'floorVerification') ? ['floorVerification'] : [])]) || ![1,2,3].includes(value.version) || value.version===2&&(value.nativeSelection===undefined||value.intakeProfile!==undefined) ||
       !Number.isSafeInteger(value.drainTimeoutMs) || value.drainTimeoutMs < 1 || value.drainTimeoutMs > 2147483647 ||
       !registryTarget && (!Array.isArray(value.tenants) || value.tenants.length !== 2 ||
       !value.tenants.every(t => exact(t, ['id', 'host', 'tokenEnv']) && UUID.test(t.id) && /^[a-z0-9.-]+$/.test(t.host) &&
@@ -37,6 +37,7 @@ function validateConfig (value, env = process.env, requireTokens = true) {
       typeof env.NS_OPERATOR_PG !== 'string' || !env.NS_OPERATOR_PG || !/^[0-9a-f]{40}$/.test(env.NS_SOURCE_COMMIT || '')) {
     throw fail('COMPOSE_OPERATOR_CONFIG_REFUSED');
   }
+  if (value.floorVerification !== undefined) require('./tenant-floor-verification').selection(value.floorVerification);
   let origin, pg;
   try { origin = new URL(value.apiOrigin); pg = new URL(env.NS_OPERATOR_PG); } catch { throw fail('COMPOSE_OPERATOR_CONFIG_REFUSED'); }
   // The demo uses the Compose private service, not a user-provided public site.
@@ -157,6 +158,7 @@ function exportTenant (lifecycle, connection, config, tenant, sourceCommit) {
 
 async function restore (config, artifact, env = process.env, hooks = {}) {
   const tenant = tenantFor(config, artifact?.manifest?.tenant);
+  require('./tenant-floor-verification').selection(config.floorVerification);
   const lifecycle = lifecycleFor(config);
   operationPlacement(env);
   const { Pool } = require('pg');
@@ -169,7 +171,10 @@ async function restore (config, artifact, env = process.env, hooks = {}) {
     const result = await controller.withRestore(tenant, { artifactDigest: artifact.digest }, async ({ connection, maintenanceClaim }) => {
       // The lifecycle control namespace holds the key-retention ledger (BF-230).
       return lifecycle.restoreLogical(connection, artifact, { tenant, namespaces: config.namespaces, ledgerNamespace: config.control.namespace, maintenanceClaim,
-        ...(hooks.onRow ? { onRow: hooks.onRow } : {}), onCommitted: async summary => { committed = true; if (hooks.onCommitted) await hooks.onCommitted(summary); } });
+        ...(hooks.onRow ? { onRow: hooks.onRow } : {}), onCommitted: async summary => {
+          await require('./tenant-floor-verification').verify(config, tenant);
+          committed = true; if (hooks.onCommitted) await hooks.onCommitted(summary);
+        } });
     });
     if (!committed) throw fail('COMPOSE_RESTORE_COMMIT_NOT_OBSERVED');
     return result;
@@ -193,7 +198,8 @@ async function recover (config, command, tenant, claimId, env = process.env) {
 }
 function recoveryController (config, pool, locks = config.control.locks) {
   return require('../../lib/tenant-lifecycle/restore-resume').create({ namespace: config.control.namespace, locks, pool,
-    statementTimeoutMs: 10000, lockWaitMs: 2000, ...selectionOptions(config) });
+    statementTimeoutMs: 10000, lockWaitMs: 2000, ...selectionOptions(config),
+    beforeActivation: tenant => require('./tenant-floor-verification').verify(config, tenant) });
 }
 
 function argumentsFor (args) {
