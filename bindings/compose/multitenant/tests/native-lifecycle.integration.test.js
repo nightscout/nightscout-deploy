@@ -2,7 +2,7 @@
 // Tiny synthetic binding proof: actual generated SQL/config and source adapters.
 // The issued evaluator proof and the operator each use their deployment role.
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),crypto=require('node:crypto'),{execFileSync,spawn}=require('node:child_process');
-const {Client,Pool}=require('pg'),plan=require('../config'),binding=require('../native-lifecycle'),bridge=require('../restore'),scope=require('../../../lib/storage/tenant-scope');
+const {Client}=require('pg'),plan=require('../config'),binding=require('../native-lifecycle'),bridge=require('../restore'),scope=require('../../../lib/storage/tenant-scope');
 const PG='postgres@sha256:9e2cf6287f25c3151f4c9421ccce2b17f3e60061c111a29165e0d2cdd9ff0a97',VAULT='hashicorp/vault@sha256:962a92876e168d68eaaa24b0b8b49bbce1cb63024060a67bba95cd158a366fc2';
 const docker=args=>execFileSync('docker',args,{encoding:'utf8',stdio:['ignore','pipe','pipe'],timeout:30000}).trim();
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -60,7 +60,7 @@ test('actual tiny native generated provisioning, export, logical restore and pri
   const evaluator=require('../../../lib/server/serve/evaluator-config').parse(docs.evaluator,input,require('../../../lib/server/internal-api/listener-config').resolve(['evaluator'],input));
   const selected=require('../../../lib/server/serve/operation-cohort-config').load({...input,MULTITENANT_OPERATION_CONFIG:path.join(output,'evaluator/operation.json')});
   const verifier=require('../../../lib/server/serve/platform-verification').create({namespace:evaluator.platformVerification.namespace,connectionString:urls.platform_verifier,targets:[{
-    role:'evaluator',config:evaluator,operationProfileDigest:selected.intakeProfile.digest,check:()=>require('../../../lib/server/serve/platform-verification-admin').checkTarget({role:'evaluator',config:evaluator,operationConfig:selected})
+    role:'evaluator',config:evaluator,operationProfileDigest:selected.nativeSelection.digest,check:()=>require('../../../lib/server/serve/platform-verification-admin').checkTarget({role:'evaluator',config:evaluator,operationConfig:selected})
   }]});
   config=bridge.validateConfig(raw,env);
   await assert.rejects(bridge.capture(config,plan.A,env),{code:'COMPOSE_OPERATOR_SELECTION_UNVERIFIED'});
@@ -77,15 +77,10 @@ test('actual tiny native generated provisioning, export, logical restore and pri
   await assert.rejects(bridge.restore(config,artifact,env),{code:'COMPOSE_OPERATOR_SELECTION_UNVERIFIED'});
   assert.equal((await admin.query('SELECT phase FROM '+table('control','tenant_lifecycle_windows')+' WHERE tenant_id=$1',[plan.A])).rows[0].phase,'active');
   await verifier.verify();
-  // A real one-shot entry owns the only operator backend and creates the genuine
-  // recovery context. The fixture supplies a source/epoch-bound synthetic ticket.
+  // The operator's own private pool (max 1) reads the held claim and resumes under it.
   async function recover(){
-   const state=(await admin.query('SELECT claim_id FROM '+table('control','tenant_lifecycle_windows')+' WHERE tenant_id=$1',[plan.A])).rows[0],row=(await admin.query('SELECT current_database() AS database,(SELECT oid::text FROM pg_database WHERE datname=current_database()) AS "databaseOid",oid::text AS "roleOid",rolname AS role FROM pg_roles WHERE rolname=$1',[l.roles.operator])).rows[0],epoch=(await admin.query('SELECT system_identifier::text AS system_id,pg_postmaster_start_time()::text AS birth FROM pg_control_system()')).rows[0];
-   const O=require('../lifecycle-operator'),B=require('../connection-budget'),source={coreCommit:env.NS_SOURCE_COMMIT,deployCommit:process.env.NS_NATIVE_BIND_DEPLOY_COMMIT},expected={source,project:'native-bind',workingDirectory:directory,imageId:'sha256:'+'c'.repeat(64)},intent={version:1,command:'resume',tenant:plan.A,claimId:state.claim_id};
-   const lease={incarnation:crypto.randomBytes(16).toString('hex'),nonce:crypto.randomBytes(16).toString('hex'),intent,intentSha256:B.hash(intent)},ticket=O.ticket({source,sha256:'f'.repeat(64),resource:{pgResourceId:'native-bind',aliases:[new URL(adminURI).host],systemIdentifier:epoch.system_id,postmasterStartedAt:epoch.birth},lifecycleOperator:{principal:row}},lease,expected,{}),gate={version:1,incarnation:lease.incarnation,nonce:lease.nonce,intentSha256:lease.intentSha256,container:{...expected,service:O.NAME,cid:'a'.repeat(64),startedAt:'synthetic'}};
-   const payload=path.join(directory,'recovery-'+crypto.randomBytes(3).toString('hex')+'.json');fs.writeFileSync(payload,JSON.stringify({ticket,gate,config:raw}),{mode:0o600});
-   const response=await require('node:util').promisify(require('node:child_process').execFile)(process.execPath,[path.join(__dirname,'native-lifecycle-recovery.cjs'),payload],{env:{...process.env,NS_OPERATOR_PG:env.NS_OPERATOR_PG,NS_SOURCE_COMMIT:env.NS_SOURCE_COMMIT},timeout:35000,maxBuffer:1048576});
-   const result=JSON.parse(response.stdout);assert.equal(result.outcome,'COMPLETED');return result.result;
+   const state=(await admin.query('SELECT claim_id FROM '+table('control','tenant_lifecycle_windows')+' WHERE tenant_id=$1',[plan.A])).rows[0];
+   const result=await bridge.recover(config,'resume',plan.A,state.claim_id,env);assert.equal(result.state,'active');return result;
   }
   await mutate();await assert.rejects(bridge.restore(config,artifact,env,{onRow(){throw Error('NATIVE_BIND_BEFORE_DATA');}}),/NATIVE_BIND_BEFORE_DATA/);assert.equal((await recover()).interrupted,'before-data');
   // A verified selection may be withdrawn after the data commit. It must

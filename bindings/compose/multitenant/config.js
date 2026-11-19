@@ -132,7 +132,7 @@ function validateFiles(directory, docs) {
     const env=Object.fromEntries(Object.entries(docs.environments[role]).map(([key,value])=>[key,typeof value==='string'?value.replace('/run/ns-config',path.join(directory,role)):value]));
     const internal=require('../../lib/server/internal-api/listener-config').resolve([productRole],env);
     const parsed=parsers[productRole](env,internal),operation=require('../../lib/server/serve/operation-cohort-config').load(env,internal);
-    if((operation.intakeProfile?.selectionDigest)!==(native?.selectionDigest))throw new TypeError('COMPOSE_NATIVE_SELECTION_MISMATCH');
+    if((operation.nativeSelection?.selectionDigest)!==(native?.selectionDigest))throw new TypeError('COMPOSE_NATIVE_SELECTION_MISMATCH');
     const participant=operation.participants.find(row=>row.id===operation.participantId);
     require('./evaluator-workers').validate(docs, role, parsed, operation);
     if(JSON.stringify(namespaces(parsed).filter(name => name !== operation.namespace).sort())!==JSON.stringify(participant.namespaces))throw new TypeError('Deployment participant namespace mismatch');

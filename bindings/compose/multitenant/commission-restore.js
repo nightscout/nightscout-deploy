@@ -9,7 +9,6 @@ const fs = require('node:fs'), path = require('node:path');
 const plan = require('./config'), bootstrap = require('./bootstrap');
 const fail = code => Object.assign(new Error(code), { code });
 async function commission(options) {
-  if(process.env.NS_CONNECTION_BUDGET_PROFILE_FILE)throw fail('CONNECTION_BUDGET_UNPLANNED_PROCESS');
   const complete = JSON.parse(fs.readFileSync(path.join(options.output, 'bootstrap/complete.json'), 'utf8'));
   if (complete.version !== 2 || complete.sourceCommit !== options.sourceCommit || complete.deployCommit !== options.deployCommit) throw fail('RESTORE_COMMISSION_SOURCE_MISMATCH');
   const layout = plan.layout(), q = plan.quote, ns = layout.namespaces;

@@ -4,7 +4,7 @@
 // restore verdict: these prove that the demonstration refuses false witnesses.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { validateConfig, argumentsFor } = require('./restore');
+const { validateConfig, argumentsFor, recoveryController, recover } = require('./restore');
 const { runDemo, request } = require('./demo');
 const A = '11111111-1111-4111-8111-111111111111', B = '22222222-2222-4222-8222-222222222222';
 const env = { A_TOKEN: 'private-a-token', B_TOKEN: 'private-b-token', NS_OPERATOR_PG: 'postgres://operator:private-password@postgres/demo',
@@ -29,6 +29,20 @@ test('operator CLI requires an explicit tenant, private directory and exact rest
   assert.throws(() => argumentsFor(['restore', '--tenant', A, '--directory', '/run/ns-artifacts']), { code: 'COMPOSE_OPERATOR_USAGE' });
   assert.throws(() => argumentsFor(['export', '--tenant', A, '--directory', '../artifact']), { code: 'COMPOSE_OPERATOR_USAGE' });
   assert.equal(argumentsFor(['restore', '--tenant', A, '--directory', '/run/ns-artifacts', '--digest', 'a'.repeat(64)]).digest, 'a'.repeat(64));
+});
+
+test('interrupted-restore recovery takes a tenant, resume takes the reported claim, and both use a plain pool', async () => {
+  const C = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  assert.equal(argumentsFor(['inspect', '--tenant', A]).command, 'inspect');
+  assert.equal(argumentsFor(['resume', '--tenant', A, '--claim', C]).claimId, C);
+  for (const args of [['resume', '--tenant', A], ['inspect', '--tenant', A, '--claim', C], ['resume', '--tenant', A, '--claim', 'not-a-claim'],
+    ['inspect', '--tenant', A, '--directory', '/run/ns-artifacts'], ['export', '--tenant', A, '--directory', '/run/ns-artifacts', '--claim', C]]) {
+    assert.throws(() => argumentsFor(args), { code: 'COMPOSE_OPERATOR_USAGE' });
+  }
+  const controller = recoveryController(validateConfig(config(), env), { connect () {} });
+  assert.deepEqual(Object.keys(controller).sort(), ['close', 'inspect', 'resume']);
+  await controller.close();
+  await assert.rejects(recover(validateConfig(config(), env), 'inspect', 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', undefined, env), { code: 'COMPOSE_OPERATOR_TENANT_REFUSED' });
 });
 
 test('HTTP failures with sensitive bodies are refused without returning their payload', async () => {

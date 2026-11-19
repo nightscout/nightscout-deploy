@@ -27,9 +27,9 @@ if [ -n "${NS_DRILL_BACKEND_SUBNET:-}${NS_DRILL_EDGE_SUBNET:-}" ]; then
   compose+=(-f "$state/drill.networks.yaml")
 fi
 ordinary_profile() {
-  # These recovery drills address one fixed ordinary cohort. Selected admission
-  # and partitioned profiles need their own per-process admission, never this path.
-  if sed -n '/^NS_CONNECTION_BUDGET=1$/p; /^NS_EVALUATOR_WORKERS=/p; /^NS_REALTIME_WORKERS=/p' "$folder/.env" | read -r selected; then
+  # These recovery drills address one fixed ordinary cohort. Partitioned
+  # evaluator and realtime profiles need their own drill, never this path.
+  if sed -n '/^NS_EVALUATOR_WORKERS=/p; /^NS_REALTIME_WORKERS=/p' "$folder/.env" | read -r selected; then
     echo 'DRILL_SELECTED_PROFILE_UNSUPPORTED' >&2; exit 78
   fi
   replicas=$(sed -n 's/^NS_API_REPLICAS=//p' "$folder/.env")

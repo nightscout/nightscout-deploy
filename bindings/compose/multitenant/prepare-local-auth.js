@@ -5,7 +5,6 @@
 const crypto=require('node:crypto');
 const need=(v)=>{if(!v)throw Error('LOCAL_AUTH_PREPARATION_INPUT');};
 async function prepare(config,tenant,{rotateSigningKey=false}={},env=process.env){
- need(!env.NS_CONNECTION_BUDGET_PROFILE_FILE);
  need(config?.tenants?.some(t=>t.id===tenant)&&/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(tenant)&&typeof rotateSigningKey==='boolean');
  const namespaces=config.namespaces,legacy=namespaces.legacy,secretsNamespace=namespaces.secrets;
  for(const n of [legacy,secretsNamespace,config.control.namespace])need(/^[a-z][a-z0-9_]{0,62}$/.test(n)&&!['public','information_schema'].includes(n)&&!n.startsWith('pg_'));

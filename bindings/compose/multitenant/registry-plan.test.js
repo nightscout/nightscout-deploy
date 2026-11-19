@@ -167,17 +167,6 @@ test('trusted workers receive ordinary cross-tenant metadata SELECT; public role
   }
 });
 
-test('owner credential preparation accounts for its two actual private pools',()=>{
- const {docs}=generated(),budget=require('./connection-budget'),pools=require('../../lib/server/serve/pool-config');
- const selected=budget.describe(docs,pools).find(row=>row.roles[0]==='tenant-admin');
- assert.equal(selected.capabilities['nightscout-secrets'].requestedMaximum,4);
- assert.equal(selected.capabilities['nightscout-legacy-authority'].requestedMaximum,4);
- delete docs.configs['tenant-admin'].ownerCredentials;
- const baseline=budget.describe(docs,pools).find(row=>row.roles[0]==='tenant-admin');
- const max=row=>Object.values(row.capabilities).reduce((n,c)=>n+(c.requestedMaximum||0),0);
- assert.equal(max(selected)-max(baseline),8);
-});
-
 test('ordinary deployment delegates its SQL and provisioning namespace composition to the product', () => {
   const shared = require('../../lib/server/ordinary-deployment-grants');
   assert.equal(plan.grants, shared.grants);

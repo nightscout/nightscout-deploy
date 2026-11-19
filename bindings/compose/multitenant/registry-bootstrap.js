@@ -4,7 +4,6 @@
 // admin REST API; lab subjects and data are a separate API client job.
 const path = require('node:path');
 async function finish({ options, request, rootToken, layout, roleURLs, writePrivate, admin, adminURL, nativeSource }) {
-  if(options.connectionBudgetProfile)require('./connection-budget-bootstrap').selection(options,require('./connection-budget-files').read(options.connectionBudgetProfile));
   const plan = require('./config'), { output, uid, gid, sourceCommit, configMaxBytes } = options;
   const l = layout, own = { uid, gid }, compact = { compact: true };
   const fs = require('node:fs');
@@ -31,7 +30,6 @@ async function finish({ options, request, rootToken, layout, roleURLs, writePriv
     await binding.install({admin,adminURL,layout:l,selection:nativeSelection});
     binding.attach(docs,nativeSelection);
   }
-  if(options.connectionBudgetProfile)for(const env of [...Object.values(docs.environments),docs.admin.environment,docs.uiEnvironment])env.NS_SOURCE_COMMIT=sourceCommit;
   for (const role of Object.keys(docs.configs)) {
     const dir = path.join(output, role);
     writePrivate(path.join(dir, 'env.json'), docs.environments[role], own, compact);
@@ -65,8 +63,6 @@ async function finish({ options, request, rootToken, layout, roleURLs, writePriv
   writePrivate(path.join(output, 'ops', 'env.json'), { NS_OPERATOR_PG: roleURLs.operator, NS_AUTH_AUDIT_PG:roleURLs.api, NS_SOURCE_COMMIT: sourceCommit,
      }, own);
   writeToken(path.join(output,'ops','vault-token'), servingToken);
-  if(options.controlRecoveryPrincipals)require('./control-recovery-bootstrap').files({options,docs,layout:l,roleURLs,writePrivate});
-  if(options.connectionBudgetProfile) require('./connection-budget-bootstrap').prepare({options,docs,writePrivate});
   writePrivate(path.join(output, 'bootstrap', 'layout.json'), l);
   writePrivate(path.join(output, 'bootstrap', 'complete.json'), { version: 2, sourceCommit, deployCommit: options.deployCommit, registryMode: true, evaluatorWorkers: docs.evaluatorWorkers?.workers });
   return { state: 'synthetic-infrastructure-ready', sourceCommit };

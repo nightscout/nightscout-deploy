@@ -138,9 +138,9 @@ verifiers and a dedicated Node data-signing key. The primer creates subjects
 through root administration, which prepares their verifiers. The API has SELECT
 on the legacy key table; it has no key mutation grant. Owner subject management
 uses a separate `owner_credentials` SQL identity and a decrypt-only Vault token.
-Its existing secret and legacy-authority pools each have maximum four connections;
-the connection-budget graph includes both (eight additional possible connections
-per tenant-admin process, independent of tenant count).
+Its existing secret and legacy-authority pools each have maximum four connections
+(eight additional possible connections per tenant-admin process, independent of
+tenant count).
 
 Existing tenants need exclusive preparation before this selection can serve them.
 The private consumer uses the current committed `prepare-local-auth.withMaintenance`
@@ -167,7 +167,5 @@ public key remains an explicit current-authority operation. Process restart read
 the durable keyring. Direct SQL fixture subject insertion must prepare verifiers
 through this consumer or the real management API before use.
 
-This ordinary ops consumer is not admitted by the optional connection-budget
-operator-ticket protocol. Such a deployment must use an explicitly accounted
-operator entry; it cannot run this command as a bypass. Native activation,
+Native activation,
 rotation, restart and restore evidence belongs to the joined application campaign.

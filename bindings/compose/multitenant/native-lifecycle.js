@@ -32,7 +32,7 @@ function attach(docs,selection){
 }
 function grants(layout,selection){
  native.bind(selection,layout.namespaces.control);
- const privateRoles=['operator','ownership_operator','provisioner','connector_writer','management_issuer','ui_registry','pool_member','pool_operator','restore_commissioner','realtime_recovery'];
+ const privateRoles=['operator','ownership_operator','provisioner','connector_writer','management_issuer','ui_registry','pool_member','pool_operator'];
  return [...Object.entries(layout.roles).filter(([name])=>!privateRoles.includes(name)).flatMap(([,role])=>native.servingGrants({namespace:layout.namespaces.control,role})),
   ...require('../../lib/tenant-lifecycle/maintenance-window').operatorGrants({namespace:layout.namespaces.control,role:layout.roles.operator,nativeSelection:selection})];
 }

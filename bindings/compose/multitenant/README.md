@@ -383,8 +383,7 @@ and the shared display/activity reader roles cannot use the reserved slots. The
 defaults keep the 97 general slots of PostgreSQL's default configuration and add 40
 clinical slots. They are synthetic reference values derived from declared pool
 sizes, not measured capacity; size the reserve for realtime/evaluator worker
-overlays. The opt-in connection-budget overlay replaces the PostgreSQL command and
-does not keep `reserved_connections`.
+overlays.
 
 Generated edge and replica files live in private deployment state. Their input
 policy changes take effect through explicit preparation rather than mutating running
