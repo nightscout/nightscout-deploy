@@ -25,8 +25,7 @@ with uid/gid 1000 matching the image's `node` account. Use a dedicated checkout.
 The image builds the production webpack bundle from that checkout's lockfile.
 Preparation and build refuse modified tracked build inputs. The build takes a
 Git archive of the recorded commit, so ignored runtime state and untracked files
-cannot enter the image. Re-run preparation in a fresh deployment state when the
-source commit changes.
+cannot enter the image. A compatible patch can reuse the commissioned state through the stopped-fixture procedure below.
 Runtime commands require the already-built image's source revision to match
 that preparation. They never use a missing image as an implicit build request.
 
@@ -40,6 +39,40 @@ node check-compose.js
 ./demo.sh status
 ./demo.sh demo
 ```
+
+### Run a compatible patch on the same seed
+
+Commission and prime A once with `./demo.sh up` and `./demo.sh prime`. Keep
+exclusive custody of the prepared project, PostgreSQL and Vault volumes, and
+private state. Stop A with `./demo.sh stop` so its containers remain available
+for the mount checks. Use a clean overlay of the selected core and deployment
+patch for B. From B’s `deploy/multitenant` directory run
+
+```bash
+./demo.sh build --image nightscout-seed:patch
+./demo.sh patch /absolute/path/to/A/deploy/multitenant/.env nightscout-seed:patch
+```
+
+The command checks the image’s two revisions, pins its local image ID in B’s
+private `.env`, and reuses the prepared role roster, credentials, network and
+logical slot. It checks the native database identity and every installed
+catalogue, applies pending target migrations, and runs the private platform
+verification before starting the serving roles. The target must support the
+existing grants, role configuration, namespaces, WAL and tenant data.
+Transitions needing new grants, replacement of the slot or changes to the
+topology require the corresponding offline upgrade procedure.
+
+To repeat B, run `./demo.sh stop` followed by
+`./demo.sh patch "$PWD/.env" nightscout-seed:patch`. To close it, use
+`./demo.sh down` from B. This retains the volumes and private state for their
+owner. Each deployment has its own credential lifetime.
+
+If migration or verification fails, keep the fixture offline. Inspect the
+reported refusal. A pending transition binds retries to the same patch.
+Correct the cause, stop the project and repeat the patch command. For
+`SEED_PATCH_TENANT_FLOOR_BACKFILL_REQUIRED`, use the existing private admin
+[tenant-floor backfill](PLATFORM-UPGRADE.md) while serving is stopped.
+Bootstrap and priming are for commissioning a fresh fixture.
 
 Overlaid on a core checkout by nightscout-deploy's `tools/compose-overlay.sh`,
 this directory carries a marker (`.overlay.json`) naming the nightscout-deploy
