@@ -86,9 +86,9 @@ unplanned replacements. This profile supplies K=1 placement; K>1 and HA need the
 ## Inputs and storage
 
 All init containers, Vault sidecars and serving/provisioning containers have explicit CPU, memory
-and ephemeral-storage requests. `resourceAccounting: "requests-v1"` keeps authored limits only;
-the legacy `limits-v1` mode retains the bounded synthetic defaults. `resources.<container-name>` overrides the bounded
-synthetic defaults. These defaults are not measured sizing. `placement` sets Pod scheduling fields;
+and ephemeral-storage requests. The default `requests-v1` mode renders limits only when supplied in
+`resources.<container-name>.limits`. Set per-role requests for the workload using the measured
+scenario profile. Explicit `limits-v1` selects the legacy bounded profile. `placement` sets Pod scheduling fields;
 `placementByWorkload.<name>` overrides them. Supported staging fields include nodeName,
 nodeSelector, tolerations, affinity and topologySpreadConstraints. An explicit existing nodeName
 requires environment-owned headroom/admission checks; it does not reserve resources.
@@ -168,7 +168,9 @@ performed by the offline checks above.
    Namespace and explicit trust/policy/ConfigMap/store objects. Do not borrow existing workload state.
 2. Operator runs `scripts/secrets.sh seed <namespace> <compat-arg>` with explicit `NS_KUBE_CONTEXT`
    and matching `NS_RUN_ID`. The helper verifies Namespace ownership and refuses existing Secrets.
-3. Apply provision Job. Its source bootstrap and Kubernetes auth run in order. The `done` container
+3. Apply the provision Job. Its bootstrap reaches the Vault API over TLS at the headless
+   `vault-bootstrap` Service, including during unseal. The serving Service uses Vault health
+   readiness. An uninitialized fixture accepts bootstrap and a sealed fixture returns HTTP 503. Its source bootstrap and Kubernetes auth run in order. The `done` container
    waits at `/state/.ready` for private export, within `activeDeadlineSeconds`.
 4. Operator runs `scripts/secrets.sh publish <namespace> <compat-image-arg>`. It verifies the owned
    Pod UID, exports directly into a private temporary directory, creates role Secrets, then
@@ -182,8 +184,8 @@ performed by the offline checks above.
    `NS_PRIMER_CONFIG=/run/ns-primer/config.json NS_PRIMER_STATE=/run/ns-client node deploy/multitenant/prime.js prime`
    to create synthetic DATA credentials. Export the required files from `/run/ns-client`
    into the owned private test packet. Touch `/run/ns-client/.exported` once custody transfers.
-   The finite Job deadline covers these steps. The private client-result volume is sized with
-   `primerStorage`. The configuration Secret contains the client endpoints and verification selection.
+   The finite Job deadline covers these steps. Private client results use a disk-backed
+   `emptyDir` with no volume size limit. The configuration Secret contains the client endpoints and verification selection.
 7. Observe the tiny synthetic trial under the finite environment deadline. Cleanup verifies actual
    Namespace UID/run label and the exact tokenreview binding ownership before deleting those owned
    resources. Retain private evidence before removing disposable storage. Namespace deletion does

@@ -16,7 +16,7 @@ Preparation writes `state/compose.realtime.yaml` and two private files in
 `state/placement/`. Include the realtime override after the base Compose file and
 `state/compose.replicas.yaml` in **every** bootstrap/start/operator invocation.
 Bootstrap then generates one role directory per worker. Keep the normal documented
-provision → commission restore → API → prime → publish → remaining roles sequence.
+verified serving startup followed by provision → commission restore → prime → publish.
 
 Every role and the operator mount the placement **directory**, so atomic renames
 are visible. `backend.json` is the authoritative assignment used by realtime and

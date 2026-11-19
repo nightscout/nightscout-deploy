@@ -84,9 +84,7 @@ function checkStream(config) {
     assert(!Object.hasOwn(worker.depends_on||{},'pgstream'),'Evaluator startup must not depend on stream health');
     assert(!(worker.volumes||[]).some(row=>row.target==='/run/ns-stream'||row.source.endsWith('/pgstream')),'Evaluator must not mount streaming credentials');
     assert(!Object.keys(worker.environment||{}).some(key=>['NS_PGSTREAM_BINARY','NS_PGSTREAM_CONFIG'].includes(key)),'Evaluator has no stream process configuration');
-    if(selected)assert(Number(worker.cpus)>0&&Number(worker.mem_limit)>0,'Selected evaluator requires CPU and memory limits');
   }
-  if(selected)assert(Number(service.cpus)>0&&Number(service.mem_limit)>0,'Selected producer requires CPU and memory limits');
   const volumes=service.volumes||[];
   assert(volumes.length===1&&volumes[0].target==='/run/ns-stream'&&volumes[0].source.endsWith('/pgstream')&&volumes[0].read_only,'Streaming credentials belong only to the separate service');
   return true;

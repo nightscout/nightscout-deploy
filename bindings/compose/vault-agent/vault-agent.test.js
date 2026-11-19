@@ -103,10 +103,11 @@ test('shipping plan verifies and starts serving workers before the independent l
   const selected = { base: '/synthetic/core/deploy/multitenant', project: 'synthetic-agent', envFile: '/synthetic/.env', files: ['base.yaml'], stdin: 'services: {}',
     apis: ['api', 'api-2', 'api-3', 'api-4'], realtime: ['realtime', 'realtime-2', 'socket-edge'], evaluators: ['evaluator', 'evaluator-2'], state: '/synthetic/state' };
   const steps = launch.commands(selected, 'up').map(row => row.args.join(' '));
-  assert.ok(steps[4].includes('platform-verify.js'));
-  assert.ok(steps[6].endsWith('vault-agent'));
-  assert.ok(steps[7].endsWith('api api-2 api-3 api-4 realtime realtime-2 socket-edge evaluator evaluator-2 pgstream tenant-admin ui nginx'));
-  assert.equal(steps.length,8);
+  assert.ok(steps[1].endsWith('run --rm bootstrap'));
+  assert.ok(steps[3].includes('platform-verify.js'));
+  assert.ok(steps[5].endsWith('vault-agent'));
+  assert.ok(steps[6].endsWith('api api-2 api-3 api-4 realtime realtime-2 socket-edge evaluator evaluator-2 pgstream tenant-admin ui nginx'));
+  assert.equal(steps.length,7);
   const lab = launch.commands(selected, 'prime').map(row => row.args.join(' '));
   assert.ok(lab[0].includes('prime.js provision')); assert.ok(lab[1].includes('commission-restore.js'));
   assert.ok(lab[2].includes('prime.js prime')); assert.ok(lab[3].includes('publish-primer.js'));

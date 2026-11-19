@@ -26,7 +26,7 @@ const CONTROLS = [
     expect: 'source admin provisioning requires Vault TCP8200 ingress' },
   { check:'independent-pgstream',file:LIB,why:'multiple consumers of one slot',from:"metadata: meta('pgstream', 'pgstream'),\n        spec: {\n          replicas: 1",to:"metadata: meta('pgstream', 'pgstream'),\n        spec: {\n          replicas: 2",expect:'pgstream must be a one-replica Recreate Deployment' },
   { check:'independent-pgstream',file:LIB,why:'stream Service routes to any evaluator replica',from:"selector: labels('cohort') + { 'statefulset.kubernetes.io/pod-name': 'cohort-0' }",to:"selector: labels('cohort')",expect:'intake Service must select only the admitted cohort-0 owner' },
-  { check:'independent-pgstream',file:LIB,why:'pod-wide readiness blocks the stream startup',from:'publishNotReadyAddresses: true',to:'publishNotReadyAddresses: false',expect:'intake routing must bypass pod-wide clinical readiness' },
+  { check:'independent-pgstream',file:LIB,why:'pod-wide readiness blocks the stream startup',from:"publishNotReadyAddresses: true, selector: labels('cohort')",to:"publishNotReadyAddresses: false, selector: labels('cohort')",expect:'intake routing must bypass pod-wide clinical readiness' },
   { check:'independent-pgstream',file:LIB,why:'separate wire Secret omitted',from:"secretName: 'ns-config-pgstream'",to:"secretName: 'ns-config-evaluator'",expect:'pgstream requires its dedicated wire Secret' },
   { check:'independent-pgstream',file:LIB,why:'required output plugin setting omitted',from:", '-c', 'output_plugin_libraries=wal2json'",to:'',expect:'PostgreSQL is missing maintained streaming setting output_plugin_libraries=wal2json' },
 

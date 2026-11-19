@@ -45,3 +45,40 @@ test('only the lab client argument changes between ten and ten thousand tenants'
   }
   assert.deepEqual(normalize(small.value, 10), normalize(large.value, 10000));
 });
+
+test('fixture requests admit optional per-role limits and disk-backed primer state', () => {
+  const fixture = render({});
+  assert.equal(fixture.status, 0, fixture.error);
+  for (const workload of Object.values(fixture.value)) {
+    for (const object of Object.values(workload)) {
+      const spec = object?.spec?.template?.spec;
+      if (!spec) continue;
+      for (const actor of [...(spec.initContainers || []), ...spec.containers]) {
+        assert.ok(actor.resources.requests.cpu && actor.resources.requests.memory, actor.name);
+        assert.equal(actor.resources.limits, undefined, actor.name);
+      }
+    }
+  }
+  const primer = fixture.value.primer.job.spec.template.spec;
+  const state = primer.volumes.find(v => v.name === 'client-state');
+  assert.deepEqual(state.emptyDir, {});
+  const bounded = render({ resources: { vault: { limits: { memory: '384Mi' } } } });
+  assert.equal(bounded.status, 0, bounded.error);
+  assert.deepEqual(bounded.value.vault.statefulset.spec.template.spec.containers[0].resources.limits, { memory: '384Mi' });
+});
+
+test('bootstrap resolves the sealed Vault separately from the serving address', () => {
+  const fixture = render({});
+  assert.equal(fixture.status, 0, fixture.error);
+  const { vault, provision } = fixture.value;
+  const probe = vault.statefulset.spec.template.spec.containers[0].readinessProbe.httpGet;
+  assert.deepEqual(probe, { scheme: 'HTTPS', port: 'vault', path: '/v1/sys/health?uninitcode=200' });
+  assert.equal(vault.bootstrapService.spec.clusterIP, 'None');
+  assert.equal(vault.bootstrapService.spec.publishNotReadyAddresses, true);
+  assert.deepEqual(vault.bootstrapService.spec.selector, vault.service.spec.selector);
+  assert.equal(vault.service.spec.publishNotReadyAddresses, undefined);
+  const bootstrap = provision.job.spec.template.spec.initContainers.find(c => c.name === 'bootstrap');
+  const env = Object.fromEntries(bootstrap.env.map(e => [e.name, e.value]));
+  assert.equal(new URL(env.NS_BOOTSTRAP_VAULT_ADDR).hostname, vault.bootstrapService.metadata.name);
+  assert.equal(new URL(env.VAULT_ADDR).hostname, vault.service.metadata.name);
+});

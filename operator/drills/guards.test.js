@@ -98,6 +98,13 @@ test('ordinary up and restart include the independent stream and omit the retire
     fs.writeFileSync(log,'');const result=run('stack.sh',[action],{...d.env,PATH:bin+':'+d.env.PATH,DRILL_CALLS:log});assert.equal(result.status,0,result.stderr);
     const calls=fs.readFileSync(log,'utf8');assert(!calls.includes('feed-reader'),'retired service');
     assert.match(calls,/up -d .*realtime evaluator pgstream tenant-admin ui nginx/,'stream recovery cohort');
+    if (action === 'up') {
+      const stages = calls.trim().split('\n').map(line => line.split(' '));
+      const index = name => stages.findIndex(args => args.includes(name));
+      const serving = index('pgstream');
+      assert.ok(index('deploy/multitenant/platform-verify.js') >= 0 && index('deploy/multitenant/platform-verify.js') < serving);
+      assert.ok(serving < index('provision') && index('provision') < index('prime'));
+    }
     if(action==='roles-restart')assert.match(calls,/stop nginx ui tenant-admin pgstream evaluator realtime api admin/,'old stream stopped before restart');
   }
 });

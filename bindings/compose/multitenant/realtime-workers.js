@@ -43,7 +43,7 @@ function compose(selected, composeFile) {
   const shape = initial(selected), lines = ['# Fixed static realtime owners; stop all old owners before changing K.', 'services:',
     '  bootstrap:', '    environment:', '      NS_REALTIME_WORKERS: "' + selected.workers + '"'];
   for (const worker of shape.realtime) {
-    lines.push('  ' + worker.service + ':', '    restart: unless-stopped', '    cpus: 1', '    mem_limit: 1g');
+    lines.push('  ' + worker.service + ':', '    restart: unless-stopped');
     if (worker.ordinal) lines.push('    extends: {file: ' + JSON.stringify(composeFile) + ', service: realtime}',
       '    volumes:', '      - ${NS_DEMO_STATE}/' + worker.service + ':/run/ns-config:ro',
       '      - ${NS_DEMO_STATE}/ipc:/run/ns-ipc', '      - ${NS_DEMO_STATE}/tls/ca.crt:/run/ns-ca/ca.crt:ro');

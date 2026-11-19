@@ -34,7 +34,7 @@ services:
       dockerfile: Dockerfile.postgres
     # max_connections/reserved_connections: clinical roles (evaluator, realtime, pgstream and their
     # consumers) may use the reserved slots; REST-serving roles may not (clinical-isolation.js).
-    command: [postgres, -c, wal_level=logical, -c, max_replication_slots=4, -c, "max_wal_senders=${NS_PGSTREAM_WAL_SENDERS:-4}", -c, max_slot_wal_keep_size=256MB, -c, output_plugin_libraries=wal2json,
+    command: [postgres, -c, wal_level=logical, -c, max_replication_slots=4, -c, "max_wal_senders=${NS_PGSTREAM_WAL_SENDERS:-4}", -c, max_slot_wal_keep_size=-1, -c, output_plugin_libraries=wal2json,
       -c, "max_connections=${NS_POSTGRES_MAX_CONNECTIONS:-140}", -c, "reserved_connections=${NS_POSTGRES_CLINICAL_RESERVED_CONNECTIONS:-40}"]
     environment:
       POSTGRES_DB: nightscout_compose_test
@@ -60,10 +60,16 @@ services:
       - ${NS_DEMO_STATE}/tls/ca.crt:/run/ns-ca/ca.crt:ro
       - ${NS_DEMO_STATE}/vault/demo.hcl:/vault/config/demo.hcl:ro
     healthcheck:
-      test: [CMD-SHELL, 'vault status -address=https://vault:8200 -ca-cert=/run/ns-ca/ca.crt >/dev/null 2>&1; result=$$?; [ "$$result" -eq 0 ] || [ "$$result" -eq 2 ]']
+      test:
+        - CMD-SHELL
+        - |
+          export VAULT_ADDR=https://vault:8200 VAULT_CACERT=/run/ns-ca/ca.crt VAULT_MAX_RETRIES=0
+          vault read sys/health uninitcode=200 >/dev/null 2>&1 && exit 0
+          if [ "$$(vault read -field=sealed sys/seal-status)" = true ]; then echo VAULT_SEALED; fi
+          exit 1
       interval: 2s
       timeout: 2s
-      retries: 30
+      retries: 1
     networks: [backend]
 
   bootstrap:
@@ -73,7 +79,7 @@ services:
     command: [node, deploy/multitenant/bootstrap.js]
     depends_on:
       postgres: {condition: service_healthy}
-      vault: {condition: service_healthy}
+      vault: {condition: service_started}
     environment:
       NODE_EXTRA_CA_CERTS: /run/ns-ca/ca.crt
       VAULT_ADDR: https://vault:8200

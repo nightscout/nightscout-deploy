@@ -72,9 +72,8 @@
     runId: 'synthetic-preview',
     profile: 'standard',
     applicationTopology: 'cohort',
-    resourceAccounting: 'limits-v1',
+    resourceAccounting: 'requests-v1',
     tenantCount: 2,
-    primerStorage: '64Mi',  // private client results, separate from the configuration Secret
     provisionDeadlineSeconds: 900,
     imagePullSecrets: [],
     placement: {},
@@ -280,7 +279,7 @@
                 name: 'postgres',
                 image: c.images.postgres,
                 // Preserve docker-entrypoint.sh: it owns initdb before postgres starts.
-                args: ['postgres', '-c', 'wal_level=logical', '-c', 'max_replication_slots=4', '-c', 'max_wal_senders=4', '-c', 'max_slot_wal_keep_size=256MB', '-c', 'output_plugin_libraries=wal2json', '-c', 'max_connections=140', '-c', 'reserved_connections=40'],
+                args: ['postgres', '-c', 'wal_level=logical', '-c', 'max_replication_slots=4', '-c', 'max_wal_senders=4', '-c', 'max_slot_wal_keep_size=-1', '-c', 'output_plugin_libraries=wal2json', '-c', 'max_connections=140', '-c', 'reserved_connections=40'],
                 env: [
                   { name: 'POSTGRES_DB', value: 'nightscout_compose_test' },
                   { name: 'POSTGRES_PASSWORD_FILE', value: '/run/secrets/postgres-password' },
@@ -319,6 +318,12 @@
         metadata: meta('vault', 'vault'),
         spec: { selector: labels('vault'), ports: [{ name: 'vault', port: 8200, targetPort: 'vault' }] },
       },
+      bootstrapService: {
+        apiVersion: 'v1',
+        kind: 'Service',
+        metadata: meta('vault-bootstrap', 'vault'),
+        spec: { clusterIP: 'None', publishNotReadyAddresses: true, selector: labels('vault'), ports: [{ name: 'vault', port: 8200, targetPort: 'vault' }] },
+      },
       statefulset: {
         apiVersion: 'apps/v1',
         kind: 'StatefulSet',
@@ -337,9 +342,10 @@
                 image: c.images.vault,
                 args: ['vault', 'server', '-config=/vault/config/demo.hcl'],
                 ports: [{ name: 'vault', containerPort: 8200 }],
-                // Compose: status 0 (unsealed) or 2 (sealed) is up; unseal is the provision Job's. Loopback
-                // with the certificate's name: the Service name has no endpoint until this probe passes.
-                readinessProbe: { exec: { command: ['sh', '-c', 'vault status -address=https://127.0.0.1:8200 -tls-server-name=vault -ca-cert=/run/ns-ca/ca.crt >/dev/null 2>&1; r=$?; [ "$r" -eq 0 ] || [ "$r" -eq 2 ]'] }, periodSeconds: 2, timeoutSeconds: 2, failureThreshold: 30 },
+                readinessProbe: {
+                  httpGet: { scheme: 'HTTPS', port: 'vault', path: '/v1/sys/health?uninitcode=200' },
+                  periodSeconds: 2, timeoutSeconds: 2, failureThreshold: 1,
+                },
                 volumeMounts: [
                   { name: 'data', mountPath: '/vault/file' },
                   { name: 'logs', mountPath: '/vault/logs' },
@@ -680,7 +686,7 @@
                 command: command,
                 env: [
                   { name: 'NODE_EXTRA_CA_CERTS', value: '/run/ns-ca/ca.crt' },
-                  { name: 'VAULT_ADDR', value: 'https://vault:8200' },
+                  { name: 'VAULT_ADDR', value: if name == 'vault-kubernetes-auth' then 'https://vault-bootstrap:8200' else 'https://vault:8200' },
                   { name: 'NS_BOOTSTRAP_OUTPUT', value: '/state' },
                   { name: 'NS_SOURCE_COMMIT', value: c.sourceCommit },
                   { name: 'NS_DEPLOY_COMMIT', value: if c.imageDeployCommit == null then c.sourceCommit else c.imageDeployCommit },
@@ -697,15 +703,15 @@
                     }] else []),
               },
               initContainers: [
-                // Compose depends_on: postgres and vault healthy. TCP reachability here; the
-                // bootstrap's own checks refuse an unready store.
+                // Bootstrap checks the Vault API itself, including when the store is sealed.
                 step('wait-stores', ['node', '-e', |||
                   const net=require('node:net');
                   const up=(host,port)=>new Promise(r=>{const s=net.connect({host,port});s.setTimeout(1500);s.once('connect',()=>{s.end();r(true)});s.once('timeout',()=>{s.destroy();r(false)});s.once('error',()=>r(false));});
-                  (async()=>{for(let i=0;i<120;i++){if(await up('postgres',5432)&&await up('vault',8200))return;await new Promise(r=>setTimeout(r,2000));}process.exit(1);})();
+                  (async()=>{for(let i=0;i<120;i++){if(await up('postgres',5432))return;await new Promise(r=>setTimeout(r,2000));}process.exit(1);})();
                 |||], []),
                 step('bootstrap', ['node', 'deploy/multitenant/bootstrap.js'], [
                   { name: 'NS_COMPOSE_BOOTSTRAP', value: '1' },
+                  { name: 'NS_BOOTSTRAP_VAULT_ADDR', value: 'https://vault-bootstrap:8200' },
                   { name: 'NS_PGSTREAM', value: '1' },
                   { name: 'NS_API_REPLICAS', value: '1' },
                   { name: 'NS_POSTGRES_HOST', value: 'postgres' },
@@ -779,7 +785,7 @@
                             (if provisioning then [result] else []),
             }],
             volumes: configVolumes('primer') + [tmp, { name: 'scripts', configMap: { name: 'provision-scripts' } }] +
-                     (if provisioning then [{ name: 'client-state', emptyDir: { sizeLimit: c.primerStorage } }] else []),
+                     (if provisioning then [{ name: 'client-state', emptyDir: {} }] else []),
           } },
         },
       },

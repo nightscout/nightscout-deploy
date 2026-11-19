@@ -85,7 +85,7 @@ function render(k, n, composeFile, nginxTemplate) {
   const lines = ['# Prospective shape. Requires selected native evaluator and realtime contracts.', 'services:'];
   for (const [role, instances] of Object.entries({evaluator: selected.evaluator, realtime: selected.realtime})) {
     for (const worker of instances) {
-      lines.push('  ' + worker.service + ':', '    profiles: [' + PROFILE + ']', '    cpus: 1', '    mem_limit: 1g');
+      lines.push('  ' + worker.service + ':', '    profiles: [' + PROFILE + ']');
       if (worker.ordinal !== 0) lines.push(
         '    extends: {file: ' + JSON.stringify(composeFile) + ', service: ' + role + '}',
         '    volumes:',
@@ -98,7 +98,7 @@ function render(k, n, composeFile, nginxTemplate) {
         '      org.nightscout.static-ownership.count: "' + worker.count + '"');
     }
   }
-  lines.push('  pgstream:', '    profiles: [' + PROFILE + ']', '    cpus: 1', '    mem_limit: 512m', '    depends_on:',
+  lines.push('  pgstream:', '    profiles: [' + PROFILE + ']', '    depends_on:',
     ...selected.evaluator.map(worker => '      ' + worker.service + ': {condition: service_started}'),
     '  socket-edge:', '    profiles: [' + PROFILE + ']',
     '    extends: {file: ' + JSON.stringify(composeFile) + ', service: ui}',

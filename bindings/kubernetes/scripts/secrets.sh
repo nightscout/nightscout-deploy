@@ -34,7 +34,7 @@ seed() {
     cd "$work"
     openssl req -x509 -newkey rsa:3072 -nodes -keyout ca.key -out ca.crt -days 30 -subj '/CN=Nightscout synthetic Kubernetes CA' 2>/dev/null
     openssl req -newkey rsa:3072 -nodes -keyout server.key -out server.csr -subj '/CN=vault' 2>/dev/null
-    printf 'subjectAltName=DNS:vault\nextendedKeyUsage=serverAuth\n' > server.ext
+    printf 'subjectAltName=DNS:vault,DNS:vault-bootstrap\nextendedKeyUsage=serverAuth\n' > server.ext
     openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out server.crt -days 30 -extfile server.ext 2>/dev/null
     rm -f ca.key ca.srl server.csr server.ext
   )

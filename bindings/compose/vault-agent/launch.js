@@ -83,9 +83,9 @@ function commands (selected, command, detail) {
   if (command === 'config') return [compose('config', '--quiet')];
   if (command === 'build') return [node(path.join(selected.base, 'build.js'))];
   if (['up', 'bootstrap'].includes(command)) {
-    const steps = [node(path.join(selected.base, 'build.js'), '--check-image'), up('postgres', 'vault'), run('bootstrap')];
+    const steps = [node(path.join(selected.base, 'build.js'), '--check-image'), compose('--profile', 'ops', 'run', '--rm', 'bootstrap')];
     if (command === 'bootstrap') return [...steps, run('vault-agent-bootstrap')];
-    return [...steps, up('admin', 'feed-reader'), run('primer', 'node', 'deploy/multitenant/platform-verify.js'),
+    return [...steps, up('admin'), run('primer', 'node', 'deploy/multitenant/platform-verify.js'),
       run('vault-agent-bootstrap'), up('vault-agent'),
       up(...selected.apis, ...selected.realtime, ...selected.evaluators, 'pgstream', 'tenant-admin', 'ui', 'nginx')];
   }

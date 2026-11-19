@@ -18,7 +18,10 @@ function input(env=process.env) {
   }
   if(!['postgres:','postgresql:'].includes(pg.protocol)||!pg.username||!pg.password||decodeURIComponent(pg.pathname)!=='/nightscout_compose_test'||pg.search||pg.hash)throw fail('DEDICATED_SYNTHETIC_DATABASE_REQUIRED');
   const vault=new URL(env.VAULT_ADDR||'https://vault:8200');
-  if(vault.protocol!=='https:'||vault.username||vault.password||vault.pathname!=='/'||vault.search||vault.hash)throw fail('BOOTSTRAP_VAULT_HTTPS_REQUIRED');
+  const bootstrapVault = new URL(env.NS_BOOTSTRAP_VAULT_ADDR || vault.origin);
+  for (const endpoint of [vault, bootstrapVault]) {
+    if (endpoint.protocol !== 'https:' || endpoint.username || endpoint.password || endpoint.pathname !== '/' || endpoint.search || endpoint.hash) throw fail('BOOTSTRAP_VAULT_HTTPS_REQUIRED');
+  }
   const uid=Number(env.NS_RUNTIME_UID||1000),gid=Number(env.NS_RUNTIME_GID||1000);
   if(!Number.isSafeInteger(uid)||uid<1||!Number.isSafeInteger(gid)||gid<1)throw fail('BOOTSTRAP_RUNTIME_ID_REQUIRED');
   // Off by default. For large tenant counts the generated role documents exceed core's default 1 MiB
@@ -29,7 +32,7 @@ function input(env=process.env) {
   if(capRaw&&(!/^[1-9][0-9]{0,9}$/.test(capRaw)||Number(capRaw)<65536||Number(capRaw)>67108864))throw fail('BOOTSTRAP_CONFIG_MAX_BYTES_INVALID');
   const deployCommit=env.NS_DEPLOY_COMMIT||env.NS_SOURCE_COMMIT;
   if(!/^[a-f0-9]{40}$/.test(deployCommit))throw fail('BOOTSTRAP_DEPLOY_IDENTITY_INVALID');
-  return {deployCommit,pg,vault,output:path.resolve(env.NS_BOOTSTRAP_OUTPUT),sourceCommit:env.NS_SOURCE_COMMIT,uid,gid,configMaxBytes:capRaw?Number(capRaw):undefined};
+  return {deployCommit,pg,vault,bootstrapVault,output:path.resolve(env.NS_BOOTSTRAP_OUTPUT),sourceCommit:env.NS_SOURCE_COMMIT,uid,gid,configMaxBytes:capRaw?Number(capRaw):undefined};
 }
 // Generated machine documents (role config, env, admission) are written compact: about a third
 // smaller, which matters against the configuration byte cap at large tenant counts. Bootstrap
@@ -43,11 +46,11 @@ async function bootstrap(options, patchArgs) {
   require('./pgstream').enabled();
   const workers=require('./evaluator-workers'),evaluatorWorkers=workers.selection();
   if(evaluatorWorkers)workers.assertSeed(evaluatorWorkers);
-  const {pg,vault,output,sourceCommit,deployCommit,uid,gid,configMaxBytes}=options;
+  const {pg,bootstrapVault = options.vault,output,sourceCommit,deployCommit,uid,gid,configMaxBytes}=options;
   const privateDirectory=path.join(output,'bootstrap');fs.mkdirSync(privateDirectory,{recursive:true,mode:0o700});
   const initFile=path.join(privateDirectory,'vault-init.json'),completeFile=path.join(privateDirectory,'complete.json'),startedFile=path.join(privateDirectory,'started.json');
   async function request(resource,body,token,method=body===undefined?'GET':'POST'){
-    const response=await fetch(vault.origin+'/v1/'+resource,{method,headers:{'Content-Type':'application/json',...(token?{'X-Vault-Token':token}:{})},
+    const response=await fetch(bootstrapVault.origin+'/v1/'+resource,{method,headers:{'Content-Type':'application/json',...(token?{'X-Vault-Token':token}:{})},
       ...(body===undefined?{}:{body:JSON.stringify(body)}),redirect:'manual',signal:AbortSignal.timeout(10000)});
     if(!response.ok){await response.body?.cancel();throw fail('BOOTSTRAP_VAULT_REFUSED');}
     return response.status===204?{}:response.json();
@@ -55,7 +58,18 @@ async function bootstrap(options, patchArgs) {
   if (patchArgs && (!['migrate','finish'].includes(patchArgs[0]) || patchArgs.length !== 3 ||
       !patchArgs.slice(1).every(value => /^[a-f0-9]{40}$/.test(value)) || !fs.existsSync(completeFile) || !fs.existsSync(initFile))) throw fail('SEED_PATCH_COMPLETED_FIXTURE_REQUIRED');
   let initialization;
-  const status=await request('sys/init');
+  // Only repeat the read. An ambiguous initialization or unseal must never be replayed.
+  let status;
+  const deadline = Date.now() + 60000;
+  for (;;) {
+    try {
+      status = await request('sys/init');
+      break;
+    } catch (error) {
+      if (Date.now() >= deadline || !['ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'EAI_AGAIN'].includes(error.cause?.code)) throw error;
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+  }
   if(!status.initialized){
     if(fs.existsSync(initFile))throw fail('BOOTSTRAP_VAULT_STATE_CHANGED');
     initialization=await request('sys/init',{secret_shares:1,secret_threshold:1});

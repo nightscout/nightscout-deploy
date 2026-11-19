@@ -80,14 +80,13 @@ function validate(docs, role, parsed, operation) {
 function compose(selected, composeFile) {
   if (!selected) return '';
   const workers = services(selected);
-  const limits = ['    cpus: 1', '    mem_limit: 1g'];
   const lines = ['# Fixed native evaluator processes.', 'services:', '  bootstrap:', '    environment:',
     '      NS_EVALUATOR_WORKERS: "' + selected.workers + '"',
-    '  pgstream:', '    cpus: 1', '    mem_limit: 512m',
+    '  pgstream:',
     '    depends_on:', ...workers.map(service => '      ' + service + ': {condition: service_started}'),
-    '    restart: unless-stopped', '  evaluator:', '    restart: unless-stopped', ...limits];
+    '    restart: unless-stopped', '  evaluator:', '    restart: unless-stopped'];
   for (const service of workers.slice(1)) lines.push('  ' + service + ':',
-    '    extends: {file: ' + JSON.stringify(composeFile) + ', service: evaluator}', '    restart: unless-stopped', ...limits,
+    '    extends: {file: ' + JSON.stringify(composeFile) + ', service: evaluator}', '    restart: unless-stopped',
     '    volumes:', '      - ${NS_DEMO_STATE}/' + service + ':/run/ns-config:ro',
     '      - ${NS_DEMO_STATE}/ipc:/run/ns-ipc', '      - ${NS_DEMO_STATE}/tls/ca.crt:/run/ns-ca/ca.crt:ro');
   return lines.join('\n') + '\n';

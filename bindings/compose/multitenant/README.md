@@ -359,8 +359,9 @@ tenant membership or management authority.
 ```
 
 These commands retain data volumes and private state. Delete them only after
-checking the exact project and saving any wanted synthetic evidence. A stopped
-Vault must be unsealed before runtime roles start again. Do not delete sockets
+checking the exact project and saving any wanted synthetic evidence.
+Vault health reports `VAULT_SEALED` when the initialized fixture is sealed. Run `./demo.sh bootstrap`
+with the retained private state to unseal it before runtime roles start again. Do not delete sockets
 while participating services are running. The initial demo CA expires after
 30 days; rebuild a fresh synthetic instance rather than disabling verification.
 
@@ -536,8 +537,8 @@ NS_EVALUATOR_WORKERS=2 ./demo.sh prepare
 Each process owns a tenant slice selected by core's SHA-256 modulo rule. An idle
 slice can receive a newly provisioned tenant. Set `NS_DEMO_TENANTS` when running the lab
 client to select the synthetic population. Each evaluator has its
-own private listener and readiness identity, one CPU and 1 GiB of memory.
-The producer has one CPU and 512 MiB. Evaluator and operation pools are
+own private listener and readiness identity. A diagnostic Compose override may set CPU or
+memory limits for selected workers or the producer. Evaluator and operation pools are
 bounded at four and eight connections per process respectively. PostgreSQL
 keeps one persistent producer slot and permits bounded snapshot recovery.
 
@@ -559,3 +560,6 @@ missing or lost slot, leaves all effect-serving roles stopped and preserves
 durable clinical/completed/pending/due/notification state. It never reruns initial
 DBA setup or reopens services automatically. Actual populated recovery acceptance
 remains UNMEASURED until the recorded platform/database case runs.
+
+The fixture sets PostgreSQL `max_slot_wal_keep_size = -1` so priming can retain WAL while
+the consumer catches up. Operators choose retention for their disk budget and monitor slot lag and free space.

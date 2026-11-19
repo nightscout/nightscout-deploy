@@ -74,13 +74,13 @@ test('Compose expansion renders stable K1/K2 owners and N1/N2 upstreams and refu
       }
       require('./check-compose').checkNetworks(config);
       for (const worker of [...selected.evaluator, ...selected.realtime]) {
-        assert.equal(Number(services[worker.service].cpus), 1);
-        assert.equal(Number(services[worker.service].mem_limit), 1024 ** 3);
+        assert.equal(services[worker.service].cpus, undefined);
+        assert.equal(services[worker.service].mem_limit, undefined);
         assert(services[worker.service].volumes.some(volume => volume.target === '/run/ns-config' &&
           volume.source.endsWith('/' + worker.service) && volume.read_only === true));
       }
-      assert.equal(Number(services.pgstream.cpus), 1);
-      assert.equal(Number(services.pgstream.mem_limit), 512 * 1024 ** 2);
+      assert.equal(services.pgstream.cpus, undefined);
+      assert.equal(services.pgstream.mem_limit, undefined);
       for (const worker of selected.evaluator) assert.equal(services.pgstream.depends_on[worker.service].condition, 'service_started');
       assert.deepEqual(Object.keys(services.nginx.depends_on).sort(),
         [...selected.api.map(worker => worker.service), 'socket-edge', 'ui'].sort());

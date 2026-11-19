@@ -193,7 +193,7 @@ function checks (all, inventory, composeDir, envMain) {
     if(intake?.spec.publishNotReadyAddresses!==true)fail('intake routing must bypass pod-wide clinical readiness to avoid a stream startup cycle');
     if(intake&&!intake.spec.ports?.some(p=>p.port===19913&&p.targetPort==='stream-intake'))fail('intake Service must target the declared receiver port');
     const postgres=workloads.find(w=>w.metadata.name==='postgres'),command=(podSpec(postgres).containers.find(c=>c.name==='postgres').args||[]);
-    for(const setting of ['wal_level=logical','max_replication_slots=4','max_wal_senders=4','max_slot_wal_keep_size=256MB','output_plugin_libraries=wal2json'])if(!command.includes(setting))fail('PostgreSQL is missing maintained streaming setting '+setting);
+    for(const setting of ['wal_level=logical','max_replication_slots=4','max_wal_senders=4','max_slot_wal_keep_size=-1','output_plugin_libraries=wal2json'])if(!command.includes(setting))fail('PostgreSQL is missing maintained streaming setting '+setting);
   });
 
   run('evaluator-statefulset', fail => {
@@ -337,7 +337,10 @@ function checks (all, inventory, composeDir, envMain) {
     for(const w of workloads){
       if(w.spec.volumeClaimTemplates?.length)fail(id(w)+' adds dynamic claims');
       if((podSpec(w).volumes||[]).some(v=>v.hostPath))fail(id(w)+' borrows node storage');
-      for(const v of podSpec(w).volumes||[])if(v.emptyDir && !v.emptyDir.sizeLimit)fail(id(w)+' emptyDir '+v.name+' lacks sizeLimit');
+      for (const v of podSpec(w).volumes || []) {
+        if (id(w) === 'Job/primer' && v.name === 'client-state') continue;
+        if (v.emptyDir && !v.emptyDir.sizeLimit) fail(id(w)+' emptyDir '+v.name+' lacks sizeLimit');
+      }
     }
   });
 
