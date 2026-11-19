@@ -170,8 +170,9 @@ performed by the offline checks above.
    and matching `NS_RUN_ID`. The helper verifies Namespace ownership and refuses existing Secrets.
 3. Apply the provision Job. Its bootstrap reaches the Vault API over TLS at the headless
    `vault-bootstrap` Service, including during unseal. The serving Service uses Vault health
-   readiness. An uninitialized fixture accepts bootstrap and a sealed fixture returns HTTP 503. Its source bootstrap and Kubernetes auth run in order. The `done` container
-   waits at `/state/.ready` for private export, within `activeDeadlineSeconds`.
+   readiness. An uninitialized fixture accepts bootstrap and a sealed fixture returns HTTP 503.
+   The fixture certificate covers both Service names. After bootstrap and Kubernetes auth,
+   the `done` container waits at `/state/.ready` for private export within `activeDeadlineSeconds`.
 4. Operator runs `scripts/secrets.sh publish <namespace> <compat-image-arg>`. It verifies the owned
    Pod UID, exports directly into a private temporary directory, creates role Secrets, then
    acknowledges `/state/.exported`. Job completion follows export. There is no reader Pod or volume.

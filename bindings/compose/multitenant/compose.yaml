@@ -65,7 +65,8 @@ services:
         - |
           export VAULT_ADDR=https://vault:8200 VAULT_CACERT=/run/ns-ca/ca.crt VAULT_MAX_RETRIES=0
           vault read sys/health uninitcode=200 >/dev/null 2>&1 && exit 0
-          if [ "$$(vault read -field=sealed sys/seal-status)" = true ]; then echo VAULT_SEALED; fi
+          if [ "$$(vault read -field=initialized sys/init)" = true ] &&
+             [ "$$(vault read -field=sealed sys/seal-status)" = true ]; then echo VAULT_SEALED; fi
           exit 1
       interval: 2s
       timeout: 2s
