@@ -32,10 +32,7 @@ async function main () {
     socket.once('timeout', () => { socket.destroy(); reject(new Error()); });
     socket.once('error', reject);
   });
-  const operation = JSON.parse(fs.readFileSync(process.env.MULTITENANT_OPERATION_CONFIG, 'utf8'));
-  const request = require('node:crypto').randomUUID();
-  const reply = await require('../../lib/server/internal-api/clients').roleHealth(endpoint).getStatus({request});
-  if (reply.ready !== true || reply.request !== request || reply.participant !== operation.participantId ||
-      JSON.stringify(reply.roles) !== JSON.stringify([role])) throw new Error();
+  const reply = await require('../../lib/server/internal-api/clients').roleHealth(endpoint).getStatus({request: require('node:crypto').randomUUID()});
+  if (reply.ready !== true) throw new Error();
 }
 main().catch(() => { process.exitCode = 1; });

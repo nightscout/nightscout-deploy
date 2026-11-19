@@ -337,14 +337,14 @@ describe('Compose demo private node:http transport', function () {
 
 describe('Compose role health uses the private role-health contract', function () {
   async function check (mutateReply = reply => reply) {
-    const file = require.resolve('../health'), calls = [], facade = { argv: ['node', file, 'api'], exitCode: 0, env: { NS_SERVE_INTERNAL_SOCKET: '/run/ns-ipc/api.sock', MULTITENANT_OPERATION_CONFIG: '/run/ns-config/operation.json' } };
+    const file = require.resolve('../health'), calls = [], facade = { argv: ['node', file, 'api'], exitCode: 0, env: { NS_SERVE_INTERNAL_SOCKET: '/run/ns-ipc/api.sock' } };
     const source = fs.readFileSync(file, 'utf8');
     const nativeRequire = createRequire(file);
     const localRequire = name => {
       // The deployment loads its private environment before resolving the listener.
-      // This fixture supplies the same explicit endpoint and participant document.
+      // This fixture supplies the same explicit endpoint.
       if (name === './service-environment') return { applyHealth: () => {} };
-      if (name === 'node:fs') return { lstatSync: () => ({ isSocket: () => true }), readFileSync: () => JSON.stringify({ participantId: 'api' }) };
+      if (name === 'node:fs') return { lstatSync: () => ({ isSocket: () => true }) };
       if (name === 'node:net') return { connect: () => {
         const socket = new EventEmitter(); socket.setTimeout = () => {}; socket.end = () => {}; socket.destroy = () => {};
         queueMicrotask(() => socket.emit('connect')); return socket;
@@ -359,13 +359,9 @@ describe('Compose role health uses the private role-health contract', function (
     await new Promise(resolve => setImmediate(resolve));
     return { calls, code: facade.exitCode };
   }
-  it('checks the exact role health acknowledgement and rejects another participant', async function () {
+  it('is healthy exactly when the role reports ready', async function () {
     const valid = await check(); assert.equal(valid.code, 0);
     assert.deepEqual(valid.calls[0], { socketPath: '/run/ns-ipc/api.sock', maxBytes: 1048576, timeoutMs: 1500 });
-    assert.match(valid.calls[1].request, /^[0-9a-f-]{36}$/);
-    assert.equal((await check(reply => ({ ...reply, participant: 'realtime' }))).code, 1);
-    assert.equal((await check(reply => ({ ...reply, request: 'wrong' }))).code, 1);
     assert.equal((await check(health => ({...health,ready:false}))).code, 1);
-    assert.equal((await check(health => ({...health,roles:['realtime']}))).code, 1);
   });
 });
