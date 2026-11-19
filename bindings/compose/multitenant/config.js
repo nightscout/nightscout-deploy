@@ -122,7 +122,7 @@ function validateFiles(directory, docs) {
     if (productRole === 'realtime' && (participant.slice.count !== parsed.ownership.count || participant.slice.ordinal !== parsed.ownership.ordinal)) throw new TypeError('Deployment realtime ordinal mismatch');
 
   }
-  // The ui's own parser (tenant ceiling, aliases), on the written file when there is one, so a
+  // The ui's own parser (aliases), on the written file when there is one, so a
   // refusal surfaces at bootstrap instead of when the ui starts.
   const uiFile=path.join(directory,'ui','config.json'),fs=require('node:fs');
   require('./ui').parseConfig(fs.existsSync(uiFile)?JSON.parse(fs.readFileSync(uiFile,'utf8')):docs.ui);

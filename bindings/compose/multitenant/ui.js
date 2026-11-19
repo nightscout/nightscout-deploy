@@ -25,7 +25,6 @@ function hostname(value) {
   return value;
 }
 
-// The preview's one tenant ceiling (lib/server/serve/tenant-ceiling.js).
 // nightscout-deploy: a core that predates a module keeps that module's former
 // behaviour (this tree's recorded core 0392acf9 has neither) and says so once.
 const coreModule = (name, former) => {
