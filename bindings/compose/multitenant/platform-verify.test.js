@@ -2,7 +2,7 @@
 const { test } = require('node:test'), assert = require('node:assert/strict'), http = require('node:http');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path'), { spawn } = require('node:child_process');
 const verifierPath = process.env.PLATFORM_VERIFY_MODULE || path.join(__dirname, 'platform-verify.js');
-const { verify, selection } = require(verifierPath);
+const { verify, selection, backfillTenantFloorsV1 } = require(verifierPath);
 const selected = () => ({ namespace: 'synthetic_platform_verification', roles: ['api', 'evaluator', 'realtime'] });
 const good = () => ({ version: 1, status: 'verified', namespace: 'synthetic_platform_verification', roles: ['api', 'evaluator', 'realtime'].map(role => ({ role, generation: 'a'.repeat(64) })) });
 async function upstream(reply, run) {
@@ -60,4 +60,25 @@ test('selection is the namespace and every serving role, with no lease, before i
   for (const value of [undefined, { ...selected(), refreshMs: 60000 }, { ...selected(), maxAgeMs: 300000 }, { ...selected(), roles: ['api', 'realtime'] }]) {
     assert.throws(() => selection({ ...base, platformVerification: value }), { code: 'PLATFORM_VERIFICATION_SELECTION_INVALID' });
   }
+});
+
+test('explicit versioned backfill uses the private admin route and accepts only its aggregate receipt', async () => {
+  const receipt = {version: 1, namespace: selected().namespace, status: 'verified', verified: 2};
+  await upstream(() => ({body: receipt}), async (config, calls) => {
+    assert.deepEqual(await backfillTenantFloorsV1(config, 10000), receipt);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].route, '/v1/platform-verification/backfills/tenant-floor-v1');
+    assert.equal(calls[0].method, 'POST');
+    assert.deepEqual(calls[0].body, {});
+    assert(!calls[0].headers.authorization);
+  });
+  for (const bad of [{...receipt, namespace:'foreign'},{...receipt, status:'failed'},{...receipt, verified:-1},good()]) {
+    await upstream(() => ({body: bad}), async config => {
+      await assert.rejects(backfillTenantFloorsV1(config, 10000), {code:'TENANT_FLOOR_BACKFILL_RECEIPT_INVALID'});
+    });
+  }
+  await upstream(() => ({status:503}), async (config, calls) => {
+    await assert.rejects(backfillTenantFloorsV1(config, 0), {code:'PLATFORM_VERIFICATION_TIMEOUT_INVALID'});
+    assert.equal(calls.length, 0);
+  });
 });

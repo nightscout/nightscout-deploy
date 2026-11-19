@@ -34,7 +34,16 @@ test('actual tiny native generated provisioning, export, logical restore and pri
    await admin.query('ALTER SCHEMA '+q(ns[kind])+' OWNER TO '+q(l.owner));
   }
   for(const sql of plan.grants(l))await admin.query(sql);
-  await require('../platform-startup').install(admin,l);
+  const platform = require('../platform-startup');
+  await platform.install(admin,l);
+  const proofNamespace=q(l.prefix+'_platform_verification');
+  const epoch=async()=>(await admin.query('SELECT epoch::text FROM '+proofNamespace+'.verification_control WHERE singleton')).rows[0].epoch;
+  const installedEpoch=await epoch();
+  await platform.upgrade(admin,l);
+  assert.equal(await epoch(),installedEpoch);
+  const readers=await admin.query("SELECT rolname FROM pg_roles WHERE rolname=ANY($1) AND has_table_privilege(oid,$2,'SELECT') ORDER BY rolname",
+    [[l.roles.api,l.roles.readiness,l.roles.evaluator,l.roles.realtime],l.prefix+'_platform_verification.verified_tenant_floor']);
+  assert.deepEqual(readers.rows,[{rolname:l.roles.api}]);
   // Actual native logical source, without a maintained producer/whole boot claim.
   // Apply the evaluator's bookkeeping grant from pgstream.init; this fixture creates only the slot.
   const work=require('../../../lib/pgstream/checkpoint').WORK_COLUMNS;
@@ -79,6 +88,10 @@ test('actual tiny native generated provisioning, export, logical restore and pri
   }
   await assert.rejects(bridge.capture(config,plan.A,env),{code:'COMPOSE_OPERATOR_SELECTION_UNVERIFIED'});
   await verifier.verify().catch(error=>{console.error('NATIVE_BIND_VERIFY_REFUSAL',error.verificationDiagnostic);throw error;});
+  const backfill=await require('../platform-verify').backfillTenantFloorsV1({adminOrigin:raw.floorVerification.adminOrigin,
+    platformVerification:{namespace:raw.floorVerification.namespace,roles:['api','evaluator','realtime']}},60000);
+  assert.equal(backfill.verified,2);
+  await verifyFloorGeneration();
   const withAdmin=async fn=>fn(admin);
   const rows=async(tenant)=>{const result={};for(const entry of raw.catalogues)for(const name of entry.tables)result[entry.kind+'.'+name]=require('../../../lib/tenant-lifecycle/artifact').digestRows((await admin.query('SELECT * FROM '+q(raw.namespaces[entry.kind])+'.'+q(name)+' WHERE tenant_id=$1',[tenant])).rows);return result;};
   const beforeB=await rows(plan.B),queues=async()=>{const result={};for(const name of ['tenant_notification_heads','tenant_notification_requests','tenant_notification_state'])result[name]=require('../../../lib/tenant-lifecycle/artifact').digestRows((await admin.query('SELECT * FROM '+table('outbox',name)+' WHERE tenant_id=$1',[plan.A])).rows);return result;},queueBefore=await queues();

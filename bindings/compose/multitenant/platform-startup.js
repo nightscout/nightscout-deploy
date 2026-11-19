@@ -23,21 +23,36 @@ function selection(docs) {
   const { namespace } = docs.admin.config.platformVerification;
   return { namespace, roles: [...ROLES] };
 }
-async function install(admin, layout) {
-  await require('../../lib/server/serve/platform-verification').install(admin, {
+function platformRoles(layout) {
+  return {
     namespace: layout.prefix + '_platform_verification', writer: layout.roles.platform_verifier,
-    readers: [layout.roles.api, layout.roles.readiness, layout.roles.evaluator, layout.roles.realtime]
-  });
+    readers: [layout.roles.api, layout.roles.readiness, layout.roles.evaluator, layout.roles.realtime],
+    floorReaders: [layout.roles.api]
+  };
+}
+async function install(admin, layout) {
+  await require('../../lib/server/serve/platform-verification').install(admin, platformRoles(layout));
   await floorEnumeration(admin, layout);
 }
 async function upgrade(admin, layout) {
-  const result = await require('../../lib/server/serve/platform-verification').upgrade(admin, {
-    namespace: layout.prefix + '_platform_verification', writer: layout.roles.platform_verifier,
-    readers: [layout.roles.api, layout.roles.readiness, layout.roles.evaluator, layout.roles.realtime]
-  });
+  const result = await require('../../lib/server/serve/platform-verification').upgrade(admin, platformRoles(layout));
   await floorEnumeration(admin, layout);
   return result;
 }
+async function main(args) {
+  if (args.length !== 1 || args[0] !== 'upgrade-tenant-floor-v1') throw new Error('PLATFORM_UPGRADE_USAGE');
+  const { pg } = require('./bootstrap').input();
+  const layout = require('./config').layout();
+  const admin = new (require('pg').Client)({ connectionString: pg.toString(), connectionTimeoutMillis: 10000, statement_timeout: 10000 });
+  try {
+    await admin.connect();
+    return await upgrade(admin, layout);
+  } finally { await admin.end(); }
+}
+if (require.main === module) main(process.argv.slice(2)).then(result => console.log(JSON.stringify(result)), error => {
+  console.error(JSON.stringify(require('./bootstrap').report(error)));
+  process.exitCode = 1;
+});
 async function floorEnumeration(admin, layout) {
   // Admin enumerates tenant IDs for migration postconditions; serving API
   // retains its existing host resolver authority and cannot enumerate.

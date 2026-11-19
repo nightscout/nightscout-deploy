@@ -36,13 +36,25 @@ async function verify(config, { timeoutMs = 60000 } = {}) {
     roles: ROLES.map(role => { const record = value.roles.find(row => row.role === role); return { role, generation: record.generation }; }),
     elapsedMs: Date.now() - started, credentialBoundary: 'admin-private-api' };
 }
-async function main() {
-  if (process.argv.length !== 2) throw fail('PLATFORM_VERIFICATION_USAGE');
+async function backfillTenantFloorsV1(config, timeoutMs) {
+  const selected = selection(config);
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2147483647) throw fail('PLATFORM_VERIFICATION_TIMEOUT_INVALID');
+  const result = await request(selected.adminOrigin, selected.operation + '/backfills/tenant-floor-v1',
+    { method: 'POST', body: {}, timeoutMs, classification: 'platform-verify' });
+  if (result.status !== 200) throw fail('TENANT_FLOOR_BACKFILL_REFUSED_' + result.status);
+  const value = result.body;
+  if (value?.version !== 1 || value.namespace !== selected.namespace || value.status !== 'verified' ||
+      !Number.isSafeInteger(value.verified) || value.verified < 0) throw fail('TENANT_FLOOR_BACKFILL_RECEIPT_INVALID');
+  return { version: 1, namespace: selected.namespace, status: value.status, verified: value.verified };
+}
+async function main(args) {
+  const backfill = args.length === 2 && args[0] === 'backfill-tenant-floor-v1' && /^[1-9][0-9]*$/.test(args[1]);
+  if (args.length && !backfill) throw fail('PLATFORM_VERIFICATION_USAGE');
   const directory = process.env.NS_PRIMER_STATE || '/run/ns-primer';
   const config = JSON.parse(fs.readFileSync(path.join(directory, 'config.json'), 'utf8'));
-  const receipt = await verify(config);
-  privateWrite(path.join(directory, 'platform-verification.json'), receipt);
+  const receipt = backfill ? await backfillTenantFloorsV1(config, Number(args[1])) : await verify(config);
+  privateWrite(path.join(directory, backfill ? 'tenant-floor-backfill-v1.json' : 'platform-verification.json'), receipt);
   console.log(JSON.stringify(receipt));
 }
-if (require.main === module) main().catch(error => { console.error(JSON.stringify(diagnostic(error))); process.exitCode = 1; });
-module.exports = { selection, verify };
+if (require.main === module) main(process.argv.slice(2)).catch(error => { console.error(JSON.stringify(diagnostic(error))); process.exitCode = 1; });
+module.exports = { selection, verify, backfillTenantFloorsV1 };
