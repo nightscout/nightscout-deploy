@@ -837,6 +837,7 @@
   new(overrides)::
     local c = std.mergePatch($.defaults, overrides);
     local original = $.raw(overrides);
+    local typical = import 'typical-requests.json';
     assert std.member(['cohort', 'separate-k1'], c.applicationTopology) : 'unknown applicationTopology';
     local source = import '../../assets/source-contract.json';
     local helper = if std.objectHas(source, 'runtimeBootstrapHelper') then source.runtimeBootstrapHelper else null;
@@ -870,7 +871,9 @@
             local selected = c.resources[name];
             local authored = std.objectHas(overrides, 'resources') && std.objectHas(overrides.resources, name) && std.objectHas(overrides.resources[name], 'limits');
             if c.resourceAccounting == 'requests-v1' then
-              { [k]: selected[k] for k in std.objectFields(selected) if k != 'limits' } +
+              { requests: std.mergePatch(typical[name],
+                    if std.objectHas(overrides, 'resources') && std.objectHas(overrides.resources, name)
+                    then std.get(overrides.resources[name], 'requests', {}) else {}) } +
               (if authored && overrides.resources[name].limits != null then { limits: overrides.resources[name].limits } else {})
             else selected;
           local containers(key) = [x + { resources: resources(x.name) } for x in spec[key]];

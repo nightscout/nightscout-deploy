@@ -1,0 +1,97 @@
+{
+  "admin": {
+    "cpu": "152m",
+    "memory": "73Mi",
+    "ephemeral-storage": "16Mi"
+  },
+  "api": {
+    "cpu": "108m",
+    "memory": "214Mi",
+    "ephemeral-storage": "16Mi"
+  },
+  "artifact-exporter": {
+    "cpu": "3m",
+    "memory": "12Mi",
+    "ephemeral-storage": "16Mi"
+  },
+  "bootstrap": {
+    "cpu": "250m",
+    "memory": "512Mi",
+    "ephemeral-storage": "16Mi"
+  },
+  "done": {
+    "cpu": "85m",
+    "memory": "14Mi",
+    "ephemeral-storage": "16Mi"
+  },
+  "evaluator": {
+    "cpu": "364m",
+    "memory": "224Mi",
+    "ephemeral-storage": "16Mi"
+  },
+  "install-config": {
+    "cpu": "30m",
+    "memory": "64Mi",
+    "ephemeral-storage": "16Mi"
+  },
+  "k6": {
+    "cpu": "42m",
+    "memory": "58Mi",
+    "ephemeral-storage": "96Mi"
+  },
+  "nginx": {
+    "cpu": "1m",
+    "memory": "3Mi",
+    "ephemeral-storage": "16Mi"
+  },
+  "pgstream": {
+    "cpu": "8m",
+    "memory": "57Mi",
+    "ephemeral-storage": "16Mi"
+  },
+  "postgres": {
+    "cpu": "590m",
+    "memory": "132Mi",
+    "ephemeral-storage": "16Mi"
+  },
+  "primer": {
+    "cpu": "31m",
+    "memory": "16Mi",
+    "ephemeral-storage": "16Mi"
+  },
+  "realtime": {
+    "cpu": "143m",
+    "memory": "81Mi",
+    "ephemeral-storage": "16Mi"
+  },
+  "tenant-admin": {
+    "cpu": "105m",
+    "memory": "43Mi",
+    "ephemeral-storage": "16Mi"
+  },
+  "ui": {
+    "cpu": "145m",
+    "memory": "26Mi",
+    "ephemeral-storage": "16Mi"
+  },
+  "vault": {
+    "cpu": "13m",
+    "memory": "106Mi",
+    "ephemeral-storage": "16Mi"
+  },
+  "vault-agent": {
+    "cpu": "1m",
+    "memory": "26Mi",
+    "ephemeral-storage": "16Mi"
+  },
+  "vault-kubernetes-auth": {
+    "cpu": "100m",
+    "memory": "128Mi",
+    "ephemeral-storage": "16Mi"
+  },
+  "wait-stores": {
+    "cpu": "25m",
+    "memory": "32Mi",
+    "ephemeral-storage": "16Mi"
+  }
+}

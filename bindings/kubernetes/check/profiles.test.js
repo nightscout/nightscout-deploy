@@ -11,6 +11,21 @@ function render(overrides){
     const r=spawnSync('tk',['eval','environments/test'],{cwd:dir,encoding:'utf8'});return {status:r.status,error:r.stderr,value:r.status===0?JSON.parse(r.stdout):null};
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 }
+test('request defaults and authored overrides reach the rendered container', () => {
+  const profile = require('../lib/ns/typical-requests.json');
+  const unpinned = { placement: {}, placementByWorkload: {} };
+  const defaults = render({ ...unpinned, resources: null });
+  assert.equal(defaults.status, 0, defaults.error);
+  const pod = defaults.value.postgres.statefulset.spec.template.spec;
+  const postgres = pod.containers.find(actor => actor.name === 'postgres');
+  assert.deepEqual(postgres.resources, { requests: profile.postgres });
+  assert.equal(pod.nodeName, undefined);
+  const tuned = render({ resources: { postgres: { requests: { cpu: '42m' } } } });
+  assert.equal(tuned.status, 0, tuned.error);
+  const actual = tuned.value.postgres.statefulset.spec.template.spec.containers.find(actor => actor.name === 'postgres');
+  assert.deepEqual(actual.resources, { requests: { ...profile.postgres, cpu: '42m' } });
+});
+
 test('existing claims and placement remain explicit without new provider resources',()=>{
   const r=render({storage:{mode:'existing-claim',claims:{postgres:'synthetic-existing-pg',vault:'synthetic-existing-vault',provisionState:'synthetic-existing-state'}},placement:{nodeName:'synthetic-existing-node'},placementByWorkload:{cohort:{nodeSelector:{'synthetic.example/purpose':'commissioning'}}}});
   assert.equal(r.status,0,r.error);const x=r.value;
