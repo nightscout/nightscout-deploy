@@ -54,7 +54,8 @@ function reopen(previousFile, image) {
     const complete = JSON.parse(fs.readFileSync(path.join(state, 'bootstrap/complete.json'), 'utf8'));
     const prior = complete.patch?.from || complete;
     if (!((prior.sourceCommit === env.NS_SOURCE_COMMIT && prior.deployCommit === env.NS_DEPLOY_COMMIT) ||
-          (prior.sourceCommit === source && prior.deployCommit === deploy)) ||
+          (prior.sourceCommit === source && prior.deployCommit === deploy) ||
+          (complete.patch && env.NS_SOURCE_COMMIT === source && env.NS_DEPLOY_COMMIT === deploy)) ||
         complete.patch && (complete.patch.target.sourceCommit !== source || complete.patch.target.deployCommit !== deploy)) refuse('SEED_PATCH_REVISION_MISMATCH');
     const targetFile = path.join(__dirname, '.env');
     if (fs.existsSync(targetFile)) {

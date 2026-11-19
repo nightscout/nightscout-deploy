@@ -52,7 +52,7 @@ case "${1:-}" in
       [ "$#" -eq 4 ] || exit 64
       node -e 'const p=require("./reopen");p.stoppedFixture(p.prepared(require("path").resolve(".env")));'
       existing=(--no-deps)
-      "${compose[@]}" start --wait --wait-timeout 90 postgres vault
+      "${compose[@]}" up -d --no-recreate --no-build --pull never --wait --wait-timeout 90 postgres vault
       "${compose[@]}" --profile ops run --rm --no-deps bootstrap node deploy/multitenant/bootstrap.js migrate "$3" "$4"
     else
       [ "$#" -eq 1 ] || exit 64
