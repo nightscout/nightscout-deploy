@@ -73,8 +73,11 @@ test('actual tiny native generated provisioning, export, logical restore and pri
   }]});
   const platformAdmin=require('../../../lib/server/serve/platform-verification-admin');
   const rolePath=file=>path.join(output,'api',file);
-  const target={role:'api',configFile:rolePath('config.json'),environmentFile:rolePath('env.json'),operationConfigFile:rolePath('operation.json')};
-  floorService=platformAdmin.create({namespace:raw.floorVerification.namespace,connectionString:urls.platform_verifier,targets:[target]},{});
+  const apiEnv=JSON.parse(fs.readFileSync(rolePath('env.json'),'utf8'));
+  // This fixture runs outside the image, where API's evaluator metadata has a local path.
+  apiEnv.MULTITENANT_EVALUATOR_CONFIG=rolePath('evaluator-metadata.json');
+  const target={role:'api',configFile:rolePath('config.json'),operationConfigFile:rolePath('operation.json')};
+  floorService=platformAdmin.create({namespace:raw.floorVerification.namespace,connectionString:urls.platform_verifier,targets:[target]},apiEnv);
   let admitFloor=true;
   floorServer=require('node:http').createServer(platformAdmin.api({service:floorService,admitted:()=>admitFloor,
     fallback:(_req,res)=>{res.writeHead(404);res.end();}}));
