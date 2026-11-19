@@ -162,5 +162,6 @@
     "registry-bootstrap.js": "6ac6af977d70aaf481aeb06470f3893f7dd49b305881f5d9a55cea321fd616c7",
     "registry-plan.js": "636f2c726c6fcd0f88d1b7667e5368200d8820c5c74c3178460544d75b600513",
     "service-environment.js": "5e44e58963adef7b59a2c1b34305475366f986d8b3b0b7b412f377a6a59ff4d6"
-  }
+  },
+  "verificationJob": "verification"
 }

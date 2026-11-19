@@ -34,7 +34,7 @@ imageId=subprocess.check_output(['docker','image','inspect',a.image,'--format','
 contract={'schemaVersion':1,'coreCommit':result['receipt']['coreCommit'],'deployCommit':result['receipt']['deployCommit'],'localImageId':imageId,'published':False,'producerBinarySha256':result['producerBinarySha256'],'commands':commands,'postgresIdentities':result['postgresIdentities'],'sourceFilesSha256':hashes,'scope':'Offline constructor and byte equivalence; cluster and capacity UNMEASURED'}
 startup_versions={'platform-verification-v2':'startup-v2','platform-verification-v3':'startup-v3','platform-verification-v4':'startup-v4'}
 if result['platformVerificationVersion'] not in startup_versions:raise SystemExit('FAIL platform proof contract is unsupported')
-contract.update(bindingInputsVersion=1,nativeCatalogueSha256=result['nativeCatalogueSha256'],platformVerification=startup_versions[result['platformVerificationVersion']],platformVerificationVersion=result['platformVerificationVersion'])
+contract.update(bindingInputsVersion=1,verificationJob='verification',nativeCatalogueSha256=result['nativeCatalogueSha256'],platformVerification=startup_versions[result['platformVerificationVersion']],platformVerificationVersion=result['platformVerificationVersion'])
 if a.diagnostic:
     payload=a.diagnostic.read_bytes()
     diagnostic=json.loads(payload)
