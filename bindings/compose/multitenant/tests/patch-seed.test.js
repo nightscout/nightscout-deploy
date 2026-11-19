@@ -13,7 +13,7 @@ test('a later incompatible or missing ledger refuses before any namespace is cha
       if (namespace === 'seed_clock' && !missing) throw Error('MIG_DRIFT');
       return { applied: namespace === 'seed_clock' ? [] : ['initial'], pending: ['append'] };
     };
-    await assert.rejects(migrateCatalogues(layout, catalogues, run), missing ? /COMMISSIONED_LEDGER_REQUIRED/ : /MIG_DRIFT/);
+    await assert.rejects(migrateCatalogues(layout, catalogues, run, () => actions.push('begin')), missing ? /COMMISSIONED_LEDGER_REQUIRED/ : /MIG_DRIFT/);
     assert.deepEqual(actions, ['status', 'status']);
   }
 });

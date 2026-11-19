@@ -10,7 +10,7 @@ const plan = require('./config');
 const refuse = message => { throw Object.assign(new Error(message), { code: message }); };
 const pair = (sourceCommit, deployCommit) => ({ sourceCommit, deployCommit });
 
-async function migrateCatalogues(layout, catalogues, migrate) {
+async function migrateCatalogues(layout, catalogues, migrate, begin = () => {}) {
   const steps = [];
   // Inspect every installed ledger before applying the first append.
   for (const [kind, catalogue] of Object.entries(catalogues)) {
@@ -19,6 +19,7 @@ async function migrateCatalogues(layout, catalogues, migrate) {
     if (!status.applied.length) refuse('SEED_PATCH_COMMISSIONED_LEDGER_REQUIRED');
     steps.push({ input, pending: status.pending });
   }
+  begin();
   const applied = [];
   for (const { input, pending } of steps) {
     if (pending.length) applied.push(...(await migrate('up', input)).done);
@@ -76,13 +77,14 @@ async function patch(options, complete, previous, finish = false) {
       require('../../lib/server/internal-api/listener-config').resolve(['evaluator'], env));
     const evaluatorProof = require('../../lib/server/serve/platform-verification').contractInputs(parsed, 'evaluator');
 
-    // Older bootstraps also refuse the null pair. A failed/partial transition
-    // can only continue with the original source and selected target.
-    if (!complete.patch) privateWrite(file('bootstrap/complete.json'),
-      { ...complete, ...pair(null, null), patch: { from, target } });
     const runner = require('../../lib/migrations/postgres');
     const result = await migrateCatalogues(layout, plan.catalogues({ nativeSelection: selected }),
-      (action, input) => runner.run(action, { ...input, direct: true, connectionString: options.pg.href }));
+      (action, input) => runner.run(action, { ...input, direct: true, connectionString: options.pg.href }), () => {
+        // An incompatible ledger leaves A usable. Once DDL may have started,
+        // even older bootstraps refuse the null pair until B verifies.
+        if (!complete.patch) privateWrite(file('bootstrap/complete.json'),
+          { ...complete, ...pair(null, null), patch: { from, target } });
+      });
     await require('./platform-startup').upgrade(client, layout);
     privateWrite(file('ops/config.json'), { ...ops, ...lifecycle, evaluatorProof });
     privateWrite(file('ops/env.json'), { ...read('ops/env.json'), NS_SOURCE_COMMIT: target.sourceCommit });
