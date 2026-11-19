@@ -78,6 +78,8 @@ services:
       interval: 2s
       timeout: 2s
       retries: 1
+      # A restored Vault starts sealed until bootstrap can reach both stores.
+      start_period: 90s
     networks: [backend]
 
   # One-shot provisioning, part of every `up` (decision provisioning-secrets-in). It renders the role
@@ -308,15 +310,6 @@ services:
     volumes:
       - ${NS_DEMO_STATE}/edge/nginx.conf:/etc/nginx/nginx.conf:ro
     networks: [backend, edge]
-
-  placement-operator:
-    <<: *app
-    profiles: [ops]
-    command: [node, -r, ./deploy/multitenant/load-env.js, deploy/multitenant/placement-control.js]
-    environment: {}
-    volumes:
-      - ${NS_DEMO_STATE}/placement-operator:/run/ns-config:ro
-      - ${NS_DEMO_STATE}/placement:/run/ns-placement:rw
 
   demo:
     <<: *app

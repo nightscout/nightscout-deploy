@@ -4,22 +4,23 @@ const recovery=require('./pgstream-rebootstrap');
 const digest=value=>crypto.createHash('sha256').update(value).digest('hex');
 // Current stream intake includes raw clinical cohorts as well as metadata.
 const clinical=['entries','treatments','devicestatus','profile','food','activity'];
-const routes=[['settings','tenant_settings'],['policy','tenant_operator_policy'],['control','tenant_activity'],['control','tenant_lifecycle_windows'],...clinical.map(domain=>['clinical_'+domain,domain])].map(([schema,table])=>({schema,table}));
+const config=require('../../lib/server/serve/deployment-settings').evaluator({NS_PGSTREAM_GENERATION:'a'.repeat(32)});
+const routes=require('../../lib/pgstream/evaluator').routes({...config,namespaces:config.postgres.namespaces});
 function fixture(action='create-missing'){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'pgstream-rebootstrap-')),state=path.join(root,'state'),deployment=path.join(root,'deployment');fs.mkdirSync(deployment);fs.mkdirSync(path.join(state,'bootstrap'),{recursive:true});fs.mkdirSync(path.join(state,'evaluator'));fs.mkdirSync(path.join(state,'pgstream'));
- const config={consumer:'synthetic',postgres:{namespaces:{clock:'clock',checkpoint:'checkpoint',...Object.fromEntries(clinical.map(domain=>[domain,'clinical_'+domain]))}},trustedWorker:{settings:'settings',operatorPolicy:'policy',activity:'control'},pgstream:{transactionRows:10000,generation:'a'.repeat(32),slot:'selected_slot',streamRole:'stream_reader',receiver:{url:'http://synthetic-intake:19913/',trust:'network',bindHost:'0.0.0.0',maxBytes:16777216,timeoutMs:5000}}};
+
  const source={coreCommit:'a'.repeat(40),deployCommit:'b'.repeat(40)},imageId='sha256:'+'c'.repeat(64),postgresImageId='sha256:'+'d'.repeat(64),database={name:'synthetic',oid:'100',systemIdentifier:'123456',postmasterStartedAt:'2026-11-14 00:00:00+00'};
- const p={version:1,action,project:'synthetic-rebootstrap',source,imageId,postgresImageId,database,slot:config.pgstream.slot,operatorRole:'postgres',deploymentDirectory:deployment,stateDirectory:state,evaluatorConfig:path.join(state,'evaluator/config.json'),receiptFile:path.join(root,'receipt.json'),composeFiles:[path.join(deployment,'compose.yaml')]};
+ const p={version:1,action,project:'synthetic-rebootstrap',source,imageId,postgresImageId,database,slot:config.pgstream.slot,operatorRole:'postgres',deploymentDirectory:deployment,stateDirectory:state,generationFile:path.join(state,'evaluator/ns_pgstream_generation'),receiptFile:path.join(root,'receipt.json'),composeFiles:[path.join(deployment,'compose.yaml')]};
  fs.writeFileSync(path.join(deployment,'.env'),Object.entries({NS_DEMO_PROJECT:p.project,NS_DEMO_STATE:state,NS_SOURCE_COMMIT:source.coreCommit,NS_PGSTREAM:'1'}).map(([key,value])=>key+'='+value).join('\n'));
- fs.writeFileSync(path.join(state,'bootstrap/complete.json'),JSON.stringify({sourceCommit:source.coreCommit,deployCommit:source.deployCommit}));fs.writeFileSync(p.evaluatorConfig,JSON.stringify(config));p.evaluatorConfigSha256=digest(fs.readFileSync(p.evaluatorConfig));
+ fs.writeFileSync(path.join(state,'bootstrap/complete.json'),JSON.stringify({sourceCommit:source.coreCommit,deployCommit:source.deployCommit}));fs.writeFileSync(p.generationFile,config.pgstream.generation);p.generationFileSha256=digest(fs.readFileSync(p.generationFile));
  const sourceURL=new URL('postgres://postgres/synthetic');sourceURL.username=config.pgstream.streamRole;sourceURL.password=crypto.randomBytes(12).toString('hex');
  const wire={source:{postgres:{url:sourceURL.href,mode:'replication',replication:{replication_slot:p.slot,plugin:{include_transactions:true,include_xids:true,add_tables:routes.map(row=>row.schema+'.'+row.table).join(',')}}}},target:{webhooks:{notifier:{strict_mode:true,transaction_batch:{max_rows:10000,max_bytes:16777216}},subscriptions:{store:{cache:{enabled:true,refresh_interval:60}}}}}};fs.writeFileSync(path.join(state,'pgstream/pgstream.yaml'),JSON.stringify(wire));p.wireConfigSha256=digest(JSON.stringify(wire));
- const services=['postgres','vault','evaluator','realtime','api','admin','nginx','pgstream'],rows=services.map((service,index)=>({Id:String(index+1).repeat(64),Image:service==='postgres'?postgresImageId:imageId,Config:{Labels:{'com.docker.compose.project':p.project,'com.docker.compose.service':service,'com.docker.compose.project.working_dir':deployment,'com.docker.compose.project.config_files':p.composeFiles.join(','),'com.docker.compose.config-hash':String(index+1).repeat(64)}},State:{Running:['postgres','vault'].includes(service),Paused:false,Pid:['postgres','vault'].includes(service)?200+index:0,Status:['postgres','vault'].includes(service)?'running':'exited',StartedAt:'2026-11-14T00:00:00Z'},HostConfig:{RestartPolicy:{Name:'no'}},Mounts:service==='evaluator'?[{Source:path.dirname(p.evaluatorConfig),Destination:'/run/ns-config',RW:false}]:service==='pgstream'?[{Source:path.join(state,'pgstream'),Destination:'/run/ns-stream',RW:false}]:[]}));
+ const services=['postgres','vault','evaluator','realtime','api','admin','nginx','pgstream'],rows=services.map((service,index)=>({Id:String(index+1).repeat(64),Image:service==='postgres'?postgresImageId:imageId,Config:{Labels:{'com.docker.compose.project':p.project,'com.docker.compose.service':service,'com.docker.compose.project.working_dir':deployment,'com.docker.compose.project.config_files':p.composeFiles.join(','),'com.docker.compose.config-hash':String(index+1).repeat(64)}},State:{Running:['postgres','vault'].includes(service),Paused:false,Pid:['postgres','vault'].includes(service)?200+index:0,Status:['postgres','vault'].includes(service)?'running':'exited',StartedAt:'2026-11-14T00:00:00Z'},HostConfig:{RestartPolicy:{Name:'no'}},Mounts:service==='evaluator'?[{Source:path.dirname(p.generationFile),Destination:'/run/ns-config',RW:false}]:service==='pgstream'?[{Source:path.join(state,'pgstream'),Destination:'/run/ns-stream',RW:false}]:[]}));
  p.containers=rows.map(row=>({cid:row.Id,imageId:row.Image,service:row.Config.Labels['com.docker.compose.service'],startedAt:row.State.StartedAt,configHash:row.Config.Labels['com.docker.compose.config-hash']}));
- const subscriptions=routes.map(row=>({url:'http://synthetic-intake:19913/pgstream',schema_name:row.schema,table_name:row.table,event_types:['D','I','U']}));subscriptions.push({url:subscriptions[0].url,schema_name:'',table_name:'',event_types:['B','C','M']});
+ const subscriptions=routes.map(row=>({url:'http://evaluator:19913/pgstream',schema_name:row.schema,table_name:row.table,event_types:['D','I','U']}));subscriptions.push({url:subscriptions[0].url,schema_name:'',table_name:'',event_types:['B','C','M']});
  const row={database:database.name,databaseOid:database.oid,systemIdentifier:database.systemIdentifier,postmasterStartedAt:database.postmasterStartedAt,otherClients:0,role:{replication:true,super:false,bypass:false,nonowner:true,grants:true},slot:action==='create-missing'?null:{name:p.slot,database:database.name,plugin:'wal2json',active:false,status:'lost',restart:null},subscriptions};
  fs.writeFileSync(p.composeFiles[0],'{}');p.approvedHistoricalComposeFiles=[{path:p.composeFiles[0],sha256:digest('{}')}];
- const data={hashes:Object.fromEntries(p.containers.map(row=>[row.service,row.configHash])),rows,compose:{services:Object.fromEntries(services.map(service=>[service,{image:service==='postgres'?postgresImageId:imageId}]))},image:[{Id:imageId,Config:{Labels:{'org.opencontainers.image.revision':source.coreCommit,'org.nightscout.deploy.revision':source.deployCommit}}}],row,mutations:0,commands:[],evaluatorConfig:p.evaluatorConfig,initialGeneration:config.pgstream.generation};
+ const data={hashes:Object.fromEntries(p.containers.map(row=>[row.service,row.configHash])),rows,compose:{services:Object.fromEntries(services.map(service=>[service,{image:service==='postgres'?postgresImageId:imageId}]))},image:[{Id:imageId,Config:{Labels:{'org.opencontainers.image.revision':source.coreCommit,'org.nightscout.deploy.revision':source.deployCommit}}}],row,mutations:0,commands:[],generationFile:p.generationFile,initialGeneration:config.pgstream.generation};
  const manifest=path.join(root,'plan.json');fs.writeFileSync(manifest,JSON.stringify(p));return {root,p,data,manifest,cleanup:()=>fs.rmSync(root,{recursive:true,force:true})};
 }
 function fake(args,input){
@@ -30,7 +31,7 @@ function fake(args,input){
  else if(args[0]==='inspect')output=JSON.stringify(d.rows);
  else if(args[0]==='image')output=JSON.stringify(d.image);
  else if(args[0]==='exec'){
-  if(input.includes('pg_create_logical_replication_slot')){d.generationAtSlot=JSON.parse(fs.readFileSync(d.evaluatorConfig)).pgstream.generation;d.mutations++;d.slotSQL=input;d.row.slot={name:'selected_slot',database:d.row.database,plugin:'wal2json',active:false,status:'reserved',restart:'0/123'};output='{}';}
+  if(input.includes('pg_create_logical_replication_slot')){d.generationAtSlot=fs.readFileSync(d.generationFile,'utf8').trim();d.mutations++;d.slotSQL=input;d.row.slot={name:'nsdemo_pgstream',database:d.row.database,plugin:'wal2json',active:false,status:'reserved',restart:'0/123'};output='{}';}
   else output=JSON.stringify(d.row);
  }else throw Error('Unexpected platform command');fs.writeFileSync(file,JSON.stringify(d));return output;
 }
@@ -42,7 +43,7 @@ function cli(f){
  const q=spawnSync(process.execPath,[path.join(__dirname,'pgstream-rebootstrap.js'),f.manifest],{env:{PATH:bin+':'+process.env.PATH,HOME:process.env.HOME},encoding:'utf8'});return {q,data:JSON.parse(fs.readFileSync(platform))};
 }
 for(const action of ['create-missing','replace-lost'])test('callable host command '+action+' changes only exact slot and leaves all effects stopped',()=>{
- const f=fixture(action);try{const {q,data}=cli(f);assert.equal(q.status,0,q.stderr);assert.equal(data.mutations,1);assert.match(data.generationAtSlot,/^[a-f0-9]{32}$/);assert.notEqual(data.generationAtSlot,data.initialGeneration,'GENERATION_ROTATES_BEFORE_SLOT_REUSE');assert.equal(JSON.parse(fs.readFileSync(f.p.receiptFile)).streamGeneration,data.generationAtSlot);assert.match(data.slotSQL,/pg_create_logical_replication_slot\('selected_slot','wal2json'\)/);assert.equal(/\b(?:UPDATE|INSERT|DELETE|CREATE TABLE|ALTER|GRANT|TRUNCATE)\b/.test(data.slotSQL),false);assert.equal(data.commands.some(args=>['start','stop','kill','run','restart'].includes(args[0])||args.includes('up')),false);assert.equal(JSON.parse(fs.readFileSync(f.p.receiptFile)).state,'SLOT_RECREATED_EFFECTS_STOPPED');assert.match(data.slotSQL,/pg_try_advisory_lock/);}finally{f.cleanup();}
+ const f=fixture(action);try{const {q,data}=cli(f);assert.equal(q.status,0,q.stderr);assert.equal(data.mutations,1);assert.match(data.generationAtSlot,/^[a-f0-9]{32}$/);assert.notEqual(data.generationAtSlot,data.initialGeneration,'GENERATION_ROTATES_BEFORE_SLOT_REUSE');assert.equal(JSON.parse(fs.readFileSync(f.p.receiptFile)).streamGeneration,data.generationAtSlot);assert.match(data.slotSQL,/pg_create_logical_replication_slot\('nsdemo_pgstream','wal2json'\)/);assert.equal(/\b(?:UPDATE|INSERT|DELETE|CREATE TABLE|ALTER|GRANT|TRUNCATE)\b/.test(data.slotSQL),false);assert.equal(data.commands.some(args=>['start','stop','kill','run','restart'].includes(args[0])||args.includes('up')),false);assert.equal(JSON.parse(fs.readFileSync(f.p.receiptFile)).state,'SLOT_RECREATED_EFFECTS_STOPPED');assert.match(data.slotSQL,/pg_try_advisory_lock/);}finally{f.cleanup();}
 });
 test('legacy uncached wire remains recoverable with exact stopped-worker subscriptions',()=>{
  const f=fixture();try{
@@ -91,7 +92,7 @@ const controls={
  'active-old-backend':f=>{f.data.row.otherClients=1;},
  'runtime-owner-privilege':f=>{f.data.row.role.nonowner=false;},
  'changed-subscription':f=>{f.data.row.subscriptions.pop();},
- 'missing-raw-clinical-subscription':f=>{f.data.row.subscriptions=f.data.row.subscriptions.filter(row=>row.schema_name!=='clinical_entries');},
+ 'missing-raw-clinical-subscription':f=>{f.data.row.subscriptions=f.data.row.subscriptions.filter(row=>row.table_name!=='entries');},
  'retired-heartbeat-subscription':f=>{f.data.row.subscriptions.push({url:f.data.row.subscriptions[0].url,schema_name:'clock',table_name:'nightscout_heartbeat',event_types:['D','I','U']});},
  'wrong-physical-database':f=>{f.data.row.systemIdentifier='999';},
  'active-slot':f=>{f.data.row.slot.active=true;},
@@ -105,29 +106,10 @@ const refusedCodes={
 for(const [name,breakIt] of Object.entries(controls))test('callable command refuses '+name+' before mutation',()=>{const f=fixture('replace-lost');try{breakIt(f);const {q,data}=cli(f);assert.notEqual(q.status,0);assert.equal(q.stderr.trim(),'PGSTREAM_REBOOTSTRAP_'+refusedCodes[name]);assert.equal(data.mutations,0);}finally{f.cleanup();}});
 test('slot operation repeats no-client, backend, inactive/lost and operator exclusion guards at mutation boundary',()=>{const f=fixture('replace-lost');try{const sql=recovery.slotSQL(f.p);for(const guard of ['pg_try_advisory_lock','pg_stat_activity','system_identifier','NOT active',"plugin='wal2json'","wal_status='lost'",'\\quit 3'])assert.ok(sql.includes(guard),guard);}finally{f.cleanup();}});
 
-test('planned revision is distinct from missing/lost recovery and requires sealed custody',()=>{
- const f=fixture('replace-revision');try{
-  assert.throws(()=>recovery.plan(f.p),{code:'PGSTREAM_REBOOTSTRAP_REVISION_REQUIRED'});
-  const valid={...f.data.row,slot:{name:f.p.slot,database:f.p.database.name,plugin:'wal2json',active:false,status:'reserved',restart:'0/100'}};
-  const c=JSON.parse(fs.readFileSync(f.p.evaluatorConfig));
-  assert.throws(()=>recovery.validateDatabase({...f.p,action:'replace-lost'},c,valid,routes),{code:'PGSTREAM_REBOOTSTRAP_SLOT_NOT_LOST'});
-  recovery.validateDatabase(f.p,c,valid,routes);
-  assert.throws(()=>recovery.validateDatabase(f.p,c,{...valid,slot:{...valid.slot,active:true}},routes),{code:'PGSTREAM_REBOOTSTRAP_REVISION_SLOT'});
- }finally{f.cleanup();}
-});
-test('one admitted upgrade cannot reset another valid slot after interruption or success',()=>{
- const root=fs.mkdtempSync(path.join(os.tmpdir(),'revision-slot-claim-'));try{
-  const p={action:'replace-revision',revision:{upgradeRecord:path.join(root,'upgrade-record.json')},slot:'synthetic_slot',receiptFile:path.join(root,'receipt.json')};
-  recovery.claimRevision(p);const before=fs.readFileSync(path.join(root,'revision-slot-started.json'));
-  assert.throws(()=>recovery.claimRevision({...p,receiptFile:path.join(root,'another-receipt.json')}),{code:'PGSTREAM_REBOOTSTRAP_REVISION_ALREADY_STARTED'});
-  assert.deepEqual(fs.readFileSync(path.join(root,'revision-slot-started.json')),before);
- }finally{fs.rmSync(root,{recursive:true,force:true});}
-});
-
 test('native recovery refuses missing generation or retired/unbounded wire before slot mutation',()=>{
  for(const mode of ['generation','framing','batch','batch-cap']){
   const f=fixture();try{
-   if(mode==='generation'){const c=JSON.parse(fs.readFileSync(f.p.evaluatorConfig));delete c.pgstream.generation;fs.writeFileSync(f.p.evaluatorConfig,JSON.stringify(c));f.p.evaluatorConfigSha256=digest(fs.readFileSync(f.p.evaluatorConfig));}
+   if(mode==='generation'){fs.writeFileSync(f.p.generationFile,'');f.p.generationFileSha256=digest(fs.readFileSync(f.p.generationFile));}
    else{const file=path.join(f.p.stateDirectory,'pgstream/pgstream.yaml'),wire=JSON.parse(fs.readFileSync(file));if(mode==='framing')wire.source.postgres.replication.plugin.include_transactions=false;else if(mode==='batch')delete wire.target.webhooks.notifier.transaction_batch;else wire.target.webhooks.notifier.transaction_batch.max_bytes++;fs.writeFileSync(file,JSON.stringify(wire));f.p.wireConfigSha256=digest(fs.readFileSync(file));}
    fs.writeFileSync(f.manifest,JSON.stringify(f.p));const {q,data}=cli(f);assert.notEqual(q.status,0);assert.equal(data.mutations,0);assert.equal(q.stderr.trim(),mode==='generation'?'PGSTREAM_REBOOTSTRAP_CONFIG':'PGSTREAM_REBOOTSTRAP_WIRE_CONFIG');
   }finally{f.cleanup();}

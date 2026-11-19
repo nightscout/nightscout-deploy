@@ -37,6 +37,7 @@ function parseEnv (text) {
 const formatEnv = env => Object.entries(env).map(([key, value]) => key + '=' + value + '\n').join('');
 function newDirectory (dir) {
   if (!path.isAbsolute(dir || '') || !/^\/[A-Za-z0-9_./-]+$/.test(dir) || dir.split('/').includes('..')) fail('FIXTURE_PATH_ABSOLUTE_REQUIRED');
+  if (fs.realpathSync(path.dirname(dir)) !== path.dirname(dir)) fail('FIXTURE_PATH_ABSOLUTE_REQUIRED');
   if (fs.existsSync(dir)) fail('FIXTURE_PATH_EXISTS');
   fs.mkdirSync(dir, { mode: 0o700 });
   return dir;
@@ -79,6 +80,7 @@ function options (args) {
 function retarget (env, selected, commits) {
   const next = { ...env, NS_DEMO_PROJECT: require('./project').validate(selected.project), NS_DEMO_STATE: selected.state,
     NS_SOURCE_COMMIT: commits.source, NS_DEPLOY_COMMIT: commits.deploy };
+  if (process.env.NS_DEMO_IMAGE) next.NS_DEMO_IMAGE = process.env.NS_DEMO_IMAGE;
   if (selected.bind) next.NS_DEMO_BIND = selected.bind;
   if (selected.port) next.NS_DEMO_PORT = selected.port;
   return next;
@@ -101,16 +103,30 @@ function restore (dir, args) {
     if (exists) fail('FIXTURE_PROJECT_NOT_FRESH');
   }
   const helper = image(next), state = newDirectory(selected.state);
-  for (const volume of VOLUMES) {
-    docker(['volume', 'create', '--label', 'com.docker.compose.project=' + project, '--label', 'com.docker.compose.volume=' + volume, project + '_' + volume]);
-    tar(helper, [project + '_' + volume + ':/v', dir + ':/in:ro'], 'tar -C /v -xpf /in/' + volume + '.tar');
+  const attempt = require('node:crypto').randomUUID(), created = [];
+  try {
+    for (const volume of VOLUMES) {
+      const name = project + '_' + volume;
+      docker(['volume', 'create', '--label', 'com.docker.compose.project=' + project, '--label', 'com.docker.compose.volume=' + volume,
+        '--label', 'org.nightscout.fixture.restore=' + attempt, name]);
+      if (docker(['volume', 'inspect', '--format', '{{index .Labels "org.nightscout.fixture.restore"}}', name]) !== attempt) fail('FIXTURE_PROJECT_NOT_FRESH');
+      created.push(name);
+      tar(helper, [name + ':/v', dir + ':/in:ro'], 'tar -C /v -xpf /in/' + volume + '.tar');
+    }
+    tar(helper, [state + ':/v', dir + ':/in:ro'], 'tar -C /v -xpf /in/state.tar && chown @OWNER@ /v && chmod 700 /v');
+    const replicas = require('./replicas'), networks = require('./networks');
+    fs.writeFileSync(path.join(state, 'compose.replicas.yaml'), replicas.compose(replicas.count(next), 'compose.yaml') +
+      networks.render(networks.select(selected['backend-subnet'], selected['edge-subnet'])), { mode: 0o600 });
+    fs.writeFileSync(path.join(base, '.env'), formatEnv(next), { mode: 0o600, flag: 'wx' });
+  } catch (cause) {
+    const errors = [cause];
+    for (const name of created.reverse()) {
+      try { docker(['volume', 'rm', name]); } catch (error) { errors.push(error); }
+    }
+    try { fs.rmSync(state, { recursive: true }); } catch (error) { errors.push(error); }
+    if (errors.length > 1) throw new AggregateError(errors, 'FIXTURE_PARTIAL_RESTORE');
+    throw cause;
   }
-  tar(helper, [state + ':/v', dir + ':/in:ro'], 'tar -C /v -xpf /in/state.tar && chown @OWNER@ /v && chmod 700 /v');
-  // Networks belong to the new project: written as preparation writes them.
-  const replicas = require('./replicas'), networks = require('./networks');
-  fs.writeFileSync(path.join(state, 'compose.replicas.yaml'), replicas.compose(replicas.count(next), 'compose.yaml') +
-    networks.render(networks.select(selected['backend-subnet'], selected['edge-subnet'])), { mode: 0o600 });
-  fs.writeFileSync(path.join(base, '.env'), formatEnv(next), { mode: 0o600, flag: 'wx' });
   return { project, state, snapshot: record, sourceCommit: source, deployCommit: deploy, seconds: (Date.now() - started) / 1000 };
 }
 

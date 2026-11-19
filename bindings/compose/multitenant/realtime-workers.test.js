@@ -11,15 +11,12 @@ test('static realtime shape uses exactly K ordinals and refuses retired independ
   assert.deepEqual(shape.realtime.map(row=>[row.service,row.ordinal]),[['realtime',0],['realtime-2',1],['realtime-3',2]]);
 });
 test('every realtime ordinal, idle ones included, gets its index and count as environment settings and a private address',()=>{
-  const operation={version:1};
-  const docs={configs:{realtime:{}},operations:{realtime:operation},environments:{realtime:{},evaluator:{NS_REALTIME_INTERNAL_SOCKET:'/tmp/old.sock'}}};
-  const selected=workers.initial({workers:3}),expanded=workers.expand(docs,selected);
-  assert.deepEqual(JSON.parse(expanded.environments.evaluator.NS_REALTIME_SLICE_PEERS),selected.realtime.map(row=>({socket:row.socketPath})));
-  for(const row of selected.realtime){
-    assert.deepEqual([expanded.environments[row.service].NS_SLICE_ORDINAL,expanded.environments[row.service].NS_SLICE_COUNT],[String(row.ordinal),'3']);
-    assert.equal(expanded.environments[row.service].NS_SERVE_INTERNAL_SOCKET,row.socketPath);
+  const text=workers.compose({workers:3},'compose.yaml',['api']);
+  for(const row of workers.initial({workers:3}).realtime){
+    assert(text.includes(row.socketPath));assert(text.includes('NS_SLICE_ORDINAL: "'+row.ordinal+'"'));
   }
-  assert.equal(expanded.environments.evaluator.NS_REALTIME_INTERNAL_SOCKET,undefined);
+  assert(text.includes('NS_REALTIME_SLICE_PEERS'));
+
 });
 test('ordinary static rendering binds the canonical edge and stable restart identities without a placement mount',()=>{
   const text=workers.compose({workers:2},'compose.yaml',['api','api-2']);

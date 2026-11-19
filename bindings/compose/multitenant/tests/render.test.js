@@ -20,34 +20,25 @@ test('seeded credentials are private hex values, one per role and token, and ref
   fs.writeFileSync(path.join(seeded,'vault','api'),"x' OR '1\n");
   assert.throws(()=>credentials.read(seeded),{code:'SEEDED_CREDENTIAL_INVALID'});
 });
-test('every role document is rendered from the seeded values and names them',t=>{
+test('mounts only the declared database credentials and tokens for each role',t=>{
   const {seeded,output,env}=fixture(t),values=credentials.read(seeded),layout=plan.layout();
-  const result=render.render(render.input(env));
-  assert.equal(result.state,'documents-rendered');
-  const api=JSON.parse(read(output,'api/env.json'));
-  const url=new URL(api.NS_API_PG);assert.equal(url.username,layout.roles.api);assert.equal(url.password,values.postgres.api);
+  assert.equal(render.render(render.input(env)).state,'credentials-rendered');
+  for(const [role,logins] of Object.entries(render.connections)){
+    const roleDir=path.join(output,role);
+    const extra={api:['vault-token'],evaluator:['ns_pgstream_generation'],'tenant-admin':['vault-token'],admin:['vault-token','management-vault-token']};
+    assert.deepEqual(fs.readdirSync(roleDir).sort(),[...Object.keys(logins).map(name=>name.toLowerCase()),...(extra[role]||[])].sort());
+    for(const [name,login] of Object.entries(logins)){
+      const file=path.join(roleDir,name.toLowerCase()),url=new URL(fs.readFileSync(file,'utf8').trim());
+      assert.equal(url.username,layout.roles[login]);assert.equal(url.password,values.postgres[login]);assert.equal(fs.statSync(file).mode&0o777,0o600);
+    }
+  }
   assert.equal(read(output,'api/vault-token').trim(),values.vault.api);
   assert.equal(read(output,'tenant-admin/vault-token').trim(),values.vault['owner-credentials']);
   assert.equal(read(output,'admin/vault-token').trim(),values.vault.provisioner);
   assert.equal(read(output,'admin/management-vault-token').trim(),values.vault['management-issuer']);
-  assert.equal(JSON.parse(read(output,'api/config.json')).vault.tokenFile,'/run/ns-config/vault-token');
-  // Role documents are compact; operator files stay indented.
-  assert.equal(read(output,'api/config.json'),JSON.stringify(JSON.parse(read(output,'api/config.json')))+'\n');
-  assert.match(read(output,'ops/config.json'),/\n  "/);
-  for(const role of plan.serviceRoles)assert(!('nativeSelection' in JSON.parse(read(output,role+'/operation.json'))));
-  assert(!JSON.stringify(JSON.parse(read(output,'ops/config.json'))).includes('nativeSelection'));
-  assert.equal(fs.statSync(path.join(output,'api/env.json')).mode&0o777,0o600);
-  assert(!fs.existsSync(path.join(output,'bootstrap')),'rendering writes no provisioning custody');
-});
-test('rendering again converges in place; the Kubernetes sink and config bound are inputs',t=>{
-  const {output,env}=fixture(t);
-  render.render(render.input(env));const first=read(output,'evaluator/operation.json');
+  const generation=read(output,'evaluator/ns_pgstream_generation');
   render.render(render.input({...env,NS_API_VAULT_TOKEN_FILE:'/run/ns-vault/token'}));
-  assert.equal(read(output,'evaluator/operation.json'),first);
-  assert.equal(JSON.parse(read(output,'api/config.json')).vault.tokenFile,'/run/ns-vault/token');
-  assert.equal(render.input(env).configMaxBytes,undefined);
-  assert.equal(render.input({...env,NS_BOOTSTRAP_CONFIG_MAX_BYTES:'4194304'}).configMaxBytes,4194304);
-  for(const raw of ['4MiB','65535','67108865'])assert.throws(()=>render.input({...env,NS_BOOTSTRAP_CONFIG_MAX_BYTES:raw}),/BOOTSTRAP_CONFIG_MAX_BYTES_INVALID/);
+  assert(!fs.existsSync(path.join(output,'api/vault-token')));
+  assert.equal(read(output,'evaluator/ns_pgstream_generation'),generation);
   assert.throws(()=>render.input({...env,VAULT_ADDR:'http://vault:8200'}),/RENDER_VAULT_HTTPS_REQUIRED/);
-  assert.throws(()=>render.input({NS_RENDER_OUTPUT:'/state'}),/RENDER_PATHS_REQUIRED/);
 });

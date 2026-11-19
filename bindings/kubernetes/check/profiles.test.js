@@ -32,7 +32,7 @@ test('separated roles start without a tenant Job gate and have independent probe
   for (const [role, component] of Object.entries(result.value.components)) {
     const pod = (component.deployment || component.statefulset).spec.template.spec;
     const actor = pod.containers.find(c => c.name === role);
-    assert.deepEqual(actor.startupProbe.httpGet, { path: '/healthz/ready', port: 'int-role' });
+    assert.deepEqual(actor.startupProbe.httpGet, { path: '/healthz/isolation', port: 'int-role' });
     assert.deepEqual(actor.readinessProbe.httpGet, { path: '/healthz/ready', port: 'int-role' });
     assert.deepEqual(actor.livenessProbe.httpGet, { path: '/healthz/live', port: 'int-role' });
     assert.ok(!pod.initContainers.some(c => c.name === 'wait-for-jobs'));
@@ -68,8 +68,9 @@ test('only the lab client argument changes between ten and ten thousand tenants'
   for (const result of [small, large]) assert.equal(result.status, 0, result.error);
   function normalize(manifests, expectedCount) {
     const client = manifests.primer.job.spec.template.spec.containers.find(container => container.name === 'primer');
-    assert.deepEqual(client.args, ['--tenant-count', String(expectedCount)]);
-    client.args = [];
+    const count = client.env.find(row => row.name === 'NS_DEMO_TENANTS');
+    assert.equal(count.value, String(expectedCount));
+    count.value = '';
     assert.ok(!manifests.verification, 'no verification Job');
     return manifests;
   }

@@ -65,11 +65,6 @@ deployment commit. `NS_DEMO_IMAGE`, if customized, belongs in the prepared priva
 `NS_VAULT_AGENT_TOKEN_TTL` defaults to `1h`; `NS_VAULT_AGENT_TOKEN_MAX_TTL` defaults
 to `24h`. Both accept positive seconds/minutes/hours, with TTL no greater than max
 TTL and max TTL bounded to 32 days. Keep the same values on repeat commands.
-`NS_VAULT_AGENT_KEEP_ENV_TOKENS=1` is an explicit static-lab credential-retention control for the no-fallback negative test: it
-keeps previous environment credentials while selecting the sink. Registry bootstrap's
-previous API token file may remain present, but serving config names only the sink;
-its absence or refusal must not fall back to old material.
-
 The machine AppRole secret-id has no expiry and allows reuse; this private login
 credential is distinct from its bounded serving tokens. A finite secret-id can
 expire before token max TTL and prevent the Agent from logging in again. The

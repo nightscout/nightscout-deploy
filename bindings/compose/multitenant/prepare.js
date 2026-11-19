@@ -48,7 +48,7 @@ function prepare (args) {
   if (!/^[a-f0-9]{40}$/.test(source)) throw new Error('Source commit unavailable');
   fs.mkdirSync(state, {mode: 0o700});
   const write = (file, value) => fs.writeFileSync(file, value, {mode: 0o600, flag: 'wx'});
-  for (const name of ['bootstrap', 'tls', 'vault', 'ipc', 'artifacts', 'api', 'realtime', 'evaluator', 'pgstream', 'tenant-admin', 'ui', 'ops', 'edge', 'admin', 'primer', 'placement-operator']) {
+  for (const name of ['bootstrap', 'tls', 'vault', 'ipc', 'artifacts', 'api', 'realtime', 'evaluator', 'pgstream', 'tenant-admin', 'ui', 'ops', 'edge', 'admin', 'primer']) {
     fs.mkdirSync(path.join(state, name), {mode: 0o700});
   }
   write(path.join(state, 'bootstrap/postgres-password'), crypto.randomBytes(32).toString('hex') + '\n');

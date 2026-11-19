@@ -29,7 +29,7 @@ test('synthetic heartbeat creation and serving grants stay retired; reinstatemen
   assert.equal(f.sql.some(row=>/\bDROP\b/.test(row.text)),false,'NO_IMPLICIT_LEGACY_TABLE_REMOVAL');
   const inputs=f.sql.filter(row=>row.text.startsWith('INSERT INTO pgstream.webhook_subscriptions'));
   assert.equal(inputs.length,5,'FOUR_METADATA_ROUTES_PLUS_NATIVE_BOUNDARIES');
-  assert.deepEqual(f.binding.configuration({prefix:'synthetic',roles:{pgstream:'synthetic_stream'}}).bounds,{stepMs:5000,recoveryMs:30000,pendingMs:30000});
+  assert.deepEqual(require('../../lib/server/serve/deployment-settings').evaluator({}).pgstream.bounds,{stepMs:5000,recoveryMs:30000,pendingMs:30000});
  }finally{f.close();}}
  await criterion();
  await assert.rejects(criterion(text=>{const needle=" await admin.query('GRANT SELECT ON pgstream.webhook_subscriptions TO '+evaluator);";assert(text.includes(needle));return text.replace(needle,needle+"\n await admin.query('GRANT SELECT ON synthetic_clock.nightscout_heartbeat TO '+evaluator);");}),/SYNTHETIC_HEARTBEAT_SQL_RETIRED/);

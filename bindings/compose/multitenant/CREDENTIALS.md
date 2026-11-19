@@ -58,7 +58,6 @@ inherits the object owner or bootstrap administrator.
 | Realtime reader | realtime | Clinical/clock reads and its own checkpoint-column updates |
 | Evaluator reader | evaluator | Clinical/clock reads and its own checkpoint-column updates |
 | Feed hint listener | realtime/evaluator | PostgreSQL LISTEN only; no table, private function or replication grants |
-| Placement publisher | private placement-operator only | Readonly lifecycle metadata and registry enumeration; separate activity reader; no clinical/counter writes or maintenance privileges |
 | Notification outbox | evaluator | Exact durable request/head/state columns; no clinical mutation |
 | Suppression reader | evaluator | Suppression reads; no suppression or clinical writes |
 | Owner writer | tenant-admin | Subject metadata/role links/audit and owner-fence columns; no clinical writes |

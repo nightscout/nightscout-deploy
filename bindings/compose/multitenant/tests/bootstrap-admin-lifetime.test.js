@@ -35,7 +35,7 @@ for (const finishFails of [false, true]) {
     // Exercise bootstrap's real try/finally with only its external setup ports replaced.
     const modules = {
       pg: {Client},
-      './config': {layout: () => ({roles: {}, namespaces: {}}), quote: String, catalogues: () => ({}), grants: () => []},
+      './config': {layout: () => ({roles: {}, namespaces: {}}), quote: String, nativeSelection: () => ({}), catalogues: () => ({}), grants: () => []},
       './evaluator-workers': {selection: () => undefined},
       './clinical-isolation': {grants: () => []},
       '../../lib/migrations/postgres': {},

@@ -64,7 +64,7 @@ function plan (tree, source = process.env) {
     const ev = require(path.join(base, 'evaluator-workers')); add('compose.evaluator.yaml', ev.compose(ev.selection(selected), 'compose.yaml'));
   }
   files.push(path.join(here, 'compose.vault-agent.yaml'));
-  const allowed = ['NS_VAULT_AGENT_TOKEN_TTL', 'NS_VAULT_AGENT_TOKEN_MAX_TTL', 'NS_VAULT_AGENT_KEEP_ENV_TOKENS'];
+  const allowed = ['NS_VAULT_AGENT_TOKEN_TTL', 'NS_VAULT_AGENT_TOKEN_MAX_TTL'];
   const runtime = { ...selected, NS_VAULT_AGENT_DIR: here, NS_VAULT_AGENT_PROJECT: project };
   for (const key of allowed) if (source[key] !== undefined) runtime[key] = source[key];
   const options = require('./vault-agent-bootstrap').input({ ...runtime, NS_VAULT_AGENT_BOOTSTRAP: '1', NS_BOOTSTRAP_OUTPUT: '/state', VAULT_ADDR: 'https://vault:8200' });
@@ -118,7 +118,7 @@ function custody (selected, command, env) {
   if (ids.length) {
     const inventory = spawnSync('docker', ['inspect', ...ids], { encoding: 'utf8', timeout: 10000, maxBuffer: 4194304, env });
     if (inventory.error || inventory.status !== 0) throw fail('VAULT_AGENT_PROJECT_INSPECTION_FAILED');
-    const containers = JSON.parse(inventory.stdout), applications = new Set([...selected.apis, ...selected.realtime.filter(x => x !== 'socket-edge'), ...selected.evaluators, 'bootstrap', 'vault-agent-bootstrap', 'primer', 'demo', 'admin', 'feed-reader', 'tenant-admin', 'ui', 'socket-edge', 'placement-operator']);
+    const containers = JSON.parse(inventory.stdout), applications = new Set([...selected.apis, ...selected.realtime.filter(x => x !== 'socket-edge'), ...selected.evaluators, 'bootstrap', 'vault-agent-bootstrap', 'primer', 'demo', 'admin', 'feed-reader', 'tenant-admin', 'ui', 'socket-edge']);
     const allowed = new Set([...applications, 'postgres', 'vault', 'vault-agent', 'nginx']);
     for (const row of containers) {
       const labels = row.Config.Labels || {}, service = labels['com.docker.compose.service'];

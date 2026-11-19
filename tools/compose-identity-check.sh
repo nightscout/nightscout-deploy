@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Check committed deployment custody. Semantic core compatibility is measured by
-# plan-contract-check.sh against an explicit core commit, not copied helper bytes.
+# Check committed deployment custody.
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
-[ "$#" -eq 0 ] || { echo 'usage: compose-identity-check.sh (use plan-contract-check.sh for core compatibility)'; exit 64; }
+[ "$#" -eq 0 ] || { echo 'usage: compose-identity-check.sh'; exit 64; }
 [ -z "$(git -C "$here" status --porcelain -- bindings/compose/multitenant)" ] || {
   echo 'FAIL: deployment binding has uncommitted changes'; exit 1;
 }

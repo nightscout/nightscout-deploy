@@ -116,7 +116,7 @@ async function execute(command, plan, env = process.env) {
     else {
       const record = privateJson(path.join(plan.directory, 'upgrade-record.json'));
       upgrades.assertUpgradeCompatible(record,catalogues);
-      for (const catalogue of operations.admission().catalogues) await migrate('check', { namespace: catalogue.namespace, catalogue: catalogue.catalogue });
+      for (const catalogue of catalogues) await migrate('check', { namespace: catalogue.namespace, catalogue: catalogue.catalogue });
       const completeFile = path.join(plan.state, 'bootstrap/complete.json'), complete = privateJson(completeFile);
       if (complete.sourceCommit !== plan.source.sourceCommit || complete.deployCommit !== plan.source.deployCommit) throw fail('REVISION_BOOTSTRAP_BINDING_CHANGED');
       // This first supported profile retains its existing configuration contract.

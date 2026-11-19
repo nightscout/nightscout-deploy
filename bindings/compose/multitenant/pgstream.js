@@ -4,21 +4,6 @@
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const {execFileSync}=require('node:child_process');
 function enabled(env=process.env){if(env.NS_PGSTREAM!==undefined&&env.NS_PGSTREAM!=='1')throw new Error('PGSTREAM_LEGACY_MODE_RETIRED');return true;}
-function configure(docs,layout){
- enabled();
- const evaluator=docs.configs.evaluator,realtime=docs.configs.realtime;
- delete evaluator.changeFeed;delete realtime.changeFeed;
- evaluator.pgstream=configuration(layout);
- evaluator.timeIntervalMs=60000; // time-only work retains its exact durable due instants
- realtime.completedOutput={namespace:layout.namespaces.eval_checkpoint,consumer:evaluator.consumer};
- delete docs.environments.evaluator.NS_PGSTREAM_BINARY;delete docs.environments.evaluator.NS_PGSTREAM_CONFIG;
-}
-function configuration(layout){
- return {receiver:{url:'http://evaluator:19913/',trust:'network',bindHost:'0.0.0.0',maxBytes:16777216,timeoutMs:5000},transactionRows:10000,slot:layout.prefix+'_pgstream',streamRole:layout.roles.pgstream,generation:require('node:crypto').randomBytes(16).toString('hex'),
-   startupTransport:{timeoutMs:300000,retryIntervalMs:50},
-   recovery:{connectionEnv:'NS_STREAM_RECOVERY_PG',timeoutMs:5000,maxQueued:32},
-   bounds:{stepMs:5000,recoveryMs:30000,pendingMs:30000}};
-}
 function receiverURL(config){
  const receiver=require('../../lib/server/internal-api/transport').options(config.pgstream.receiver);
  if(!receiver.url)throw new TypeError('Explicit network intake receiver required');
@@ -27,7 +12,10 @@ function receiverURL(config){
 function descriptor(layout,selected){
  const workers=selected&&require('./evaluator-workers').roster(selected);
  const processAssignment=workers&&{count:workers.length,ordinal:workers.findIndex(worker=>worker.service==='evaluator'),receivers:workers.map(worker=>worker.url)};
- return {...(processAssignment?{processAssignment}:{}),consumer:'evaluator-compose-demo',namespaces:{...Object.fromEntries(['entries','treatments','devicestatus','profile','food','activity'].map(domain=>[domain,layout.namespaces[domain]])),clock:layout.namespaces.clock,checkpoint:layout.namespaces.eval_checkpoint},trustedWorker:{settings:layout.namespaces.display_settings,operatorPolicy:layout.namespaces.operator_policy,activity:layout.namespaces.control},pgstream:configuration(layout)};}
+ const settings=require('../../lib/server/serve/deployment-settings').evaluator({NS_PG_PREFIX:layout.prefix});
+ return {...settings,namespaces:settings.postgres.namespaces,...(processAssignment?{processAssignment}:{})};
+}
+
 function wire(config,runtimeURL,{subscriptionsPort=19914,routes,assignment=config.processAssignment}={}){
  if(!Number.isSafeInteger(config.pgstream?.transactionRows)||config.pgstream.transactionRows<1||config.pgstream.transactionRows>1000000||!Number.isSafeInteger(config.pgstream?.receiver?.maxBytes??16777216)||(config.pgstream?.receiver?.maxBytes??16777216)<1)throw new TypeError('Explicit positive transaction row/byte bounds required');
  if(!Number.isSafeInteger(subscriptionsPort)||subscriptionsPort<1024||subscriptionsPort>65535)throw new TypeError('Explicit subscriptions port required');
@@ -94,4 +82,4 @@ async function init({admin,adminURL,layout,config,binary='/usr/local/bin/pgstrea
  for(const target of targets)for(const route of subscribed)await admin.query('INSERT INTO pgstream.webhook_subscriptions VALUES($1,$2,$3,$4)',[
    target,route.schema,route.table,route.kind==='schema'?['B','C','M']:['I','U','D']]);
 }
-module.exports={enabled,configure,configuration,descriptor,receiverURL,wire,init};
+module.exports={enabled,descriptor,receiverURL,wire,init};

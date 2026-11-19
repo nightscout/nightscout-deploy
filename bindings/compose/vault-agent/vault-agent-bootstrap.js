@@ -21,11 +21,10 @@ function input (env = process.env) {
   if (vault.protocol !== 'https:' || vault.username || vault.password || vault.pathname !== '/' || vault.search || vault.hash) throw fail('BOOTSTRAP_VAULT_HTTPS_REQUIRED');
   const ttl = env.NS_VAULT_AGENT_TOKEN_TTL || '1h', maxTtl = env.NS_VAULT_AGENT_TOKEN_MAX_TTL || '24h';
   if (duration(ttl) > duration(maxTtl) || duration(maxTtl) > 86400 * 32) throw fail('VAULT_AGENT_TTL_INVALID');
-  if (env.NS_VAULT_AGENT_KEEP_ENV_TOKENS !== undefined && !['0', '1'].includes(env.NS_VAULT_AGENT_KEEP_ENV_TOKENS)) throw fail('VAULT_AGENT_CONTROL_INVALID');
   const replicas = env.NS_API_REPLICAS || '1'; apiNames(Number(replicas));
   if (!/^[1-9][0-9]?$/.test(replicas)) throw fail('VAULT_AGENT_API_ROSTER_INVALID');
   return { vault, output: path.resolve(env.NS_BOOTSTRAP_OUTPUT), ttl, maxTtl, replicas: Number(replicas),
-    sourceCommit: env.NS_SOURCE_COMMIT, deployCommit: env.NS_DEPLOY_COMMIT, project: env.NS_VAULT_AGENT_PROJECT, keepEnvTokens: env.NS_VAULT_AGENT_KEEP_ENV_TOKENS === '1' };
+    sourceCommit: env.NS_SOURCE_COMMIT, deployCommit: env.NS_DEPLOY_COMMIT, project: env.NS_VAULT_AGENT_PROJECT };
 }
 function directory (file) {
   const stat = fs.lstatSync(file);
@@ -75,8 +74,8 @@ function apiNames (replicas) {
   return Array.from({ length: replicas }, (_, i) => i ? 'api-' + (i + 1) : 'api');
 }
 function preflight (options) {
-  const { output, sourceCommit, deployCommit, ttl, maxTtl, keepEnvTokens, vault } = options;
-  if (!HASH.test(sourceCommit || '') || !HASH.test(deployCommit || '') || typeof keepEnvTokens !== 'boolean' || duration(ttl) > duration(maxTtl)) throw fail('VAULT_AGENT_SOURCE_REQUIRED');
+  const { output, sourceCommit, deployCommit, ttl, maxTtl, vault } = options;
+  if (!HASH.test(sourceCommit || '') || !HASH.test(deployCommit || '') || duration(ttl) > duration(maxTtl)) throw fail('VAULT_AGENT_SOURCE_REQUIRED');
   if (!/^[a-z0-9][a-z0-9_-]{0,62}$/.test(options.project || '')) throw fail('VAULT_AGENT_PROJECT_REQUIRED');
   directory(output); directory(path.join(output, 'bootstrap'));
   const imported = json(path.join(output, 'bootstrap/complete.json')), layout = json(path.join(output, 'bootstrap/layout.json'));

@@ -70,11 +70,9 @@ services:
       NS_SOURCE_COMMIT: ${NS_SOURCE_COMMIT:?Run prepare.js first}
       NS_DEPLOY_COMMIT: ${NS_DEPLOY_COMMIT:?Run prepare.js first}
       NS_API_REPLICAS: ${NS_API_REPLICAS:-1}
-      MULTITENANT_CONFIG_MAX_BYTES: ${NS_BOOTSTRAP_CONFIG_MAX_BYTES:-}
       NS_VAULT_AGENT_PROJECT: ${NS_VAULT_AGENT_PROJECT:?Select an explicit project}
       NS_VAULT_AGENT_TOKEN_TTL: ${NS_VAULT_AGENT_TOKEN_TTL:-1h}
       NS_VAULT_AGENT_TOKEN_MAX_TTL: ${NS_VAULT_AGENT_TOKEN_MAX_TTL:-24h}
-      NS_VAULT_AGENT_KEEP_ENV_TOKENS: ${NS_VAULT_AGENT_KEEP_ENV_TOKENS:-0}
     volumes:
       - ${NS_DEMO_STATE}:/state
       - ${NS_DEMO_STATE}/tls/ca.crt:/run/ns-ca/ca.crt:ro

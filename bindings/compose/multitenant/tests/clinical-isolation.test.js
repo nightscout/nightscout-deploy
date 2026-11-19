@@ -28,39 +28,6 @@ test('REST admission is opt-in: unset or empty selects no limit; connection defa
   assert.deepEqual(isolation.postgresArguments(isolation.selection({})), ['-c', 'max_connections=140', '-c', 'reserved_connections=40']);
 });
 
-test('api process environments: no limiter by default; only operator-selected values, which the core parser accepts', () => {
-  const layout = plan.layout(), urls = Object.fromEntries(Object.keys(layout.roles).map(key => [key, 'postgres://' + layout.roles[key] + ':synthetic@postgres:5432/synthetic']));
-  const coreSettings = require('../../../lib/server/serve/rest-admission').settings;
-  const names = Object.values(isolation.NAMES).filter(name => name.startsWith('NS_API_REST_'));
-  const previous = Object.fromEntries(['NS_API_REPLICAS', ...names].map(name => [name, process.env[name]]));
-  const restore = () => { for (const [name, value] of Object.entries(previous)) { if (value === undefined) delete process.env[name]; else process.env[name] = value; } };
-  const render = () => {
-    const docs = plan.documents({layout, urls, tokens: [], publicKeys: [], managementKeys: [], vaultAddress: 'https://vault:8200'});
-    return {docs, apis: Object.keys(docs.environments).filter(name => name === 'api' || /^api-\d+$/.test(name))};
-  };
-  try {
-    for (const replicas of ['1', '3']) {
-      process.env.NS_API_REPLICAS = replicas;
-      for (const name of names) delete process.env[name];
-      let {docs, apis} = render();
-      assert(apis.length >= Number(replicas));
-      for (const name of apis) {
-        assert(!Object.keys(docs.environments[name]).some(key => key.startsWith('NS_API_REST_')), name + ' renders no REST admission value by default');
-        assert.equal(coreSettings(docs.environments[name]), null, name + ' is unbounded by default');
-      }
-      process.env.NS_API_REST_CONCURRENCY = '64'; process.env.NS_API_REST_QUEUE = '32';
-      ({docs, apis} = render());
-      for (const name of apis) {
-        assert.deepEqual(Object.keys(docs.environments[name]).filter(key => key.startsWith('NS_API_REST_')).sort(), ['NS_API_REST_CONCURRENCY', 'NS_API_REST_QUEUE'], name);
-        assert.deepEqual({...coreSettings(docs.environments[name])}, {concurrency: 64, queue: 32, queueTimeoutMs: 1000, retryAfterSeconds: 1}, name);
-      }
-      for (const name of ['realtime', 'evaluator', 'tenant-admin']) {
-        assert(!Object.keys(docs.environments[name]).some(key => key.startsWith('NS_API_REST_')), name + ' is not REST-admission limited');
-      }
-    }
-  } finally { restore(); }
-});
-
 test('reserved-connection grants name clinical roles and never a REST-serving or shared role', () => {
   const layout = plan.layout(), grants = isolation.grants(layout);
   const named = grants.map(sql => /^GRANT pg_use_reserved_connections TO "([a-z_]+)"$/.exec(sql)?.[1]);
