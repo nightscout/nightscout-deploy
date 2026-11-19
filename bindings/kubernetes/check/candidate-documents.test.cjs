@@ -192,27 +192,41 @@ test('network projection preserves source authority and uses real role listener 
 });
 
 
-test('eight-tenant bootstrap operator without a participant manifest preserves authority through network projection', async () => {
+test('bootstrap files are independent of the lab population and preserve operator authority through network projection', async t => {
+  // Hold the randomly generated native stream generation constant across the two renders.
+  const crypto = require('node:crypto'), randomBytes = crypto.randomBytes;
+  t.mock.method(crypto, 'randomBytes', length => length === 16 ? Buffer.alloc(16, 1) : randomBytes(length));
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kube-bootstrap-'));
   const originalTenants = process.env.NS_DEMO_TENANTS;
   const native = binding('native-lifecycle');
   const install = native.install;
   try {
-    process.env.NS_DEMO_TENANTS = '8';
+    process.env.NS_DEMO_TENANTS = '10';
     const config = binding('config'), layout = config.layout();
     const urls = Object.fromEntries(Object.entries(layout.roles).map(([name, role]) =>
       [name, 'postgres://' + role + ':synthetic@postgres:5432/nightscout_compose_test']));
     // Keep the actual bootstrap's file writers, parsers and operator constructor.
     // Only external SQL installation and Vault requests are inert in this fixture.
     native.install = async () => {};
-    await binding('registry-bootstrap').finish({
-      options: { output: root, uid: process.getuid(), gid: process.getgid(), vault: new URL('https://vault:8200'),
+    const finish = output => binding('registry-bootstrap').finish({
+      options: { output, uid: process.getuid(), gid: process.getgid(), vault: new URL('https://vault:8200'),
         sourceCommit: contract.coreCommit, deployCommit: contract.deployCommit },
       request: async () => ({ auth: { client_token: 'synthetic' } }),
       rootToken: 'synthetic', layout, roleURLs: urls,
       writePrivate: binding('bootstrap').writePrivate,
       nativeSource: { system_id: '123', timeline: 1, database: 'nightscout_compose_test', slot: layout.prefix + '_pgstream' },
     });
+    await finish(root);
+    const larger = fs.mkdtempSync(path.join(os.tmpdir(), 'kube-larger-'));
+    try {
+      process.env.NS_DEMO_TENANTS = '10000';
+      await finish(larger);
+      const inventory = dir => fs.readdirSync(dir, { recursive: true }).filter(name => fs.statSync(path.join(dir, name)).isFile()).sort();
+      assert.deepEqual(inventory(root), inventory(larger));
+      for (const name of inventory(root)) {
+        assert.deepEqual(fs.readFileSync(path.join(root, name)), fs.readFileSync(path.join(larger, name)), name);
+      }
+    } finally { fs.rmSync(larger, { recursive: true, force: true }); }
     binding('bootstrap').writePrivate(path.join(root, 'bootstrap/vault-init.json'), { root_token: 'synthetic' });
     const originalFetch = globalThis.fetch;
     try {
@@ -225,7 +239,9 @@ test('eight-tenant bootstrap operator without a participant manifest preserves a
     const operatorFile = path.join(root, 'ops/config.json');
     const original = fs.readFileSync(operatorFile);
     const operator = JSON.parse(original);
-    assert.equal(operator.tenants.length, 8);
+    assert.equal(Object.hasOwn(operator, 'tenants'), false);
+    assert.equal(Object.hasOwn(operator.control, 'locks'), false);
+    assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(path.join(root, 'primer/config.json'))), 'seed'), false);
     assert.equal(Object.hasOwn(operator.control, 'participants'), false);
     const network = require('../ops/network-documents.cjs');
     const expected = hold(root, contract, fixture('synthetic', 'bootstrap-eight'), 'separate-k1');

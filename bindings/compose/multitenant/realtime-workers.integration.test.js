@@ -9,7 +9,7 @@ test('two API/two realtime documents pass actual product parsers with exact plac
   try {
     for (const name of ['lib','migrations','node_modules']) fs.symlinkSync(path.join(core,name),path.join(scratch,name),'dir');
     const binding = path.join(scratch,'deploy/multitenant'); fs.mkdirSync(binding,{recursive:true});
-    for (const name of ['config.js','registry-plan.js','replicas.js','realtime-workers.js','evaluator-workers.js','pgstream.js','ui.js','ui-registry.js']) fs.copyFileSync(path.join(__dirname,name),path.join(binding,name));
+    for (const name of ['config.js','demo-tenants.js','registry-plan.js','replicas.js','realtime-workers.js','evaluator-workers.js','pgstream.js','ui.js','ui-registry.js']) fs.copyFileSync(path.join(__dirname,name),path.join(binding,name));
     const plan = require(path.join(binding,'config')), workers = require(path.join(binding,'realtime-workers'));
     const layout = plan.layout(), map = workers.initial({ workers: 2, shards: 8 });
     const urls = Object.fromEntries(Object.keys(layout.roles).map(name => [name,'postgres://' + layout.roles[name] + ':synthetic@postgres/nightscout_compose_test']));

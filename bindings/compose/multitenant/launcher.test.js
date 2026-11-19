@@ -19,11 +19,12 @@ test('selected launcher applies the same two fixed-roster overlays and starts ev
     execFileSync('bash',['demo.sh','up'],options);
     const calls=fs.readFileSync(record,'utf8').trim().split('\n').map(JSON.parse);
     for(const call of calls){assert.equal(call[call.indexOf('--project-name')+1],'nightscout-multitenant-demo');assert.ok(call.includes(path.join(state,'compose.replicas.yaml')));assert.ok(call.includes(path.join(state,'compose.realtime.yaml')));assert.ok(call.includes(path.join(state,'compose.evaluator.yaml')));}
-    const final=calls.at(-1);for(const service of ['realtime','realtime-2','socket-edge','evaluator','evaluator-2','pgstream','tenant-admin','ui','nginx'])assert.ok(final.includes(service),service);
+    const final=calls.find(call=>call.includes('up')&&call.includes('nginx'));for(const service of ['realtime','realtime-2','socket-edge','evaluator','evaluator-2','pgstream','tenant-admin','ui','nginx'])assert.ok(final.includes(service),service);
     assert.ok(calls.find(call=>call.includes('api')&&call.includes('api-2')),'both API instances start before final roles');
     assert(!calls.some(call=>call.some(argument=>argument.endsWith('evaluator-pool.js'))),'native launch never configures pool membership');
     const verification=calls.findIndex(call=>call.includes('deploy/multitenant/platform-verify.js'));
-    assert(verification>calls.findIndex(call=>call.includes('deploy/multitenant/commission-restore.js')));
+    assert(verification>=0);
+    assert(!calls.some(call=>call.includes('provision')||call.includes('prime')));
     assert(verification<calls.findIndex(call=>call.includes('up')&&call.includes('api')));
     fs.writeFileSync(record,'');options.env.NS_CONTROL_REFUSE_PLATFORM='1';
     assert.throws(()=>execFileSync('bash',['demo.sh','up'],options),error=>error.status===23);
@@ -34,6 +35,8 @@ test('selected launcher applies the same two fixed-roster overlays and starts ev
     delete options.env.NS_CONTROL_REFUSE_PLATFORM;
     execFileSync('bash',['demo.sh','up'],options);
     assert(JSON.parse(fs.readFileSync(record,'utf8').trim().split('\n').at(-1)).includes('nginx'));
+    execFileSync('bash',['demo.sh','prime'],options);
+    assert(JSON.parse(fs.readFileSync(record,'utf8').trim().split('\n').at(-1)).includes('prime'));
     fs.appendFileSync(path.join(dir,'.env'),'NS_DEMO_PROJECT=ns-admission-0123456789abcdef\n');
     execFileSync('bash',['demo.sh','config'],options);
     const selected=JSON.parse(fs.readFileSync(record,'utf8').trim().split('\n').at(-1));assert.equal(selected[selected.indexOf('--project-name')+1],'ns-admission-0123456789abcdef');

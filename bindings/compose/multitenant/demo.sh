@@ -44,18 +44,19 @@ case "${1:-}" in
     node build.js --check-image
     "${compose[@]}" --profile ops run --rm bootstrap
     "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 90 admin
-    "${compose[@]}" --profile ops run --rm primer node deploy/multitenant/prime.js provision
-    "${compose[@]}" --profile ops run --rm --no-deps bootstrap node deploy/multitenant/commission-restore.js
     "${compose[@]}" --profile ops run --rm --no-deps primer node deploy/multitenant/platform-verify.js
     replicas=$(node -e 'const fs=require("node:fs"),lines=fs.readFileSync(".env","utf8").split("\n");const n=Number((lines.find(x=>x.startsWith("NS_API_REPLICAS="))||"NS_API_REPLICAS=1").slice(16));if(!Number.isSafeInteger(n)||n<1||n>16)process.exit(1);console.log(Array.from({length:n},(_,i)=>i?"api-"+(i+1):"api").join(" "));')
-    "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 900 $replicas
+    "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 900 $replicas $realtime_services $evaluator_services pgstream tenant-admin ui nginx
+    ;;
+  prime|demo)
+    node build.js --check-image
+    "${compose[@]}" --profile ops run --rm --no-deps primer node deploy/multitenant/prime.js provision
+    "${compose[@]}" --profile ops run --rm --no-deps -e NS_DEMO_TENANTS="${NS_DEMO_TENANTS:-2}" bootstrap node deploy/multitenant/commission-restore.js
     "${compose[@]}" --profile ops run --rm --no-deps primer node deploy/multitenant/prime.js prime
     node publish-primer.js "$(dirname "$replica_file")"
-    exec "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 900 $realtime_services $evaluator_services pgstream tenant-admin ui nginx
-    ;;
-  demo)
-    node build.js --check-image
-    exec "${compose[@]}" --profile ops run --rm --no-deps demo
+    if [[ "$1" = demo ]]; then
+      exec "${compose[@]}" --profile ops run --rm --no-deps demo
+    fi
     ;;
   pgstream-rebootstrap)
     [ "$#" -eq 2 ] || { echo "Usage: demo.sh pgstream-rebootstrap /absolute/private-plan.json" >&2; exit 64; }

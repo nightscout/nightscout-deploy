@@ -1,13 +1,13 @@
 'use strict';
 
-// Two `done` containers in the app image.
+// Bootstrap, verification and private client-result export.
 //
 // `hold` (provision Job): after the source bootstrap and Vault Kubernetes auth
 // init containers exit 0, project the separate-K1 network addresses, publish a
 // public expected-verification record, signal ready and keep the private state
 // available until the publisher acknowledges export.
 //
-// `verify` (primer Job): ask the private admin to run the source platform
+// `verify` (verification Job): ask the private admin to run the source platform
 // verification and publish its receipt. Serving roles start only after this
 // passes; each serving role still checks its own proof and fails closed.
 //
@@ -91,10 +91,14 @@ async function main() {
     waitForExport(root);
     return;
   }
+  if (process.argv[2] === 'export-client') {
+    waitForExport('/run/ns-client');
+    return;
+  }
   if (process.argv[2] !== 'verify') throw fail('K8S_CANDIDATE_USAGE');
   const root = '/run/ns-primer';
-  await verify(app, root, identity, contract);
-  waitForExport(root);
+  const proof = await verify(app, root, identity, contract);
+  console.log(JSON.stringify(proof));
 }
 
 // Codes only: messages can carry private document detail.

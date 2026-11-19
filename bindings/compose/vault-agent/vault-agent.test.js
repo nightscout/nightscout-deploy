@@ -99,14 +99,17 @@ test('role policy permits serving operations only; identity includes exact fixed
   assert.throws(() => bootstrap.policyRules({ mount: '../bad', prefix: 'synthetic' }, 'registry'));
   assert.throws(() => bootstrap.apiNames(0)); assert.throws(() => bootstrap.apiNames(17));
 });
-test('shipping plan orders provisioning/commission before API, Agent before all APIs, prime/publish before remaining exact workers', () => {
+test('shipping plan verifies and starts serving workers before the independent lab client', () => {
   const selected = { base: '/synthetic/core/deploy/multitenant', project: 'synthetic-agent', envFile: '/synthetic/.env', files: ['base.yaml'], stdin: 'services: {}',
     apis: ['api', 'api-2', 'api-3', 'api-4'], realtime: ['realtime', 'realtime-2', 'socket-edge'], evaluators: ['evaluator', 'evaluator-2'], state: '/synthetic/state' };
   const steps = launch.commands(selected, 'up').map(row => row.args.join(' '));
-  assert.ok(steps[4].includes('prime.js provision')); assert.ok(steps[5].includes('commission-restore.js'));
-  assert.ok(steps[7].endsWith('vault-agent')); assert.ok(steps[8].endsWith('api api-2 api-3 api-4'));
-  assert.ok(steps[9].includes('prime.js prime')); assert.ok(steps[10].includes('publish-primer.js'));
-  assert.ok(steps[11].endsWith('realtime realtime-2 socket-edge evaluator evaluator-2 tenant-admin ui nginx'));
+  assert.ok(steps[4].includes('platform-verify.js'));
+  assert.ok(steps[6].endsWith('vault-agent'));
+  assert.ok(steps[7].endsWith('api api-2 api-3 api-4 realtime realtime-2 socket-edge evaluator evaluator-2 pgstream tenant-admin ui nginx'));
+  assert.equal(steps.length,8);
+  const lab = launch.commands(selected, 'prime').map(row => row.args.join(' '));
+  assert.ok(lab[0].includes('prime.js provision')); assert.ok(lab[1].includes('commission-restore.js'));
+  assert.ok(lab[2].includes('prime.js prime')); assert.ok(lab[3].includes('publish-primer.js'));
 });
 
 test('image build and read-only commands do not create runtime ownership state', () => {

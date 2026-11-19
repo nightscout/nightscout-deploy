@@ -44,13 +44,9 @@ must match their committed generators exactly. An explicitly selected evaluator
 roster requires the binding's `evaluator-workers.js` and `compose.evaluator.yaml`;
 older bindings refuse that selection instead of silently running one worker.
 
-`up` checks the paired image, starts infrastructure, bootstraps private operator
-state, starts admin/feed, provisions through the admin API, commissions restore,
-provisions the AppRole, starts Agent, then starts every API. It primes through DATA
-APIs, publishes the private primer handoff, and starts the selected realtime/
-evaluator workers, owner role, UI and edge. It writes no SQL settings seed.
-
-`bootstrap` performs infrastructure and private bootstrap/Agent provisioning only.
+`up` checks the paired image, starts the stores and private admin, and verifies the platform.
+It commissions the AppRole, starts Vault Agent, then starts the selected serving workers.
+Use `prime` for tenant provisioning, restore commissioning and synthetic DATA setup.
 `demo`, `status`, `stop`, `down` and explicit `destroy` retain their usual meanings;
 `destroy` removes only the explicitly owned project's volumes. A private launch
 receipt pins source/deployment/project/state/roster/TTL identity before the first

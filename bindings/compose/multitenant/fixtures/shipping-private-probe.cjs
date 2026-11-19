@@ -5,7 +5,7 @@ const fs=require('node:fs'),http=require('node:http'),assert=require('node:asser
 const clients=require('/opt/app/lib/server/internal-api/clients');
 const operator=require('/opt/app/deploy/multitenant/restore');
 const internal=require('/opt/app/lib/server/internal-api/listener-config').observer(process.env);
-const config=operator.loadConfig(),mode=process.env.NS_SHIP_PROBE;
+const config=operator.loadDemoConfig(),mode=process.env.NS_SHIP_PROBE;
 const proofPayloads=['cold','alarm-a','alarm-b'].includes(mode)?require('/tmp/replacement-probe-contract.cjs').expected(process.env.NS_SHIP_PROBE_NONCE,require('/opt/app/lib/tenant-notifications/contract').effectIdentity):null;
 const map=which=>require('/opt/app/lib/realtime-placement').load({...process.env,MULTITENANT_REALTIME_PLACEMENT:'/run/ns-placement/'+which+'.json'},{internal});
 async function call(origin,host,path){return new Promise((resolve,reject)=>{const request=http.get(origin+path,{headers:{host},timeout:2000},response=>{const chunks=[];response.on('data',c=>chunks.push(c));response.on('end',()=>resolve({status:response.statusCode,body:Buffer.concat(chunks).toString()}));});request.on('error',()=>reject(new Error('PRIVATE_HTTP_UNAVAILABLE')));request.on('timeout',()=>request.destroy());});}

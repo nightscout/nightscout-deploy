@@ -29,3 +29,19 @@ test('existing capacity refuses dynamic storage, public edge and missing existin
   }
   assert.equal(render({storage:{mode:'disposable'}}).status,0,'restored profile green');
 });
+
+test('only the lab client argument changes between ten and ten thousand tenants', () => {
+  const small = render({ tenantCount: 10 }), large = render({ tenantCount: 10000 });
+  for (const result of [small, large]) assert.equal(result.status, 0, result.error);
+  function normalize(manifests, expectedCount) {
+    const client = manifests.primer.job.spec.template.spec.initContainers.find(container => container.name === 'primer');
+    assert.deepEqual(client.args, ['--tenant-count', String(expectedCount)]);
+    client.args = [];
+    const verification = manifests.verification.job.spec.template.spec;
+    assert.deepEqual(verification.initContainers.map(container => container.name), ['install-config']);
+    assert.ok(verification.containers[0].command.includes('verify'));
+    assert.ok(!manifests.primer.job.spec.template.spec.containers[0].command.includes('verify'));
+    return manifests;
+  }
+  assert.deepEqual(normalize(small.value, 10), normalize(large.value, 10000));
+});

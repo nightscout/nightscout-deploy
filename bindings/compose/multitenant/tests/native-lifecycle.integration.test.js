@@ -68,6 +68,13 @@ test('actual tiny native generated provisioning, export, logical restore and pri
   const withAdmin=async fn=>fn(admin);
   const rows=async(tenant)=>{const result={};for(const entry of raw.catalogues)for(const name of entry.tables)result[entry.kind+'.'+name]=require('../../../lib/tenant-lifecycle/artifact').digestRows((await admin.query('SELECT * FROM '+q(raw.namespaces[entry.kind])+'.'+q(name)+' WHERE tenant_id=$1',[tenant])).rows);return result;};
   const beforeB=await rows(plan.B),queues=async()=>{const result={};for(const name of ['tenant_notification_heads','tenant_notification_requests','tenant_notification_state'])result[name]=require('../../../lib/tenant-lifecycle/artifact').digestRows((await admin.query('SELECT * FROM '+table('outbox',name)+' WHERE tenant_id=$1',[plan.A])).rows);return result;},queueBefore=await queues();
+  assert.equal(raw.version,3);assert.equal(Object.hasOwn(raw,'tenants'),false);assert.equal(Object.hasOwn(raw.control,'locks'),false);
+  const grant=table('control','tenant_lifecycle_restore_authority');
+  const allowA=active=>admin.query('UPDATE '+grant+' SET active=$2 WHERE tenant_id=$1 AND role_oid=$3::regrole::oid',[plan.A,active,l.roles.operator]);
+  await allowA(false);
+  await assert.rejects(bridge.capture(config,plan.A,env),{code:'COMPOSE_OPERATOR_TENANT_REFUSED'});
+  await bridge.capture(config,plan.B,env);
+  await allowA(true);
   const artifact=await bridge.capture(config,plan.A,env);
   const mutate=async()=>withAdmin(async client=>{await client.query('BEGIN');try{await client.query("SELECT set_config('app.current_tenant_id',$1,true)",[plan.A]);await client.query('UPDATE '+table('entries','entries')+" SET doc=jsonb_set(doc,'{value}','99'::jsonb) WHERE tenant_id=$1",[plan.A]);await client.query('COMMIT');}catch(e){await client.query('ROLLBACK');throw e;}});
   await mutate();const restored=await bridge.restore(config,artifact,env);assert.equal(restored.result.tables,7);assert.deepEqual(await queues(),queueBefore);assert.deepEqual(await rows(plan.B),beforeB);

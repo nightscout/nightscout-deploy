@@ -7,7 +7,7 @@ const fs = require('node:fs'), path = require('node:path'), http = require('node
 const fail = code => Object.assign(new Error(code), { code });
 function load(file) {
   const config = JSON.parse(fs.readFileSync(file, 'utf8'));
-  if (config.version !== 1 || !Array.isArray(config.seed) || !config.seed.length) throw fail('PRIMER_CONFIG_INVALID');
+  if (config.version !== 1 || (config.seed !== undefined && (!Array.isArray(config.seed) || !config.seed.length))) throw fail('PRIMER_CONFIG_INVALID');
   for (const raw of [config.adminOrigin, config.apiOrigin]) { const url = new URL(raw); if (url.protocol !== 'http:' || url.username || url.password || url.search || url.hash || url.pathname !== '/') throw fail('PRIMER_ORIGIN_INVALID'); }
   if (typeof config.ownerConsumer !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(config.ownerConsumer)) throw fail('PRIMER_CONFIG_INVALID');
   return config;
@@ -74,8 +74,15 @@ function privateWrite(file, value) {
   const parent = fs.openSync(path.dirname(file), 'r');
   try { fs.fsyncSync(parent); } finally { fs.closeSync(parent); }
 }
-async function provision(config, directory) {
-  return withPrimerLock(directory, () => provisionOwned(config, directory));
+async function provision(config, directory, { tenantCount } = {}) {
+  let seed = config.seed;
+  if (seed && tenantCount !== undefined) throw fail('PRIMER_COUNT_CONFLICTS_WITH_SEED');
+  if (!seed) {
+    const demo = require('./demo-tenants');
+    const count = demo.tenantCount(tenantCount === undefined ? process.env : { NS_DEMO_TENANTS: tenantCount });
+    seed = demo.tenantIds(count).map((id, index) => ({ id, hosts: [demo.tenantAlias(index)], issueRootSecret: true }));
+  }
+  return withPrimerLock(directory, () => provisionOwned({ ...config, seed }, directory));
 }
 async function provisionOwned(config, directory) {
   const file = path.join(directory, 'provisioned.json');
@@ -236,12 +243,14 @@ function parsePrimeOptions(values) {
 }
 async function main() {
   const [operation, ...values] = process.argv.slice(2), directory = process.env.NS_PRIMER_STATE || '/run/ns-primer';
-  if (!['provision','prime','add'].includes(operation) || (operation === 'provision' && values.length)) throw fail('PRIMER_OPERATION_INVALID');
-  const options = parsePrimeOptions(values), controller = new AbortController(); let stopped;
+  if (!['provision','prime','add'].includes(operation)) throw fail('PRIMER_OPERATION_INVALID');
+  if (operation === 'provision' && values.length && (values.length !== 2 || values[0] !== '--tenant-count')) throw fail('PRIMER_OPERATION_INVALID');
+  const options = operation === 'provision' ? { tenantCount: values[1] } : parsePrimeOptions(values);
+  const controller = new AbortController(); let stopped;
   const interrupt = () => { stopped = 130; controller.abort(); }, terminate = () => { stopped = 143; controller.abort(); };
   process.once('SIGINT', interrupt); process.once('SIGTERM', terminate);
   try {
-    const config = load(path.join(directory, 'config.json'));
+    const config = load(process.env.NS_PRIMER_CONFIG || path.join(directory, 'config.json'));
     const result = await ({ provision, prime, add }[operation](config, directory, { ...options, signal: controller.signal }));
     if (result.state === 'synthetic-data-primed') console.error(JSON.stringify({ phase: 'primer', event: 'completed', atMs: Date.now(), tenants: result.tenants }));
     console.log(JSON.stringify(result));

@@ -38,8 +38,7 @@ function prepare (args) {
   const diagnostics = require('./diagnostics').selection();
   const evaluator = require('./evaluator-workers'), selectedEvaluator = evaluator.selection();
   if (selectedRealtime && selectedEvaluator && selectedRealtime.workers !== selectedEvaluator.workers) throw new TypeError('Static role counts must agree');
-  const evaluatorSeed = selectedEvaluator && require('./config').tenantIds();
-  if (selectedEvaluator) evaluator.assertSeed(selectedEvaluator, evaluatorSeed);
+  if (selectedEvaluator) evaluator.assertSeed(selectedEvaluator);
   const leaseSessions = require('./registry-plan').leaseSessions();
   require('./edge').policy();
   const clinicalIsolation = require('./clinical-isolation').selection();
@@ -70,7 +69,7 @@ function prepare (args) {
   }
   if (selectedEvaluator) {
     for (const service of evaluator.services(selectedEvaluator).slice(1)) fs.mkdirSync(path.join(state, service), {mode: 0o700});
-    write(path.join(state, 'compose.evaluator.yaml'), evaluator.compose(selectedEvaluator, path.join(base, 'compose.yaml'), evaluatorSeed.length));
+    write(path.join(state, 'compose.evaluator.yaml'), evaluator.compose(selectedEvaluator, path.join(base, 'compose.yaml')));
   }
   write(path.join(state, 'edge/nginx.conf'), require('./edge').render(fs.readFileSync(path.join(base, 'nginx.compose.conf'), 'utf8'), { replicas: apiReplicas, realtime: !!selectedRealtime }));
   write(path.join(state, 'compose.replicas.yaml'), replicas.compose(apiReplicas, path.join(base, 'compose.yaml'))+require('./networks').render(selectedNetworks));

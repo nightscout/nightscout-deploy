@@ -51,18 +51,17 @@ both (`org.opencontainers.image.revision`, `org.nightscout.deploy.revision`).
 
 `bootstrap` prepares infrastructure only: schemas, grants, role configurations,
 the private admin service and maintained pgstream capture metadata. `up` starts the private admin,
-provisions the seed through its versioned API, explicitly commissions the private
-restore operator for that synthetic cohort, verifies platform state through the
-private admin API, starts the API instances, and runs
-a separate lab-priming API client before starting realtime/evaluator and ingress.
+verifies platform state and starts every serving role. Run `./demo.sh prime` to populate the lab.
+The `demo` command also runs this step before the two-tenant demonstration. The lab client provisions synthetic
+tenants through admin. A separate commissioning step grants restore access, then the client creates
+synthetic DATA subjects and samples.
 The primer has no PostgreSQL or Vault credential. `commission-restore.js` is a
 separate private DDL-operator step: it provisions current role-OID restore authority
 only for active synthetic seed tenants, refuses existing revocations, and grants
 no serving identity authority to modify that relation. The admin service composes
 ownership operations and durable connector-source configuration on separate
 database identities. Connector definitions contain secret references, never
-plaintext endpoint credentials. The private restore operator uses the same exact registry cohort label as the
-serving participants; the synthetic seed list selects demonstration tenants.
+plaintext endpoint credentials. The private operator resolves a requested tenant’s current lock key from PostgreSQL. The registry-backed operator format requires an active grant for that tenant and role for export, restore, and recovery. The two-tenant lab demonstration selects its synthetic clients independently.
 The separate pgstream service owns capture through its registered stream login.
 The platform restarts that worker independently; its wire credentials are mounted
 only in the pgstream container. Evaluators accept the private stream at their
@@ -130,8 +129,7 @@ checks the template, private listener exposure and readiness dependencies.
 A failed bootstrap prints one JSON line on stderr: the stable `error` code, the
 underlying `detail` message and the top stack frames (`at`). Connection-string
 credentials, password clauses, Vault tokens, JWT-shaped strings and long hex
-runs are redacted from both. Generated role documents (configuration,
-environment, admission) are written as compact JSON. For large tenant counts,
+runs are redacted from both. Generated role configurations and environments use compact JSON. The optional
 `NS_BOOTSTRAP_CONFIG_MAX_BYTES` (off when empty; 65,536 to 67,108,864) is passed
 by Compose to every role container, and to the ownership overlay's admin, as
 core's `MULTITENANT_CONFIG_MAX_BYTES`, and the bootstrap validates the files it
@@ -487,8 +485,7 @@ native test is UNMEASURED, not deployment acceptance.
 Prepare fresh synthetic state with a core revision that accepts
 `NS_PGSTREAM_EVALUATOR_PROCESSES`. Set `NS_EVALUATOR_WORKERS` during preparation
 to opt in to a fixed roster of 1–8 processes. Leaving it unset keeps the
-standalone evaluator. This example provisions two synthetic tenants before
-starting their two evaluator processes.
+standalone evaluator. This example starts two evaluator processes and provisions two synthetic tenants.
 
 ```bash
 NS_EVALUATOR_WORKERS=2 ./demo.sh prepare
@@ -497,10 +494,9 @@ NS_EVALUATOR_WORKERS=2 ./demo.sh prepare
 ./demo.sh up
 ```
 
-Each process owns a nonempty tenant slice selected by core's SHA-256 modulo
-rule. Preparation refuses a seed count that leaves a slice empty. Set
-`NS_DEMO_TENANTS` during preparation when the selected count requires more
-seed tenants. The generated overlay binds both counts. Each evaluator has its
+Each process owns a tenant slice selected by core's SHA-256 modulo rule. An idle
+slice can receive a newly provisioned tenant. Set `NS_DEMO_TENANTS` when running the lab
+client to select the synthetic population. Each evaluator has its
 own private listener and readiness identity, one CPU and 1 GiB of memory.
 The producer has one CPU and 512 MiB. Evaluator and operation pools are
 bounded at four and eight connections per process respectively. PostgreSQL

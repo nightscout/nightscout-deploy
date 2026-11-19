@@ -11,7 +11,8 @@
 //   ui, edge (Deployments)         the shipped pages and the reference nginx (consumer entry)
 //   postgres, vault (StatefulSets) the backing stores, same image digests as Compose
 //   provision (Job)                source bootstrap -> Vault Kubernetes auth -> document proof
-//   primer (Job)                   private admin tenant provision and platform verification
+//   verification (Job)             private admin platform verification
+//   primer (Job)                   optional synthetic tenant provisioning through admin
 //
 // No credential is rendered. Every private document reaches a Pod through a Secret that
 // scripts/secrets.sh creates at apply time from generated or provisioned material; this file
@@ -66,13 +67,14 @@
       serviceType: 'ClusterIP',
       port: 8080,
     },
-    imageDeployCommit: (import '../../assets/source-contract.json').deployCommit, // app bytes, not binding commit
+    imageDeployCommit: null,  // supplied with the selected application image
     bindingIdentity: 'UNSET',
     runId: 'synthetic-preview',
     profile: 'standard',
     applicationTopology: 'cohort',
     resourceAccounting: 'limits-v1',
     tenantCount: 2,
+    primerStorage: '64Mi',  // private client results, separate from the configuration Secret
     provisionDeadlineSeconds: 900,
     imagePullSecrets: [],
     placement: {},
@@ -650,7 +652,7 @@
         data: {
           'vault-kubernetes-auth.js': importstr '../../ops/vault-kubernetes-auth.js',
           'candidate-documents.cjs': importstr '../../ops/candidate-documents.cjs',
-          'source-contract.json': importstr '../../assets/source-contract.json',
+          'source-contract.json': std.manifestJson({coreCommit: c.sourceCommit, deployCommit: if c.imageDeployCommit == null then c.sourceCommit else c.imageDeployCommit}),
           'network-documents.cjs': importstr '../../ops/network-documents.cjs',
         },
       },
@@ -705,7 +707,6 @@
                 step('bootstrap', ['node', 'deploy/multitenant/bootstrap.js'], [
                   { name: 'NS_COMPOSE_BOOTSTRAP', value: '1' },
                   { name: 'NS_PGSTREAM', value: '1' },
-                  { name: 'NS_DEMO_TENANTS', value: std.toString(c.tenantCount) },
                   { name: 'NS_API_REPLICAS', value: '1' },
                   { name: 'NS_POSTGRES_HOST', value: 'postgres' },
                   { name: 'NS_POSTGRES_DATABASE', value: 'nightscout_compose_test' },
@@ -747,37 +748,44 @@
       },
     },
 
-    // Explicit tenant provisioning through the source-owned admin API. Apply/unsuspend
-    // after document export and admin readiness. Verify before starting the serving cohort.
-    primer: {
+    // Verification needs only the database-wide admin proof. The lab client has
+    // separate custody of the private results returned by tenant provisioning.
+    local clientJob(jobName) = {
       job: {
-        apiVersion: 'batch/v1', kind: 'Job', metadata: meta('primer', 'operator'),
+        apiVersion: 'batch/v1', kind: 'Job', metadata: meta(jobName, 'operator'),
         spec: { suspend: true, backoffLimit: 0, activeDeadlineSeconds: c.provisionDeadlineSeconds,
           template: { metadata: { labels: labels('operator') }, spec: {
             restartPolicy: 'Never', automountServiceAccountToken: false, enableServiceLinks: false,
             securityContext: podSecurity,
-            initContainers: [installConfig(['primer']), { name: 'primer', image: c.images.app,
+            local provisioning = jobName == 'primer',
+            local config = { name: 'config-primer', mountPath: '/run/ns-primer', subPath: 'd' },
+            local result = { name: 'client-state', mountPath: '/run/ns-client' },
+            initContainers: [installConfig(['primer'])] + (if provisioning then [{
+              name: 'primer', image: c.images.app, securityContext: hardened,
               command: ['node', 'deploy/multitenant/prime.js', 'provision'],
-              env: [{ name: 'NS_PRIMER_STATE', value: '/run/ns-primer' }],
-              securityContext: hardened,
-              volumeMounts: [{ name: 'config-primer', mountPath: '/run/ns-primer', subPath: 'd' }, tmpMount],
-            }],
+              args: ['--tenant-count', std.toString(c.tenantCount)],
+              env: [{ name: 'NS_PRIMER_STATE', value: result.mountPath },
+                    { name: 'NS_PRIMER_CONFIG', value: '/run/ns-primer/config.json' }],
+              volumeMounts: [config, result, tmpMount],
+            }] else []),
             containers: [{ name: 'done', image: c.images.app, securityContext: hardened,
-              command: ['node', '/run/ns-overlay/candidate-documents.cjs', 'verify'],
+              command: ['node', '/run/ns-overlay/candidate-documents.cjs', if provisioning then 'export-client' else 'verify'],
               env: [
                 { name: 'NS_FIXTURE_NAMESPACE', valueFrom: { fieldRef: { fieldPath: 'metadata.namespace' } } },
                 { name: 'NS_FIXTURE_RUN_ID', valueFrom: { fieldRef: { fieldPath: "metadata.labels['nightscout.org/run-id']" } } },
               ],
-              readinessProbe: { exec: { command: ['test', '-s', '/run/ns-primer/verified.json'] }, periodSeconds: 2 },
-              volumeMounts: [{ name: 'config-primer', mountPath: '/run/ns-primer', subPath: 'd' },
-                { name: 'scripts', mountPath: '/run/ns-overlay', readOnly: true }, tmpMount],
+              [if provisioning then 'readinessProbe']: { exec: { command: ['test', '-s', '/run/ns-client/provisioned.json'] }, periodSeconds: 2 },
+              volumeMounts: [config, { name: 'scripts', mountPath: '/run/ns-overlay', readOnly: true }, tmpMount] +
+                            (if provisioning then [result] else []),
             }],
-            volumes: configVolumes('primer') + [tmp, { name: 'scripts', configMap: { name: 'provision-scripts' } }],
+            volumes: configVolumes('primer') + [tmp, { name: 'scripts', configMap: { name: 'provision-scripts' } }] +
+                     (if provisioning then [{ name: 'client-state', emptyDir: { sizeLimit: c.primerStorage } }] else []),
           } },
         },
       },
     },
-
+    verification: clientJob('verification'),
+    primer: clientJob('primer'),
     // ---------------------------------------------------------------- network policy
     // Compose: one internal backend network plus a published edge. Here the namespace denies
     // ingress by default and admits each path the Compose topology uses. Enforcement depends on
@@ -832,7 +840,7 @@
     assert std.member(['standard', 'existing-capacity'], c.profile) : 'unknown profile';
     assert std.member(['dynamic', 'disposable', 'existing-claim'], c.storage.mode) : 'unknown storage mode';
     assert c.profile != 'existing-capacity' || (c.storage.mode != 'dynamic' && c.edge.serviceType == 'ClusterIP') : 'existing-capacity forbids dynamic storage and public Services';
-    assert std.isNumber(c.tenantCount) && c.tenantCount >= 1 : 'tenantCount must be positive';
+    assert std.isNumber(c.tenantCount) && c.tenantCount == std.floor(c.tenantCount) && c.tenantCount >= 1 && c.tenantCount <= 9007199254740991 : 'tenantCount must be positive';
     local ownership = { 'nightscout.org/run-id': c.runId };
     local identity = {
       'nightscout.org/source-commit': c.sourceCommit,
@@ -899,19 +907,11 @@
         ownership: { namespace: c.namespace, label: { 'nightscout.org/run-id': c.runId }, clusterScoped: [{ kind: 'ClusterRoleBinding', name: c.namespace + '-vault-tokenreview' }] },
         services: { [v.metadata.name]: { selector: v.spec.selector, type: if std.objectHas(v.spec,'type') then v.spec.type else 'ClusterIP', ports: if std.objectHas(v.spec,'ports') then v.spec.ports else [] } for v in [v for v in collect(rendered) if v.kind == 'Service'] },
         configMaps: ['vault-config','vault-agent-config','edge-nginx','provision-scripts'] + (if helper == null then [] else ['bootstrap-diagnostic']),
-        candidateContract: {
-          platformVerification: (import '../../assets/source-contract.json').platformVerification,
-          diagnosticSha256: (import '../../assets/source-contract.json').diagnosticSha256,
-          imageConfigId: (import '../../assets/source-contract.json').localImageId,
-          producerBinarySha256: (import '../../assets/source-contract.json').producerBinarySha256,
-          nativeCatalogueSha256: (import '../../assets/source-contract.json').nativeCatalogueSha256,
-          sourceAcceptance: source.sourceAcceptance,
-        } + (if helper == null then {} else {runtimeBootstrapHelper: helper, imageSourceAcceptance: source.imageSourceAcceptance}),
         imagePullSecrets: c.imagePullSecrets,
         placement: c.placement,
         placementByWorkload: c.placementByWorkload,
-        export: { provision: { job: 'provision', container: 'done', readyFile: '/state/.ready', acknowledgeFile: '/state/.exported' }, primer: { job: 'primer', container: 'done', privateResult: '/run/ns-primer/provisioned.json', verificationProof: '/run/ns-primer/verified.json', acknowledgeFile: '/run/ns-primer/.exported' } },
-        order: ['seed Secrets', 'apply stores and policies', 'apply provision Job', 'export documents and acknowledge', 'apply private admin', 'apply explicit primer Job and collect admin verification proof', 'apply serving workloads', 'observe correctness', 'delete only owned namespace and tokenreview binding'],
+        export: { provision: { job: 'provision', container: 'done', readyFile: '/state/.ready', acknowledgeFile: '/state/.exported' }, primer: { job: 'primer', container: 'done', privateResult: '/run/ns-client/provisioned.json', acknowledgeFile: '/run/ns-client/.exported' } },
+        order: ['seed Secrets', 'apply stores and policies', 'apply provision Job', 'export documents and acknowledge', 'apply private admin', 'complete verification Job', 'apply serving workloads', 'run optional lab client and export its private results', 'observe correctness', 'delete only owned namespace and tokenreview binding'],
         workloads: {
           [v.metadata.name]: {
             kind: v.kind, replicas: if v.kind == 'Job' then 1 else v.spec.replicas,

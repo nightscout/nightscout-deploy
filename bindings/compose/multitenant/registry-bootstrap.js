@@ -52,14 +52,11 @@ async function finish({ options, request, rootToken, layout, roleURLs, writePriv
   const source = configMaxBytes === undefined ? docs : { ...docs, environments: Object.fromEntries(Object.entries(docs.environments).map(([role, env]) => [role, { ...env, MULTITENANT_CONFIG_MAX_BYTES: String(configMaxBytes) }])) };
   plan.validateFiles(output, source);
   require('../../lib/server/serve/admin-config').parse(docs.admin.config, docs.admin.environment);
-  const ids = plan.tenantIds();
-  const seed = ids.map((id, index) => ({ id, hosts: [plan.tenantAlias(index)], issueRootSecret: true }));
-  writePrivate(path.join(output, 'primer', 'config.json'), { version: 1, adminOrigin: 'http://admin:1342', apiOrigin: docs.apiOrigin || 'http://api:1337', ownerConsumer: docs.configs['tenant-admin'].management.consumer, platformVerification: require('./platform-startup').selection(docs), seed }, own);
+  writePrivate(path.join(output, 'primer', 'config.json'), { version: 1, adminOrigin: 'http://admin:1342', apiOrigin: docs.apiOrigin || 'http://api:1337', ownerConsumer: docs.configs['tenant-admin'].management.consumer, platformVerification: require('./platform-startup').selection(docs) }, own);
   const lifecycle = plan.lifecycle(l);
-  writePrivate(path.join(output, 'ops', 'config.json'), { version: nativeSelection?2:1, drainTimeoutMs: 10000,
-    tenants: ids.map((id, i) => ({ id, host: plan.tenantAlias(i), tokenEnv: i === 0 ? 'NS_DEMO_TOKEN_A' : i === 1 ? 'NS_DEMO_TOKEN_B' : 'NS_DEMO_TOKEN_' + i })),
+  writePrivate(path.join(output, 'ops', 'config.json'), { version: 3, drainTimeoutMs: 10000,
     ...(nativeSelection?{nativeSelection:structuredClone(nativeSelection.binding),evaluatorProof:require('./operator-selection').inputs(docs,nativeSelection)}:{}),
-    apiOrigin: docs.apiOrigin || 'http://api:1337', control: { namespace: l.namespaces.control, registry: { namespace: l.namespaces.registry }, locks: docs.locks }, ...lifecycle }, own);
+    apiOrigin: docs.apiOrigin || 'http://api:1337', control: { namespace: l.namespaces.control, registry: { namespace: l.namespaces.registry } }, ...lifecycle }, own);
   writePrivate(path.join(output, 'ops', 'env.json'), { NS_OPERATOR_PG: roleURLs.operator, NS_AUTH_AUDIT_PG:roleURLs.api, NS_SOURCE_COMMIT: sourceCommit,
      }, own);
   writeToken(path.join(output,'ops','vault-token'), servingToken);

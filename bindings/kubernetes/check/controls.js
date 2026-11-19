@@ -95,9 +95,9 @@ const CONTROLS = [
     from: "step('done', ['node', '/run/ns-overlay/candidate-documents.cjs', 'hold']", to: "step('done', ['node', '/run/ns-overlay/candidate-documents.cjs', 'verify']",
     expect: 'provision must hold private output until explicit export' },
 
-  { check: 'provision-boundary', file: LIB, why: 'primer readiness omits verification proof',
-    from: "'test', '-s', '/run/ns-primer/verified.json'", to: "'test', '-s', '/run/ns-primer/provisioned.json'",
-    expect: 'primer must verify through private admin before advertising its proof' },
+  { check: 'provision-boundary', file: LIB, why: 'client export misses private provisioning result',
+    from: "'test', '-s', '/run/ns-client/provisioned.json'", to: "'test', '-s', '/run/ns-client/unknown.json'",
+    expect: 'lab client must retain its private provisioning results until export' },
   { check: 'provision-boundary', file: LIB, why: 'one nested admin document missing from the volume projection',
     from: "['config', 'env', 'operation']", to: "['config', 'env']",
     expect: 'admin lacks a private verification target document' },

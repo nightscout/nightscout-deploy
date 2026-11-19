@@ -42,7 +42,7 @@ function writePrivate(filename,value,{uid,gid}={},{compact=false}={}) {
 async function bootstrap(options) {
   require('./pgstream').enabled();
   const workers=require('./evaluator-workers'),evaluatorWorkers=workers.selection();
-  if(evaluatorWorkers)workers.assertSeed(evaluatorWorkers,plan.tenantIds());
+  if(evaluatorWorkers)workers.assertSeed(evaluatorWorkers);
   const {pg,vault,output,sourceCommit,deployCommit,uid,gid,configMaxBytes}=options;
   const privateDirectory=path.join(output,'bootstrap');fs.mkdirSync(privateDirectory,{recursive:true,mode:0o700});
   const initFile=path.join(privateDirectory,'vault-init.json'),completeFile=path.join(privateDirectory,'complete.json'),startedFile=path.join(privateDirectory,'started.json');

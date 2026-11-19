@@ -2,7 +2,7 @@
 require('/opt/app/deploy/multitenant/load-env');
 const assert=require('node:assert/strict'),fs=require('node:fs');
 const clients=require('/opt/app/lib/server/internal-api/clients');
-const operator=require('/opt/app/deploy/multitenant/restore'),config=operator.loadConfig();
+const operator=require('/opt/app/deploy/multitenant/restore'),config=operator.loadDemoConfig();
 const peers=config.control.participants.filter(row=>row.roles.includes('evaluator'));
 async function inspect(){return Promise.all(peers.map(async peer=>({id:peer.id,...await clients.evaluatorInspection(peer.endpoint).inspectEvaluator({})})));}
 async function wait(fn){const end=Date.now()+12000;while(Date.now()<end){const result=await fn();if(result)return result;await new Promise(resolve=>setTimeout(resolve,50));}throw Object.assign(new Error(),{code:'EVALUATOR_BINDING_WAIT_EXPIRED'});}

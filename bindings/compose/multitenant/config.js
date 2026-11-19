@@ -5,21 +5,8 @@ const path = require('node:path');
 const clinical = Object.freeze(['entries','treatments','devicestatus','profile','food','activity']);
 const ordered = Object.freeze(['entries','treatments','devicestatus','profile','food']);
 const serviceRoles = Object.freeze(['api','realtime','evaluator','tenant-admin']);
-const A = '11111111-1111-4111-8111-111111111111', B = '22222222-2222-4222-8222-222222222222';
+const { A, B, tenantCount, tenantIds, tenantAlias } = require('./demo-tenants');
 const subject = '000000000000000000000001';
-// Synthetic tenant count: NS_DEMO_TENANTS (default 2 keeps the A/B demonstration
-// byte-identical). Tenants 0 and 1 are A and B; later ids are fixed synthetic UUIDs.
-// No fixed tenant ceiling: limits come from measurement, not from this plan.
-function tenantCount(env = process.env) {
-  const raw = env.NS_DEMO_TENANTS === undefined ? '2' : env.NS_DEMO_TENANTS;
-  if (!/^[1-9][0-9]*$/.test(raw) || !Number.isSafeInteger(Number(raw))) throw new TypeError('NS_DEMO_TENANTS must be a positive integer');
-  return Number(raw);
-}
-function tenantIds(n = tenantCount()) {
-  return Array.from({length: n}, (_, i) => i === 0 ? A : i === 1 ? B
-    : (0x30000000 + i).toString(16) + '-3333-4333-8333-' + i.toString(16).padStart(12, '0'));
-}
-const tenantAlias = i => i === 0 ? 'one.example.test' : i === 1 ? 'two.example.test' : 't' + i + '.example.test';
 function quote(name) {
   if (typeof name !== 'string' || !/^[a-z][a-z0-9_]{0,62}$/.test(name) || name.startsWith('pg_')) throw new TypeError('Explicit deployment SQL identifier required');
   return '"' + name + '"';
@@ -50,23 +37,20 @@ function layout(prefix = 'nsdemo') {
     roles:Object.fromEntries(names.map(name=>[name,prefix+'_'+name])),mount:prefix+'_transit'};
 }
 const { insertionGrants, grants } = require('../../lib/server/ordinary-deployment-grants');
-function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress,registryMode=true,realtimeOwnership=null}) {
+function documents({layout:l,urls,vaultAddress,registryMode=true,realtimeOwnership=null}) {
   if(!registryMode)throw new TypeError('STATIC_PRODUCT_CONFIGURATION_RETIRED');
   const ns=l.namespaces, base='/run/ns-config',ipc='/run/ns-ipc';
   const domainNamespaces=Object.fromEntries(clinical.map(name=>[name,ns[name]]));
-  const ids=tenantIds(),n=ids.length;
-  const tenants=ids.map(id=>({id,revision:'compose-demo-v1',settings:{enable:['bgnow','delta','direction','simplealarms','treatmentnotify']}}));
-  const aliases=ids.map((_,i)=>[tenantAlias(i)]);
-  const limits={pageSize:100,maxRows:10000,maxBytes:8388608,maxTenants:n};
+  const limits={pageSize:100,maxRows:10000,maxBytes:8388608};
   const pgAddress=new URL(urls.evaluator);
   const evaluator={version:1,datastore:{hostname:pgAddress.hostname,port:Number(pgAddress.port||5432),database:decodeURIComponent(pgAddress.pathname.slice(1))},postgres:{connectionEnv:'NS_EVALUATOR_PG',namespaces:{...domainNamespaces,clock:ns.clock,checkpoint:ns.eval_checkpoint}},
-    consumer:'evaluator-compose-demo',...limits,timeIntervalMs:1000,socketOrderDomains:['treatments','devicestatus','profile'],tenants,
+    consumer:'evaluator-compose-demo',...limits,timeIntervalMs:1000,socketOrderDomains:['treatments','devicestatus','profile'],
     consumers:{realtime:{outbox:{connectionEnv:'NS_OUTBOX_PG',namespace:ns.outbox,maxRows:10000,maxBytes:8388608,maxConnections:2},
       suppression:{connectionEnv:'NS_SUPPRESSION_PG',namespace:ns.alarm,maxRows:10000,maxBytes:8388608,maxConnections:2},
       route:{id:'realtime-compose-demo',maxMessageBytes:1048576,operationTimeoutMs:5000},
       maxPayloadBytes:524288,maxInflight:4,attemptTimeoutMs:10000,retryDelayMs:1000,pollIntervalMs:1000,retryIntervalMs:1000}}};
   const realtime={version:1,postgres:{connectionEnv:'NS_REALTIME_PG',namespaces:{clock:ns.clock,checkpoint:ns.rt_checkpoint}},consumer:'realtime-compose-demo',
-    maxRows:limits.maxRows,maxBytes:limits.maxBytes,maxTenants:limits.maxTenants,tenants,admissionFileEnv:'NS_ADMISSION_FILE',
+    maxRows:limits.maxRows,maxBytes:limits.maxBytes,
     maxMessageBytes:1048576,operationTimeoutMs:5000,authorizationRecheckMs:30000};
   // Decision root-grant-ceiling-default-all: every tenant data permission unless
   // the operator narrows it. Owner and root share this catalogue (one policy row).
@@ -74,31 +58,29 @@ function documents({layout:l,urls,tokens,publicKeys,managementKeys,vaultAddress,
   const api={version:1,domains:[...clinical,'settings'],legacy:true,context:true,writeClock:true,
     subjectAdmin:{writerConnectionEnv:'NS_API_ROOT_WRITER_PG',ownerPolicy:{catalogue:ownerCatalogue.slice()}},
     postgres:{connectionEnv:'NS_API_PG',readinessConnectionEnv:'NS_READINESS_PG',namespaces:{...domainNamespaces,settings:ns.settings,authorization:ns.authorization,secrets:ns.secrets,legacy:ns.legacy,access:ns.access,clock:ns.clock}},
-    vault:{address:vaultAddress,mount:l.mount,timeoutMs:5000},resolution:{mode:'direct-alias'},tenants:tenants.map((tenant,i)=>({id:tenant.id,aliases:aliases[i],settings:tenant.settings,
-      vault:{tokenEnv:'NS_VAULT_'+i,encryptionKey:'tenant-'+i+'-data',signingKey:'tenant-'+i+'-signing',signingVersion:1}})),
-    accessTokens:{issuer:'nightscout-compose-demo',audience:'nightscout-data',keys:publicKeys},
-    socketForwarding:{admissionFileEnv:'NS_ADMISSION_FILE',maxTenants:n,maxMessageBytes:1048576,operationTimeoutMs:5000,
+    vault:{address:vaultAddress,mount:l.mount,timeoutMs:5000},resolution:{mode:'direct-alias'},
+    accessTokens:{issuer:'nightscout-compose-demo',audience:'nightscout-data'},
+    socketForwarding:{maxTenants:10000,maxMessageBytes:1048576,operationTimeoutMs:5000,
       alarm:{connectionEnv:'NS_ALARM_PG',namespace:ns.alarm},consumerState:{evaluatorConfigEnv:'MULTITENANT_EVALUATOR_CONFIG'}}};
   const owner={version:1,postgres:{writerConnectionEnv:'NS_OWNER_WRITER_PG',accessConnectionEnv:'NS_OWNER_READER_PG',namespaces:{authorization:ns.authorization,credentials:ns.legacy,access:ns.access}},
-    ownerPolicy:{catalogue:ownerCatalogue.slice()},resolution:{mode:'direct-alias'},tenants:api.tenants.map(({id,aliases})=>({id,aliases})),
-    management:{issuer:'nightscout-compose-management',audience:'nightscout-management',purpose:'management',consumer:'compose-owner',maxLifetimeSeconds:600,keys:managementKeys}};
+    ownerPolicy:{catalogue:ownerCatalogue.slice()},resolution:{mode:'direct-alias'},
+    management:{issuer:'nightscout-compose-management',audience:'nightscout-management',purpose:'management',consumer:'compose-owner',maxLifetimeSeconds:600}};
   const configs={api,realtime,evaluator,'tenant-admin':owner};
   // serve.internal: one socket per role process on the shared private
   // directory; every peer address names the same paths.
   const socketOf=role=>ipc+'/'+role+'.sock';
   const common={...Object.fromEntries(serviceRoles.map(role=>[require('../../lib/server/internal-api/listener-config').envName(role)+'SOCKET',socketOf(role)])),NODE_EXTRA_CA_CERTS:'/run/ns-ca/ca.crt'};
   const own=role=>({NS_SERVE_INTERNAL_SOCKET:socketOf(role)});
-  const environments={api:{...common,...own('api'),API_HOSTNAME:'0.0.0.0',API_PORT:'1337',MULTITENANT_PREVIEW_CONFIG:base+'/config.json',MULTITENANT_EVALUATOR_CONFIG:base+'/evaluator-metadata.json',NS_ADMISSION_FILE:base+'/admission.json',...require('./clinical-isolation').apiEnvironment(),NS_API_PG:urls.api,NS_READINESS_PG:urls.readiness,NS_API_ROOT_WRITER_PG:urls.root_writer,NS_ALARM_PG:urls.alarm,...Object.fromEntries(ids.map((_,i)=>['NS_VAULT_'+i,tokens[i]]))},
-    realtime:{...common,...own('realtime'),REALTIME_HOSTNAME:'0.0.0.0',REALTIME_PORT:'1339',MULTITENANT_REALTIME_CONFIG:base+'/config.json',NS_ADMISSION_FILE:base+'/admission.json',NS_REALTIME_PG:urls.realtime},
+  const environments={api:{...common,...own('api'),API_HOSTNAME:'0.0.0.0',API_PORT:'1337',MULTITENANT_PREVIEW_CONFIG:base+'/config.json',MULTITENANT_EVALUATOR_CONFIG:base+'/evaluator-metadata.json',...require('./clinical-isolation').apiEnvironment(),NS_API_PG:urls.api,NS_READINESS_PG:urls.readiness,NS_API_ROOT_WRITER_PG:urls.root_writer,NS_ALARM_PG:urls.alarm},
+    realtime:{...common,...own('realtime'),REALTIME_HOSTNAME:'0.0.0.0',REALTIME_PORT:'1339',MULTITENANT_REALTIME_CONFIG:base+'/config.json',NS_REALTIME_PG:urls.realtime},
     evaluator:{...common,...own('evaluator'),MULTITENANT_EVALUATOR_CONFIG:base+'/config.json',NS_EVALUATOR_PG:urls.evaluator,NS_OUTBOX_PG:urls.outbox,NS_SUPPRESSION_PG:urls.suppression},
     'tenant-admin':{...common,...own('tenant-admin'),TENANT_ADMIN_HOSTNAME:'0.0.0.0',TENANT_ADMIN_PORT:'1341',MULTITENANT_OWNER_PREVIEW_CONFIG:base+'/config.json',NS_OWNER_WRITER_PG:urls.owner_writer,NS_OWNER_READER_PG:urls.owner_reader}};
   const protectedNamespaces=require('../../lib/server/serve/role-topology').protectedNamespaces;
   const participants=serviceRoles.map(role=>({id:role,roles:[role],namespaces:[...new Set([...protectedNamespaces(configs[role]),...(role==='api'?[ns.outbox]:[])])].sort(),maxMessageBytes:1048576,timeoutMs:5000}));
-  const locks=ids.map((tenant,i)=>({tenant,key:String(810001+i)})),operations={};
-  for(const role of serviceRoles){operations[role]={version:2,namespace:ns.control,connectionEnv:'NS_LIFETIME_PG',locks,participantId:role,participants};Object.assign(environments[role],{NS_LIFETIME_PG:urls['lifetime_'+role.replace('-','_')],MULTITENANT_OPERATION_CONFIG:base+'/operation.json'});}
-  const admission={version:1,mode:'preview-socket-allowlist',tenants:api.tenants.map(({id,aliases})=>({id,enabled:true,aliases}))};
+  const operations={};
+  for(const role of serviceRoles){operations[role]={version:2,namespace:ns.control,connectionEnv:'NS_LIFETIME_PG',participantId:role,participants};Object.assign(environments[role],{NS_LIFETIME_PG:urls['lifetime_'+role.replace('-','_')],MULTITENANT_OPERATION_CONFIG:base+'/operation.json'});}
   const remote=participants.map(peer=>({id:peer.id,roles:peer.roles,namespaces:peer.namespaces,endpoint:{socketPath:socketOf(peer.id),maxBytes:peer.maxMessageBytes,timeoutMs:peer.timeoutMs}}));
-  let docs = {configs,environments,operations,admission,remote,locks,ui:{version:1,tenants:aliases.map(aliases=>({aliases,theme:'default'}))}};
+  let docs = {configs,environments,operations,remote};
   docs = require('./registry-plan').expand(docs,{layout:l,urls,vaultAddress});
   const evaluatorWorkers = require('./evaluator-workers');
   return require('./platform-startup').documents(evaluatorWorkers.expand(require('./realtime-workers').expand(require('./replicas').expand(docs), realtimeOwnership), evaluatorWorkers.selection()), l, urls);

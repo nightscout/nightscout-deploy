@@ -35,7 +35,7 @@ existing image only while its complete Compose runtime tree still matches `image
 | API Vault policy | Kubernetes-auth helper imports the source-created policy and adapts the supported tokenFile; projected audience-bound token feeds the native Vault Agent sidecar |
 | Admin | Source entrypoint and complete private source documents; only its copied ADMIN_HOSTNAME changes to the actual Pod IP; ClusterIP and operator-only NetworkPolicy |
 | UI and edge | Source UI preload/command and byte-identical nginx asset; ClusterIP consumer entry |
-| Tenant provisioning | Separate suspended primer Job runs the source command through the private admin API; operator explicitly unsuspends it after admin readiness and verifies the platform before serving roles start |
+| Tenant provisioning | A database verification Job admits serving. An independent lab Job provisions synthetic tenants through the private admin API. |
 
 Core constructs the tenant documents, credentials, application lifecycle state and authority.
 The separate profile projects only deployment addresses before the admin screens those documents.
@@ -70,8 +70,7 @@ Services and edge routes do not expose private listeners. Actual NetworkPolicy e
 a live negative connectivity check.
 
 P's `startup-v2` platform verification runs through private admin before serving. Its receipt has
-namespace, exact role roster and generation digests, with no lease or timestamp. The primer's
-`done` container publishes that receipt as `verified.json`; the source verifier refuses anything but
+namespace, exact role roster and generation digests, with no lease or timestamp. The verification Job publishes the receipt in its completion log; the source verifier refuses anything but
 a complete `verified` receipt. Each serving role checks its own proof generation and fails closed,
 and serving admission checks current database, role and epoch identity, so the binding does not
 re-derive the generations. The provision `done` container only projects network addresses,
@@ -174,19 +173,17 @@ performed by the offline checks above.
 4. Operator runs `scripts/secrets.sh publish <namespace> <compat-image-arg>`. It verifies the owned
    Pod UID, exports directly into a private temporary directory, creates role Secrets, then
    acknowledges `/state/.exported`. Job completion follows export. There is no reader Pod or volume.
-5. Apply only the private admin Deployment and wait for its health check. Apply primer suspended
-   and explicitly unsuspend it. It provisions the synthetic tenants and calls the private admin
-   verification API. Wait for the primer to be ready and export its non-secret
-   `/run/ns-primer/verified.json` proof from the owned Pod. The proof binds the fixture, native
-   lifecycle selection and expected generations of the three serving roles.
-6. Apply the remaining serving workloads and wait for their readiness. The serving roles require the
-   live verification record and open tenants on demand. Run the source-owned
-   `node deploy/multitenant/prime.js prime` in primer's `done` container within the run deadline
-   with `NS_PRIMER_STATE=/run/ns-primer`. Export `/run/ns-primer/tenants.json` to the owned
-   private test packet. This file contains synthetic test authority. Capture the adapter's
-   `candidate-proof` and `policy` while the same primer container is still waiting. Acknowledge
-   `/run/ns-primer/.exported` after these observations and after any phase that requires the same
-   live container observation. Follow the finite job deadline throughout.
+5. Apply the private admin Deployment and wait for its health check. Run the verification Job
+   with suspension disabled. Wait for Job completion and collect the public receipt from its
+   `done` container log. The serving roles check their live verification generation at startup.
+6. Apply the serving workloads. Run the optional primer Job with suspension disabled when
+   synthetic tenants are needed. Its client generates the roster from `--tenant-count` and
+   provisions it through admin. In its `done` container, run
+   `NS_PRIMER_CONFIG=/run/ns-primer/config.json NS_PRIMER_STATE=/run/ns-client node deploy/multitenant/prime.js prime`
+   to create synthetic DATA credentials. Export the required files from `/run/ns-client`
+   into the owned private test packet. Touch `/run/ns-client/.exported` once custody transfers.
+   The finite Job deadline covers these steps. The private client-result volume is sized with
+   `primerStorage`. The configuration Secret contains the client endpoints and verification selection.
 7. Observe the tiny synthetic trial under the finite environment deadline. Cleanup verifies actual
    Namespace UID/run label and the exact tokenreview binding ownership before deleting those owned
    resources. Retain private evidence before removing disposable storage. Namespace deletion does

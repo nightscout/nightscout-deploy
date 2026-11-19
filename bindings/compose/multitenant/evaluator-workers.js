@@ -77,13 +77,13 @@ function validate(docs, role, parsed, operation) {
   }
 }
 
-function compose(selected, composeFile, tenantCount) {
+function compose(selected, composeFile) {
   if (!selected) return '';
   const workers = services(selected);
   const limits = ['    cpus: 1', '    mem_limit: 1g'];
   const lines = ['# Fixed native evaluator processes.', 'services:', '  bootstrap:', '    environment:',
     '      NS_EVALUATOR_WORKERS: "' + selected.workers + '"',
-    '      NS_DEMO_TENANTS: "' + tenantCount + '"', '  pgstream:', '    cpus: 1', '    mem_limit: 512m',
+    '  pgstream:', '    cpus: 1', '    mem_limit: 512m',
     '    depends_on:', ...workers.map(service => '      ' + service + ': {condition: service_started}'),
     '    restart: unless-stopped', '  evaluator:', '    restart: unless-stopped', ...limits];
   for (const service of workers.slice(1)) lines.push('  ' + service + ':',

@@ -80,7 +80,6 @@ services:
       NS_COMPOSE_BOOTSTRAP: "1"
       NS_PGSTREAM: ${NS_PGSTREAM:-1}
       NS_DEPLOY_COMMIT: ${NS_DEPLOY_COMMIT:?Run prepare.js first}
-      NS_DEMO_TENANTS: ${NS_DEMO_TENANTS:-2}
       # Fixed service instances; maintenance still addresses every exact instance.
       NS_API_REPLICAS: ${NS_API_REPLICAS:-1}
       NS_OPERATION_LEASE_SESSIONS: ${NS_OPERATION_LEASE_SESSIONS:-4}
@@ -124,6 +123,7 @@ services:
       admin: {condition: service_healthy}
     environment:
       NS_PRIMER_STATE: /run/ns-primer
+      NS_DEMO_TENANTS: ${NS_DEMO_TENANTS:-2}
     volumes:
       - ${NS_DEMO_STATE}/primer:/run/ns-primer
 

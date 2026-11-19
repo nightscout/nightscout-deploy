@@ -354,12 +354,18 @@ function checks (all, inventory, composeDir, envMain) {
     const primer=workloads.find(w=>w.metadata.name==='primer');
     if(primer?.spec.suspend!==true || primer?.spec.backoffLimit!==0 || !primer?.spec.activeDeadlineSeconds)fail('primer must be an explicit suspended finite no-retry Job');
     const primerSpec = podSpec(primer);
-    const controller = primerSpec.containers.find(c => c.name === 'done');
-    if (JSON.stringify(controller?.command) !== JSON.stringify(['node', '/run/ns-overlay/candidate-documents.cjs', 'verify']) ||
-        !controller?.readinessProbe?.exec?.command.includes('/run/ns-primer/verified.json'))
-      fail('primer must verify through private admin before advertising its proof');
-    if (primerSpec.volumes.some(v => v.secret && v.secret.secretName !== 'ns-config-primer'))
-      fail('primer mounts only its unprivileged source documents');
+    const verification = workloads.find(w => w.metadata.name === 'verification');
+    const verifySpec = verification && podSpec(verification);
+    if (!verifySpec || verification.spec.backoffLimit !== 0 || !verification.spec.activeDeadlineSeconds ||
+        verifySpec.initContainers.some(c => c.name === 'primer') ||
+        !verifySpec.containers.some(c => c.command?.includes('verify')))
+      fail('platform verification must complete independently of tenant provisioning');
+    if (!primerSpec.containers.some(c => c.readinessProbe?.exec?.command.includes('/run/ns-client/provisioned.json')))
+      fail('lab client must retain its private provisioning results until export');
+    for (const job of [primerSpec, verifySpec]) {
+      if (job?.volumes.some(v => v.secret && v.secret.secretName !== 'ns-config-primer'))
+        fail('admin clients mount only their unprivileged source documents');
+    }
     const admin = workloads.find(w => w.metadata.name === 'admin');
     const adminSpec = podSpec(admin);
     const adminTargetPaths = adminSpec.volumes.find(v => v.name === 'secret-admin')?.secret.items?.map(item => item.path);

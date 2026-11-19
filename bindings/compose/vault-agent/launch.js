@@ -85,13 +85,19 @@ function commands (selected, command, detail) {
   if (['up', 'bootstrap'].includes(command)) {
     const steps = [node(path.join(selected.base, 'build.js'), '--check-image'), up('postgres', 'vault'), run('bootstrap')];
     if (command === 'bootstrap') return [...steps, run('vault-agent-bootstrap')];
-    return [...steps, up('admin', 'feed-reader'), run('primer', 'node', 'deploy/multitenant/prime.js', 'provision'),
-      run('bootstrap', 'node', 'deploy/multitenant/commission-restore.js'), run('vault-agent-bootstrap'), up('vault-agent'), up(...selected.apis),
+    return [...steps, up('admin', 'feed-reader'), run('primer', 'node', 'deploy/multitenant/platform-verify.js'),
+      run('vault-agent-bootstrap'), up('vault-agent'),
+      up(...selected.apis, ...selected.realtime, ...selected.evaluators, 'pgstream', 'tenant-admin', 'ui', 'nginx')];
+  }
+  if (command === 'prime' || command === 'demo') {
+    return [
+      run('primer', 'node', 'deploy/multitenant/prime.js', 'provision'),
+      compose('--profile', 'ops', 'run', '--rm', '--no-deps', '-e', 'NS_DEMO_TENANTS=' + (process.env.NS_DEMO_TENANTS || '2'),
+        'bootstrap', 'node', 'deploy/multitenant/commission-restore.js'),
       run('primer', 'node', 'deploy/multitenant/prime.js', 'prime'), node(path.join(selected.base, 'publish-primer.js'), selected.state),
-      up(...selected.realtime, ...selected.evaluators, 'tenant-admin', 'ui', 'nginx')];
+      ...(command === 'demo' ? [run('demo')] : [])];
   }
   if (command === 'secret-id') return [run('vault-agent-bootstrap', 'node', '/run/ns-overlay/vault-agent-bootstrap.js', 'secret-id')];
-  if (command === 'demo') return [run('demo')];
   if (command === 'agent' && ['stop', 'start', 'logs'].includes(detail)) return [compose(detail, 'vault-agent')];
   if (command === 'status') return [compose('ps', '-a')];
   if (['stop', 'down', 'destroy'].includes(command)) return [compose(command === 'destroy' ? 'down' : command, ...(command === 'destroy' ? ['-v'] : []))];
@@ -109,7 +115,7 @@ function custody (selected, command, env) {
   if (inspected.error || inspected.status !== 0) throw fail('VAULT_AGENT_PROJECT_INSPECTION_FAILED');
   const ids = inspected.stdout.trim().split(/\s+/).filter(Boolean);
   if (ids.length > 128 || ids.some(id => !/^[a-f0-9]{12,64}$/.test(id))) throw fail('VAULT_AGENT_PROJECT_INSPECTION_FAILED');
-  if (!exists && (ids.length || ['stop', 'down', 'destroy', 'agent', 'secret-id', 'demo'].includes(command))) throw fail('VAULT_AGENT_PROJECT_NOT_OWNED');
+  if (!exists && (ids.length || ['stop', 'down', 'destroy', 'agent', 'secret-id', 'prime', 'demo'].includes(command))) throw fail('VAULT_AGENT_PROJECT_NOT_OWNED');
   if (ids.length) {
     const inventory = spawnSync('docker', ['inspect', ...ids], { encoding: 'utf8', timeout: 10000, maxBuffer: 4194304, env });
     if (inventory.error || inventory.status !== 0) throw fail('VAULT_AGENT_PROJECT_INSPECTION_FAILED');

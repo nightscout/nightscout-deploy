@@ -159,7 +159,7 @@ async function runDemo ({ config, env = process.env, call = request, capture = o
     summary };
 }
 
-async function main () { return runDemo({ config: operator.loadConfig() }); }
+async function main () { return runDemo({ config: operator.loadDemoConfig() }); }
 if (require.main === module) main().then(result => process.stdout.write(JSON.stringify(result) + '\n'), error => {
   process.stderr.write(JSON.stringify({ error: /^[A-Z][A-Z0-9_]{1,100}$/.test(error.code || '') ? error.code : 'COMPOSE_DEMO_FAILED',
     recovery: 'Retain artifacts and inspect persisted operation state; no automatic restore retry or tenant reopening.' }) + '\n');

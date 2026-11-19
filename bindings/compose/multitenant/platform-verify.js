@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 
-// The pre-start platform step. Startup runs it after migrations and restore
-// commissioning and before any serving role starts; a refusal stops startup.
+// The pre-start platform step. Startup runs it after migrations and before
+// any serving role starts. A refusal stops startup.
 // The admin role verifies schema, grants, ownership and catalogues once and
 // issues the proof each serving role checks at its start. The proof has no
 // lease, so this runs again before every start that follows a platform change.

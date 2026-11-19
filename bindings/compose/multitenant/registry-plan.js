@@ -19,11 +19,11 @@ function checkpoints(docs, ns) {
   return rows;
 }
 function expand(docs, { layout, urls, vaultAddress }) {
-  const ns = layout.namespaces, registry = { namespace: ns.registry, maxTenants: 10000, refreshMs: 2000 };
+  const ns = layout.namespaces, registry = { namespace: ns.registry, refreshMs: 2000 };
   const settings = { connectionEnv: 'NS_DISPLAY_PG', namespaces: { settings: ns.display_settings, operatorPolicy: ns.operator_policy } };
   const activity = { connectionEnv: 'NS_ACTIVITY_PG', namespace: ns.control };
   for (const [role, config] of Object.entries(docs.configs)) {
-    delete config.tenants; config.registry = { ...registry };
+    config.registry = { ...registry };
     if (role === 'api' || role === 'evaluator' || role === 'realtime') config.tenantSettings = settings;
     if (role === 'api') config.activity = { namespace: ns.control };
     if (role === 'evaluator') config.activity = activity;
@@ -31,27 +31,20 @@ function expand(docs, { layout, urls, vaultAddress }) {
     if (role === 'api') {
       config.localDataAuthentication = 'node';
       config.vault = { address: vaultAddress, mount: layout.mount, timeoutMs: 5000, tokenFile: '/run/ns-config/vault-token' };
-      delete config.accessTokens.keys;
-      delete config.socketForwarding.admissionFileEnv;
-      config.socketForwarding.maxTenants = 10000;
     }
     if (role === 'tenant-admin') {
-      delete config.management.keys;
       config.ownerCredentials={connectionEnv:'NS_OWNER_CREDENTIALS_PG',namespace:ns.secrets,vault:{address:vaultAddress,mount:layout.mount,timeoutMs:5000,tokenFile:'/run/ns-config/vault-token'}};
     }
     if (role === 'evaluator' || role === 'realtime') {
-      config.maxTenants = 10000;
       config.trustedWorker = { activity: ns.control, clock: ns.clock, settings: ns.display_settings, operatorPolicy: ns.operator_policy };
     }
-    if (role === 'realtime') delete config.admissionFileEnv;
     const env = docs.environments[role];
-    for (const name of Object.keys(env)) if (/^NS_VAULT_\d+$/.test(name) || name === 'NS_ADMISSION_FILE') delete env[name];
     if (role === 'api' || role === 'evaluator' || role === 'realtime') env.NS_DISPLAY_PG = urls.display_reader;
     if (role === 'evaluator') env.NS_ACTIVITY_PG = urls.activity_reader;
     if (role === 'api') delete env.NS_ACTIVITY_PG;
     if(role==='evaluator')env.NS_STREAM_RECOVERY_PG=urls.pgstream;
     if(role==='tenant-admin')env.NS_OWNER_CREDENTIALS_PG=urls.owner_credentials;
-    delete docs.operations[role].locks; docs.operations[role].leaseSessions = leaseSessions(); docs.operations[role].registry = { namespace: ns.registry };
+    docs.operations[role].leaseSessions = leaseSessions(); docs.operations[role].registry = { namespace: ns.registry };
   }
   require('./pgstream').configure(docs,layout);
   // Recompute manifest coverage from the selected product configuration.
@@ -61,7 +54,6 @@ function expand(docs, { layout, urls, vaultAddress }) {
   for (const value of Object.values(docs.operations)) value.participants = participants;
   docs.remote = participants.map(peer => ({ id: peer.id, roles: peer.roles, namespaces: peer.namespaces,
     endpoint: { socketPath: '/run/ns-ipc/' + peer.id + '.sock', maxBytes: peer.maxMessageBytes, timeoutMs: peer.timeoutMs } }));
-  docs.locks = docs.locks.map(row => ({ tenant: row.tenant, key: require('../../lib/tenant-registry/rules').lockKey(row.tenant) }));
   docs.admin = { config: { version: 1, maxBytes: 1048576, timeoutMs: 60000,
     managementSessions: { connectionEnv: 'NS_MANAGEMENT_SESSIONS_PG',
       namespaces: { registry: ns.registry, authorization: ns.authorization, access: ns.access, control: ns.control },
@@ -76,9 +68,8 @@ function expand(docs, { layout, urls, vaultAddress }) {
       vault: { address: vaultAddress, mount: layout.mount, tokenFile: '/run/ns-config/vault-token', timeoutMs: 10000 },
       ownerPolicy: { catalogue: ['*'] }, operator: { principal: 'compose-operator', consumer: 'compose-provisioning' } } },
     environment: { ADMIN_HOSTNAME: 'admin', ADMIN_PORT: '1342', ADMIN_INSECURE_BIND_ACKNOWLEDGED: 'true', MULTITENANT_ADMIN_CONFIG: '/run/ns-config/config.json', NS_PROVISIONER_PG: urls.provisioner, NS_OWNERSHIP_PG: urls.ownership_operator, NS_CONNECTOR_SOURCES_PG: urls.connector_writer, NS_MANAGEMENT_SESSIONS_PG: urls.management_issuer } };
-  docs.ui = { version: 2, registry: { connectionEnv: 'NS_UI_REGISTRY_PG', namespace: ns.registry, maxTenants: 10000, refreshMs: 2000 }, theme: 'default' };
+  docs.ui = { version: 2, registry: { connectionEnv: 'NS_UI_REGISTRY_PG', namespace: ns.registry, refreshMs: 2000 }, theme: 'default' };
   docs.uiEnvironment = { NS_UI_REGISTRY_PG: urls.ui_registry };
-  delete docs.admission;
   return docs;
 }
 module.exports = { expand, provisioningNamespaces, checkpoints, leaseSessions };

@@ -56,3 +56,30 @@ test('fixed published storage and authority refusals preserve class without body
   }
   assert.equal(refusal({ status: 503, body: { error: 'STORAGE_UNAVAILABLE private-canary' } }, 'entries-create').responseError, 'UNCLASSIFIED');
 });
+
+test('lab provisioning generates its requested cohort from a tenant-free document', async () => {
+  const fs = require('node:fs'), path = require('node:path'), os = require('node:os');
+  const { provision, load } = require('./prime');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ns-lab-client-'));
+  const batches = [];
+  const server = http.createServer(async (req, res) => {
+    assert.equal(req.url, '/v1/tenants/batch');
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const { tenants } = JSON.parse(Buffer.concat(chunks));
+    batches.push(tenants);
+    res.end(JSON.stringify({ results: tenants.map(({ id }) => ({ id, outcome: 'created', rootSecret: 'synthetic' })) }));
+  });
+  try {
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const origin = 'http://127.0.0.1:' + server.address().port, file = path.join(dir, 'config.json');
+    fs.writeFileSync(file, JSON.stringify({version: 1, adminOrigin: origin, apiOrigin: origin, ownerConsumer: 'test'}));
+    await provision(load(file), dir, { tenantCount: '101' });
+    assert.deepEqual(batches.map(rows => rows.length), [100, 1]);
+    assert.equal(new Set(batches.flat().map(row => row.id)).size, 101);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'provisioned.json'))).length, 101);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});

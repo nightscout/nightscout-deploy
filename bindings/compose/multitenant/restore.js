@@ -14,18 +14,20 @@ const exact = (v, keys) => v && typeof v === 'object' && !Array.isArray(v) && Ob
 
 function validateConfig (value, env = process.env, requireTokens = true) {
   operationPlacement(env);
-  if (!exact(value, ['version', 'tenants', 'apiOrigin', 'control', 'namespaces', 'catalogues', 'drainTimeoutMs', ...(Object.hasOwn(value || {}, 'intakeProfile') ? ['intakeProfile'] : []), ...(Object.hasOwn(value || {}, 'nativeSelection') ? ['nativeSelection'] : []), ...(Object.hasOwn(value || {}, 'evaluatorProof') ? ['evaluatorProof'] : [])]) || ![1,2].includes(value.version) || value.version===2&&(value.nativeSelection===undefined||value.intakeProfile!==undefined) ||
+  const registryTarget = value?.version === 3;
+  if (!exact(value, ['version', ...(registryTarget ? [] : ['tenants']), 'apiOrigin', 'control', 'namespaces', 'catalogues', 'drainTimeoutMs', ...(Object.hasOwn(value || {}, 'intakeProfile') ? ['intakeProfile'] : []), ...(Object.hasOwn(value || {}, 'nativeSelection') ? ['nativeSelection'] : []), ...(Object.hasOwn(value || {}, 'evaluatorProof') ? ['evaluatorProof'] : [])]) || ![1,2,3].includes(value.version) || value.version===2&&(value.nativeSelection===undefined||value.intakeProfile!==undefined) ||
       !Number.isSafeInteger(value.drainTimeoutMs) || value.drainTimeoutMs < 1 || value.drainTimeoutMs > 2147483647 ||
-      !Array.isArray(value.tenants) || value.tenants.length !== 2 ||
+      !registryTarget && (!Array.isArray(value.tenants) || value.tenants.length !== 2 ||
       !value.tenants.every(t => exact(t, ['id', 'host', 'tokenEnv']) && UUID.test(t.id) && /^[a-z0-9.-]+$/.test(t.host) &&
         /^[A-Z][A-Z0-9_]*$/.test(t.tokenEnv) && (!requireTokens || typeof env[t.tokenEnv] === 'string' && env[t.tokenEnv].length > 0)) ||
-      new Set(value.tenants.map(t => t.id)).size !== 2 || new Set(value.tenants.map(t => t.host)).size !== 2 ||
-      !exact(value.control, ['namespace', 'locks', ...(Object.hasOwn(value.control || {}, 'participants') ? ['participants'] : []), ...(Object.hasOwn(value.control || {}, 'registry') ? ['registry'] : [])]) || !validName(value.control.namespace) ||
+      new Set(value.tenants.map(t => t.id)).size !== 2 || new Set(value.tenants.map(t => t.host)).size !== 2) ||
+      !exact(value.control, ['namespace', ...(registryTarget ? [] : ['locks']), ...(Object.hasOwn(value.control || {}, 'participants') ? ['participants'] : []), ...(Object.hasOwn(value.control || {}, 'registry') ? ['registry'] : [])]) || !validName(value.control.namespace) ||
       value.control.registry !== undefined && (!exact(value.control.registry, ['namespace']) || !validName(value.control.registry.namespace)) ||
-      !Array.isArray(value.control.locks) || value.control.locks.length !== 2 ||
+      registryTarget && (!value.control.registry || value.intakeProfile !== undefined) ||
+      !registryTarget && (!Array.isArray(value.control.locks) || value.control.locks.length !== 2 ||
       !value.control.locks.every(row => exact(row, ['tenant', 'key']) && value.tenants.some(t => t.id === row.tenant) &&
         typeof row.key === 'string' && /^[1-9][0-9]{0,18}$/.test(row.key) && BigInt(row.key) <= 9223372036854775807n) ||
-      new Set(value.control.locks.map(row => row.tenant)).size !== 2 || new Set(value.control.locks.map(row => row.key)).size !== 2 ||
+      new Set(value.control.locks.map(row => row.tenant)).size !== 2 || new Set(value.control.locks.map(row => row.key)).size !== 2) ||
       !value.namespaces || typeof value.namespaces !== 'object' || Array.isArray(value.namespaces) ||
       !Object.entries(value.namespaces).every(([key, namespace]) => validName(key) && validName(namespace)) ||
       new Set(Object.values(value.namespaces)).size !== Object.keys(value.namespaces).length ||
@@ -48,7 +50,7 @@ function validateConfig (value, env = process.env, requireTokens = true) {
       const native=require('../../lib/tenant-lifecycle/native-selection');nativeSelection=native.bind(native.create(value.nativeSelection),value.control.namespace);
       if(nativeSelection.binding.namespace!==value.namespaces.evaluator_checkpoint)throw fail('COMPOSE_OPERATOR_CONFIG_REFUSED');
     }
-    intakeProfile = require('../../lib/tenant-lifecycle/generation-domain').bind(value.intakeProfile, value.control.namespace, value.tenants.map(row => row.id));
+    intakeProfile = require('../../lib/tenant-lifecycle/generation-domain').bind(value.intakeProfile, value.control.namespace, value.tenants?.map(row => row.id));
   }
   catch { throw fail('COMPOSE_OPERATOR_CONFIG_REFUSED'); }
   const plain = { ...value }; delete plain.intakeProfile; delete plain.nativeSelection;
@@ -59,6 +61,18 @@ function loadConfig (file = process.env.NS_OPERATOR_CONFIG || '/run/ns-config/co
   const stat = fs.lstatSync(file);
   if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 4 * 1024 * 1024 || (stat.mode & 0o077)) throw fail('COMPOSE_OPERATOR_CONFIG_PERMISSIONS');
   return validateConfig(JSON.parse(fs.readFileSync(file, 'utf8')), env);
+}
+
+// The lab demonstration addresses its two synthetic clients. Operator commands
+// resolve the requested tenant and check its current grant in PostgreSQL.
+function loadDemoConfig(file = process.env.NS_OPERATOR_CONFIG || '/run/ns-config/config.json', env = process.env) {
+  const config = loadConfig(file, env);
+  if (config.version !== 3) return config;
+  const { tenantIds, tenantAlias } = require('./demo-tenants');
+  const tenants = tenantIds(2).map((id, index) => ({ id, host: tenantAlias(index),
+    tokenEnv: index === 0 ? 'NS_DEMO_TOKEN_A' : 'NS_DEMO_TOKEN_B' }));
+  if (tenants.some(row => !env[row.tokenEnv])) throw fail('COMPOSE_DEMO_TARGETS_INVALID');
+  return { ...config, tenants };
 }
 
 function expectedCandidates () {
@@ -75,8 +89,39 @@ function lifecycleFor (config) {
 }
 
 function tenantFor (config, tenant) {
-  if (!config.tenants.some(t => t.id === tenant)) throw fail('COMPOSE_OPERATOR_TENANT_REFUSED');
+  if (!UUID.test(tenant) || (config.version !== 3 && !config.tenants.some(t => t.id === tenant))) throw fail('COMPOSE_OPERATOR_TENANT_REFUSED');
   return tenant;
+}
+
+// Caller holds a transaction scoped to this tenant. The restore operator's
+// grant is tenant- and role-specific; its revocation also prevents export.
+async function registeredLock(config, tenant, query) {
+  const quote = require('./config').quote;
+  const registry = quote(config.control.registry.namespace);
+  const control = quote(config.control.namespace);
+  const { rows } = await query(`SELECT w.lock_key::text AS key
+    FROM ${registry}.tenant_registry r
+    JOIN ${control}.tenant_lifecycle_windows w USING(tenant_id)
+    JOIN ${control}.tenant_lifecycle_restore_authority a USING(tenant_id)
+    WHERE r.tenant_id=$1 AND r.state='active' AND a.active AND a.role_oid=CURRENT_USER::regrole::oid`, [tenant]);
+  if (rows.length !== 1) throw fail('COMPOSE_OPERATOR_TENANT_REFUSED');
+  return { tenant, key: rows[0].key };
+}
+
+async function targetLocks(config, tenant, pool) {
+  if (config.version !== 3) return config.control.locks;
+  const client = await pool.connect();
+  let error;
+  try {
+    await client.query('BEGIN READ ONLY');
+    await client.query("SELECT set_config('app.current_tenant_id',$1,true)", [tenant]);
+    const lock = await registeredLock(config, tenant, client.query.bind(client));
+    await client.query('COMMIT');
+    return [lock];
+  } catch (cause) {
+    error = cause;
+    throw cause;
+  } finally { client.release(error); }
 }
 
 async function capture (config, tenant, env = process.env) {
@@ -101,8 +146,10 @@ function selectionOptions (config) {
 
 function exportTenant (lifecycle, connection, config, tenant, sourceCommit) {
   const verify = require('./operator-selection').verifier(config);
-  const snapshot = verify ? { ...connection, snapshotTransaction: body => connection.snapshotTransaction(async () => {
-    await verify(connection.query.bind(connection));
+  const snapshot = verify || config.version === 3 ? { ...connection, snapshotTransaction: body => connection.snapshotTransaction(async () => {
+    const query = connection.query.bind(connection);
+    if (config.version === 3) await registeredLock(config, tenant, query);
+    if (verify) await verify(query);
     return body();
   }) } : connection;
   return lifecycle.exportTenant(snapshot, { tenant, namespaces: config.namespaces, sourceCommit });
@@ -117,7 +164,7 @@ async function restore (config, artifact, env = process.env, hooks = {}) {
     statement_timeout: 10000, options: '-c search_path=pg_catalog' });
   try {
     const controller = require('../../lib/tenant-lifecycle/maintenance-window').create({ namespace: config.control.namespace,
-      locks: config.control.locks, pool, drainTimeoutMs: config.drainTimeoutMs, ...selectionOptions(config) });
+      locks: await targetLocks(config, tenant, pool), pool, drainTimeoutMs: config.drainTimeoutMs, ...selectionOptions(config) });
     let committed = false;
     const result = await controller.withRestore(tenant, { artifactDigest: artifact.digest }, async ({ connection, maintenanceClaim }) => {
       // The lifecycle control namespace holds the key-retention ledger (BF-230).
@@ -140,12 +187,12 @@ async function recover (config, command, tenant, claimId, env = process.env) {
     statement_timeout: 10000, options: '-c search_path=pg_catalog' });
   let controller;
   try {
-    controller = recoveryController(config, pool);
+    controller = recoveryController(config, pool, await targetLocks(config, tenant, pool));
     return command === 'inspect' ? await controller.inspect(tenant) : await controller.resume(tenant, { claimId });
   } finally { await controller?.close(); await pool.end(); }
 }
-function recoveryController (config, pool) {
-  return require('../../lib/tenant-lifecycle/restore-resume').create({ namespace: config.control.namespace, locks: config.control.locks, pool,
+function recoveryController (config, pool, locks = config.control.locks) {
+  return require('../../lib/tenant-lifecycle/restore-resume').create({ namespace: config.control.namespace, locks, pool,
     statementTimeoutMs: 10000, lockWaitMs: 2000, ...selectionOptions(config) });
 }
 
@@ -188,4 +235,4 @@ if (require.main === module) main().then(result => process.stdout.write(JSON.str
     recovery: 'Inspect persisted operation state. Do not automatically replay or reopen the tenant.' }) + '\n');
   process.exitCode = 1;
 });
-module.exports = { selectionOptions, validateConfig, loadConfig, lifecycleFor, tenantFor, capture, restore, recover, recoveryController, argumentsFor, main };
+module.exports = { targetLocks, selectionOptions, validateConfig, loadConfig, loadDemoConfig, lifecycleFor, tenantFor, capture, restore, recover, recoveryController, argumentsFor, main };
