@@ -75,8 +75,6 @@
   raw(overrides):: {
     local c = std.mergePatch($.defaults, overrides),
     local ns = c.namespace,
-    local adminFiles = ['env.json', 'config.json', 'vault-token', 'management-vault-token'],
-    local docRefs(role) = if role == 'admin' then { items: [{ key: name, path: name } for name in adminFiles] } else {},
     assert std.isString(c.sourceCommit) && std.length(c.sourceCommit) == 40 && std.length([x for x in std.stringChars(c.sourceCommit) if !std.member(std.stringChars('0123456789abcdef'),x)]) == 0 : 'sourceCommit must be the full 40-hex commit',
     assert std.isString(c.images.app) && std.length(std.split(c.images.app, '@')) == 2 && std.startsWith(std.split(c.images.app, '@')[1], 'sha256:') && std.length(std.split(c.images.app, '@')[1]) == 71 : 'images.app requires an immutable manifest digest',
     assert std.isString(c.images.postgres) && std.length(std.split(c.images.postgres, '@')) == 2 && std.startsWith(std.split(c.images.postgres, '@')[1], 'sha256:') && std.length(std.split(c.images.postgres, '@')[1]) == 71 : 'images.postgres requires an explicit maintained PostgreSQL/wal2json image digest',
@@ -113,7 +111,7 @@
     // load-env.js refuses both, so an init step copies them into a memory-backed emptyDir as
     // regular 0400 files owned by the runtime uid. Kubernetes waits for the Secret to exist.
     local configVolumes(role) = [
-      { name: 'secret-' + role, secret: { secretName: 'ns-config-' + role, defaultMode: 288 } + docRefs(role) },
+      { name: 'secret-' + role, secret: { secretName: 'ns-config-' + role, defaultMode: 288 } },
       { name: 'config-' + role, emptyDir: { medium: 'Memory', sizeLimit: '1Mi' } },
     ],
     // An emptyDir root is root-owned 3777 under fsGroup (measured 2026-11-10). Core refuses
@@ -149,6 +147,7 @@
         for r in roles
       ]) + (if ipc then [{ name: 'ns-ipc', mountPath: '/run/ns-ipc-volume' }] else []),
     },
+    local secretMount(role) = { name: 'secret-' + role, mountPath: '/run/ns-config', readOnly: true },
     local configMount(role) = { name: 'config-' + role, mountPath: '/run/ns-config', subPath: 'd', readOnly: true },
 
     local roleContainer(role, ports, extraEnv=[]) = {
@@ -161,7 +160,7 @@
       // Probes: components.libsonnet (httpGet on the role's private listener, /healthz/*).
       securityContext: hardened,
       volumeMounts: [
-        configMount(role),
+        secretMount(role),
         { name: 'ns-ipc', mountPath: '/run/ns-ipc', subPath: 'd' },
         caMount,
         tmpMount,
@@ -439,7 +438,7 @@
               automountServiceAccountToken: false,
               enableServiceLinks: false,
               securityContext: podSecurity,
-              initContainers: [installConfig(['admin'])],
+              initContainers: [],
               containers: [{
                 name: 'admin',
                 image: c.images.app,
@@ -448,12 +447,17 @@
                 command: ['node', 'deploy/multitenant/entrypoint.js', 'admin'],
 
                 ports: [{ name: 'int-admin', containerPort: 1342 }],
-                env: [{ name: 'NODE_EXTRA_CA_CERTS', value: '/run/ns-ca/ca.crt' }],
+                env: [
+                  { name: 'NODE_EXTRA_CA_CERTS', value: '/run/ns-ca/ca.crt' },
+                  { name: 'NS_VAULT_ADDR', value: 'https://vault:8200' },
+                  { name: 'ADMIN_HOSTNAME', valueFrom: { fieldRef: { fieldPath: 'status.podIP' } } },
+                  { name: 'ADMIN_PORT', value: '1342' }, { name: 'ADMIN_INSECURE_BIND_ACKNOWLEDGED', value: 'true' },
+                ],
                 readinessProbe: { httpGet: { path: '/v1/openapi.json', port: 'int-admin' }, periodSeconds: 2, timeoutSeconds: 3, failureThreshold: 30 },
                 securityContext: hardened,
-                volumeMounts: [configMount('admin'), caMount, tmpMount],
+                volumeMounts: [secretMount('admin'), caMount, tmpMount],
               }],
-              volumes: configVolumes('admin') + [ca, tmp],
+              volumes: [configVolumes('admin')[0], ca, tmp],
             },
           },
         },
@@ -676,10 +680,11 @@
         },
       },
     } + std.get(extra, 'objects', {}),
-    primer: clientJob('primer', ['node', 'deploy/multitenant/prime.js', 'provision'], {
+    primer: clientJob('primer', ['sh', '-euc', 'node deploy/multitenant/prime.js provision --tenant-count "$NS_DEMO_TENANTS" && exec node deploy/multitenant/prime.js prime --concurrency "$NS_PRIMER_CONCURRENCY"'], {
       container: {
-        args: ['--tenant-count', std.toString(c.tenantCount)],
-        env: [{ name: 'NS_PRIMER_STATE', value: '/run/ns-client' }, { name: 'NS_PRIMER_CONFIG', value: '/run/ns-primer/config.json' }],
+        env: [{ name: 'NS_DEMO_TENANTS', value: std.toString(c.tenantCount) },
+              { name: 'NS_PRIMER_CONCURRENCY', value: std.toString(std.get(c, 'primerConcurrency', 1)) },
+              { name: 'NS_PRIMER_STATE', value: '/run/ns-client' }, { name: 'NS_PRIMER_CONFIG', value: '/run/ns-primer/config.json' }],
       },
       mounts: [{ name: 'client-state', mountPath: '/run/ns-client' }],
       volumes: [{ name: 'client-state', persistentVolumeClaim: { claimName: 'primer-results' } }],
@@ -798,11 +803,11 @@
         storage: c.storage,
         qualification: { application: 'INHERITED_SEPARATELY', cluster: 'UNMEASURED', capacity: 'UNMEASURED', persistence: 'UNMEASURED' },
         documents: {
-          api: ['env.json','config.json','operation.json','evaluator-metadata.json','vault-token'],
-          realtime: ['env.json','config.json','operation.json'],
-          evaluator: ['env.json','config.json','operation.json'],
-          'tenant-admin': ['env.json','config.json','operation.json','vault-token'],
-          admin: ['env.json','config.json','vault-token','management-vault-token'],
+          api: ['ns_api_pg','ns_readiness_pg','ns_api_root_writer_pg','ns_alarm_pg','ns_display_pg','ns_lifetime_pg'],
+          realtime: ['ns_realtime_pg','ns_display_pg','ns_lifetime_pg'],
+          evaluator: ['ns_evaluator_pg','ns_outbox_pg','ns_suppression_pg','ns_activity_pg','ns_display_pg','ns_stream_recovery_pg','ns_lifetime_pg','ns_pgstream_generation'],
+          'tenant-admin': ['ns_owner_writer_pg','ns_owner_reader_pg','ns_owner_credentials_pg','ns_lifetime_pg','vault-token'],
+          admin: ['ns_provisioner_pg','ns_ownership_pg','ns_connector_sources_pg','ns_management_sessions_pg','vault-token','management-vault-token'],
           ui: ['env.json','config.json'], pgstream: ['pgstream.yaml'], primer: ['config.json'],
         },
         ownership: { namespace: c.namespace, label: { 'nightscout.org/run-id': c.runId }, clusterScoped: [{ kind: 'ClusterRoleBinding', name: c.namespace + '-vault-tokenreview' }] },
@@ -812,8 +817,8 @@
         placement: c.placement,
         placementByWorkload: c.placementByWorkload,
         seed: { script: 'scripts/secrets.sh seed', credentials: ['ns-credentials-postgres', 'ns-credentials-vault'], mountedBy: ['provision'] },
-        results: { primer: { claim: 'primer-results', file: 'provisioned.json' } },
-        order: ['seed Secrets and rendered role documents', 'apply', 'run optional lab client; its private results stay on its claim', 'observe correctness', 'delete only owned namespace and tokenreview binding'],
+        results: { primer: { claim: if c.storage.mode == 'existing-claim' then c.storage.claims.primerResults else if c.storage.mode == 'dynamic' then 'primer-results' else null, file: 'tenants.json' } },
+        order: ['seed role Secrets', 'apply', 'run optional lab client; its private results stay on its claim', 'observe correctness', 'delete only owned namespace and tokenreview binding'],
         workloads: {
           [v.metadata.name]: {
             kind: v.kind, replicas: if v.kind == 'Job' then 1 else v.spec.replicas,

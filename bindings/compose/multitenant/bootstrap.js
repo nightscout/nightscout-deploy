@@ -74,10 +74,18 @@ async function bootstrap(options) {
   const seal=await request('sys/seal-status');
   if(seal.sealed){const unsealed=await request('sys/unseal',{key:initialization.keys_base64[0]});if(unsealed.sealed)throw fail('BOOTSTRAP_VAULT_UNSEAL_REFUSED');}
   if(fs.existsSync(completeFile)){
+    // An existing lab (a repeat up, or a restored fixture snapshot at another core or deploy
+    // commit) is brought forward with migrate up; the roles' readiness checks decide the rest.
     const complete=JSON.parse(fs.readFileSync(completeFile,'utf8'));
-    if(complete.version!==2||complete.sourceCommit!==sourceCommit||complete.deployCommit!==deployCommit)throw fail('BOOTSTRAP_SOURCE_CHANGED_RECREATE_DEMO');
     if(complete.evaluatorWorkers!==evaluatorWorkers?.workers)throw fail('BOOTSTRAP_EVALUATOR_ROSTER_CHANGED_RECREATE_DEMO');
-    return {state:'existing-demo-unsealed',sourceCommit};
+    const l=plan.layout(),admin=new (require('pg').Client)({connectionString:pg.toString(),connectionTimeoutMillis:10000,statement_timeout:10000});
+    await admin.connect();
+    try{await migrate(admin,pg,l,plan.catalogues(),false);}finally{await admin.end();}
+    const seededFrom=complete.seededFrom||complete.sourceCommit;
+    if(complete.sourceCommit!==sourceCommit||complete.deployCommit!==deployCommit){
+      require('./render').write(completeFile,JSON.stringify({...complete,sourceCommit,deployCommit,seededFrom},null,2)+'\n');
+    }
+    return {state:'existing-demo-unsealed',sourceCommit,seededFrom};
   }
   if(fs.existsSync(startedFile))throw fail('BOOTSTRAP_PARTIAL_RECREATE_DEMO');
   const l=plan.layout(),q=plan.quote,allCatalogues=plan.catalogues();
@@ -100,20 +108,7 @@ async function bootstrap(options) {
     // Clinical output producers/deliverers may use PostgreSQL's reserved_connections
     // slots; REST-serving roles may not (clinical-isolation.js).
     for(const sql of require('./clinical-isolation').grants(l))await admin.query(sql);
-    const {run}=require('../../lib/migrations/postgres');
-    for(const [kind,catalogue]of Object.entries(allCatalogues)){
-      const namespace=l.namespaces[kind];await admin.query('CREATE SCHEMA '+q(namespace));
-      await run('up',{direct:true,connectionString:pg.toString(),namespace,catalogue,statementTimeoutMs:10000});
-      // Readiness requires immutable catalogue owners without LOGIN/bypass.
-      const tables=await admin.query('SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname=$1',[namespace]);
-      for(const row of tables.rows)await admin.query('ALTER TABLE '+q(namespace)+'.'+q(row.tablename)+' OWNER TO '+q(l.owner));
-      const functions=await admin.query('SELECT p.oid::regprocedure::text AS signature FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=$1',[namespace]);
-      // The newly created schema contains only functions from the admitted
-      // source catalogue. regprocedure preserves exact argument signatures.
-      for(const row of functions.rows)await admin.query('ALTER FUNCTION '+row.signature+' OWNER TO '+q(l.owner));
-      await admin.query('ALTER SCHEMA '+q(namespace)+' OWNER TO '+q(l.owner));
-    }
-    for(const sql of plan.grants(l))await admin.query(sql);
+    await migrate(admin,pg,l,allCatalogues,true);
     const managementGrants=require('../../lib/management-sessions/authority').grants({namespaces:{registry:l.namespaces.registry,authorization:l.namespaces.authorization,access:l.namespaces.access,control:l.namespaces.control},issuer:l.roles.management_issuer,authorityOwner:l.managementAuthorityOwner});
     for(const sql of [...managementGrants.authorityOwner,...managementGrants.issuer])await admin.query(sql);
     const streamDescriptor=require('./pgstream').descriptor(l,evaluatorWorkers);
@@ -124,6 +119,25 @@ async function bootstrap(options) {
     writePrivate(completeFile,{version:2,sourceCommit,deployCommit,registryMode:true,evaluatorWorkers:evaluatorWorkers?.workers});
     return {...result,sourceCommit};
   }finally{await admin.end();}
+}
+// Creates (fresh) or brings forward (existing) every catalogue schema, then applies the grants.
+// Objects a migration adds are handed to the catalogue owner; existing owners are left alone.
+async function migrate(admin,pg,l,catalogues,fresh){
+  const q=plan.quote,{run}=require('../../lib/migrations/postgres');
+  for(const [kind,catalogue]of Object.entries(catalogues)){
+    const namespace=l.namespaces[kind];
+    if(fresh)await admin.query('CREATE SCHEMA '+q(namespace));
+    await run('up',{direct:true,connectionString:pg.toString(),namespace,catalogue,statementTimeoutMs:10000});
+    // Readiness requires immutable catalogue owners without LOGIN/bypass.
+    const tables=await admin.query('SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname=$1 AND tableowner=current_user',[namespace]);
+    for(const row of tables.rows)await admin.query('ALTER TABLE '+q(namespace)+'.'+q(row.tablename)+' OWNER TO '+q(l.owner));
+    // The schema contains only functions from the admitted source catalogue. regprocedure
+    // preserves exact argument signatures.
+    const functions=await admin.query('SELECT p.oid::regprocedure::text AS signature FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=$1 AND pg_get_userbyid(p.proowner)=current_user',[namespace]);
+    for(const row of functions.rows)await admin.query('ALTER FUNCTION '+row.signature+' OWNER TO '+q(l.owner));
+    if(fresh)await admin.query('ALTER SCHEMA '+q(namespace)+' OWNER TO '+q(l.owner));
+  }
+  for(const sql of plan.grants(l))await admin.query(sql);
 }
 // Failure report: the stable code first (unchanged contract), then the underlying message and the
 // top stack frames so an uncoded refusal (for example a core config loader's size limit) is

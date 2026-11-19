@@ -64,8 +64,8 @@ function replacePrivate (file, value, { exclusive = false } = {}) {
   } finally { if (fd !== undefined) fs.closeSync(fd); if (exists(temporary)) fs.unlinkSync(temporary); }
 }
 function policyRules (layout, mode) {
-  if (!/^[a-z][a-z0-9_-]{0,62}$/.test(layout.mount) || !/^[a-z][a-z0-9_]{0,50}$/.test(layout.prefix) || !['registry', 'static'].includes(mode)) throw fail('VAULT_AGENT_LAYOUT_INVALID');
-  const key = purpose => mode === 'registry' ? 'tenant-' + purpose + '-*' : 'tenant-*-' + purpose;
+  if (!/^[a-z][a-z0-9_-]{0,62}$/.test(layout.mount) || !/^[a-z][a-z0-9_]{0,50}$/.test(layout.prefix) || mode !== 'registry') throw fail('VAULT_AGENT_LAYOUT_INVALID');
+  const key = purpose => 'tenant-' + purpose + '-*';
   return [...[['decrypt', 'data'], ['hmac', 'signing'], ['verify', 'signing'], ['sign', 'access']]
     .map(([operation, purpose]) => 'path "' + layout.mount + '/' + operation + '/' + key(purpose) + '" { capabilities = ["update"] }'),
   'path "auth/token/renew-self" { capabilities = ["update"] }', 'path "auth/token/lookup-self" { capabilities = ["read"] }'].join('\n');
@@ -73,42 +73,6 @@ function policyRules (layout, mode) {
 function apiNames (replicas) {
   if (!Number.isSafeInteger(replicas) || replicas < 1 || replicas > 16) throw fail('VAULT_AGENT_API_ROSTER_INVALID');
   return Array.from({ length: replicas }, (_, i) => i ? 'api-' + (i + 1) : 'api');
-}
-function selectApi (config, environment, { selected = false } = {}) {
-  if (!config || typeof config !== 'object' || Array.isArray(config) || !environment || typeof environment !== 'object' || Array.isArray(environment) ||
-      Object.values(environment).some(v => typeof v !== 'string')) throw fail('IMPORTED_API_CONFIG_INVALID');
-  const next = structuredClone(config), env = { ...environment }, removedEnvironment = [];
-  let mode;
-  if (next.registry && next.tenants === undefined && next.vault && typeof next.vault.tokenFile === 'string' && next.vault.tokenEnv === undefined) {
-    // The overlay renders the api at the sink before apply (NS_API_VAULT_TOKEN_FILE); a seeded
-    // token-file document is still converted.
-    mode = 'registry'; if (![SINK, ...(selected ? [] : ['/run/ns-config/vault-token'])].includes(next.vault.tokenFile)) throw fail('IMPORTED_API_CONFIG_INVALID'); next.vault.tokenFile = SINK;
-  } else if (!next.registry && Array.isArray(next.tenants) && next.tenants.length) {
-    mode = 'static'; const ids = new Set();
-    for (const tenant of next.tenants) {
-      if (typeof tenant.id !== 'string' || ids.has(tenant.id) || !tenant.vault) throw fail('IMPORTED_API_CONFIG_INVALID'); ids.add(tenant.id);
-      if (selected) { if (tenant.vault.tokenFile !== SINK || tenant.vault.tokenEnv !== undefined) throw fail('IMPORTED_API_CONFIG_INVALID'); }
-      else {
-        if (tenant.vault.tokenFile !== undefined || typeof tenant.vault.tokenEnv !== 'string' || !/^NS_VAULT_[0-9]{1,5}$/.test(tenant.vault.tokenEnv) || !env[tenant.vault.tokenEnv]) throw fail('IMPORTED_API_CONFIG_INVALID');
-        removedEnvironment.push(tenant.vault.tokenEnv); delete tenant.vault.tokenEnv; tenant.vault.tokenFile = SINK;
-      }
-    }
-  } else throw fail('IMPORTED_API_CONFIG_INVALID');
-  return { config: next, environment: env, removedEnvironment, mode };
-}
-// Use the shipping parser before authoritative state/Vault mutation. Its public
-// interface reads a file, so candidate JSON has a private temporary lifetime;
-// role credentials remain in memory and are never copied into that directory.
-function validateApi (config, environment, roleDirectory) {
-  const temporary = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'vault-agent-config-check-'));
-  try {
-    const file = path.join(temporary, 'config.json'); fs.writeFileSync(file, JSON.stringify(config), { mode: 0o600 });
-    const source = Object.fromEntries(Object.entries(environment).map(([key, value]) => [key,
-      value.startsWith('/run/ns-config/') ? path.join(roleDirectory, value.slice('/run/ns-config/'.length)) : value]));
-    source.MULTITENANT_PREVIEW_CONFIG = file;
-    if (process.env.MULTITENANT_CONFIG_MAX_BYTES) source.MULTITENANT_CONFIG_MAX_BYTES = process.env.MULTITENANT_CONFIG_MAX_BYTES;
-    require(path.join(process.cwd(), 'lib/server/serve/preview-config')).load(source);
-  } finally { fs.rmSync(temporary, { recursive: true, force: true }); }
 }
 function preflight (options) {
   const { output, sourceCommit, deployCommit, ttl, maxTtl, keepEnvTokens, vault } = options;
@@ -122,25 +86,11 @@ function preflight (options) {
   const previous = exists(completeFile) ? json(completeFile) : null;
   const actual = fs.readdirSync(output).filter(name => /^api(?:-[0-9]+)?$/.test(name)).sort();
   if (JSON.stringify(actual) !== JSON.stringify([...names].sort())) throw fail('VAULT_AGENT_API_ROSTER_INVALID');
-  const rows = names.map((name, index) => {
-    const dir = path.join(output, name); directory(dir);
-    const config = json(path.join(dir, 'config.json')), environment = json(path.join(dir, 'env.json')), operation = json(path.join(dir, 'operation.json'));
-    const selected = selectApi(config, environment, { selected: !!previous });
-    if (config.vault?.address !== vault.origin || config.vault?.mount !== layout.mount || environment.MULTITENANT_PREVIEW_CONFIG !== '/run/ns-config/config.json') throw fail('IMPORTED_API_CONFIG_INVALID');
-    const peers = operation.participants?.filter(row => Array.isArray(row.roles) && row.roles.includes('api'));
-    const ids = names.length === 1 ? ['api'] : names.map((_, i) => 'api-' + (i + 1));
-    if (!peers || peers.length !== names.length || operation.participantId !== ids[index] || peers.some((peer, i) => peer.id !== ids[i] || peer.roles.length !== 1 ||
-      names.length > 1 && peer.address?.url !== 'http://' + names[i] + ':7001')) throw fail('VAULT_AGENT_API_ROSTER_INVALID');
-    if (!keepEnvTokens) for (const key of selected.removedEnvironment) delete selected.environment[key];
-    (options.validateApi || validateApi)(selected.config, selected.environment, dir);
-    return { name, dir, ...selected, configDigest: digest(config), environmentDigest: digest(environment), operationDigest: digest(operation) };
-  });
-  const mode = rows[0].mode;
-  if (rows.some(row => row.mode !== mode || digest(row.config) !== digest(rows[0].config)) || (imported.registryMode === true) !== (mode === 'registry')) throw fail('VAULT_AGENT_API_MODE_MISMATCH');
-  const rules = policyRules(layout, mode), role = layout.prefix + '_vault_agent';
-  const identity = { version: 3, sourceCommit, deployCommit, project: options.project, bootstrapDigest: digest(imported), layoutDigest: digest(layout), mode,
-    tokenTtl: ttl, tokenMaxTtl: maxTtl, secretIdTtl: 0, secretIdNumUses: 0, envTokensKept: !!keepEnvTokens, vaultOrigin: vault.origin, sink: SINK, role, policy: role, policySha256: digest(rules),
-    apiInstances: names, files: rows.map(row => ({ name: row.name, config: digest(row.config), environment: digest(row.environment), operation: row.operationDigest })) };
+  if (!imported.registryMode) throw fail('IMPORTED_BOOTSTRAP_STATE_INVALID');
+  for (const name of names) directory(path.join(output, name));
+  const mode = 'registry', rules = policyRules(layout, mode), role = layout.prefix + '_vault_agent';
+  const identity = { version: 4, project: options.project, mode, tokenTtl: ttl, tokenMaxTtl: maxTtl,
+    vaultOrigin: vault.origin, sink: SINK, role, policy: role, policySha256: digest(rules) };
   if (previous) {
     const { roleIdDigest, ...recorded } = previous;
     if (digest(recorded) !== digest(identity) || typeof roleIdDigest !== 'string' || digest(privateBytes(path.join(root, 'creds/role_id'), 8192)) !== roleIdDigest) throw fail('VAULT_AGENT_STATE_CHANGED');
@@ -149,7 +99,7 @@ function preflight (options) {
     for (const file of ['sink/token', 'creds/secret_id']) if (exists(path.join(root, file))) privateBytes(path.join(root, file), 8192);
   } else if (exists(root) && fs.readdirSync(root).length) throw fail('VAULT_AGENT_PARTIAL_STATE');
   if (exists(path.join(root, 'rotation.started.json'))) throw fail('VAULT_AGENT_PARTIAL_STATE');
-  return { root, rows, imported, layout, rules, identity, previous };
+  return { root, imported, layout, rules, identity, previous };
 }
 async function requestFactory (options) {
   const material = json(path.join(options.output, 'bootstrap/vault-init.json'));
@@ -169,10 +119,10 @@ async function requestFactory (options) {
 }
 async function run (command, options) {
   if (!['plan', 'provision', 'secret-id'].includes(command)) throw fail('VAULT_AGENT_BOOTSTRAP_USAGE');
-  const state = preflight(options), { root, rows, identity, previous } = state;
+  const state = preflight(options), { root, identity, previous } = state;
   if (command === 'plan') return { state: previous ? 'existing-vault-agent-provisioned' : 'vault-agent-planned', ...identity };
   if (command === 'secret-id' && !previous) throw fail('VAULT_AGENT_NOT_PROVISIONED');
-  if (command === 'provision' && previous) return { state: 'existing-vault-agent-provisioned', sourceCommit: identity.sourceCommit, deployCommit: identity.deployCommit };
+  if (command === 'provision' && previous) return { state: 'existing-vault-agent-provisioned', sourceCommit: options.sourceCommit, deployCommit: options.deployCommit };
   // All local identity/custody checks precede filesystem or Vault mutations.
   const request = await requestFactory(options);
   if (command === 'secret-id') {
@@ -196,19 +146,11 @@ async function run (command, options) {
   createDirectory(path.join(root, 'creds')); createDirectory(path.join(root, 'sink'));
   replacePrivate(path.join(root, 'creds/role_id'), role.data.role_id + '\n', { exclusive: true });
   replacePrivate(path.join(root, 'creds/secret_id'), secret.data.secret_id + '\n', { exclusive: true });
-  for (const row of rows) {
-    // Recheck original inputs immediately before replacing them. A partial run
-    // remains refused, never declared idempotent or automatically repaired.
-    if (digest(json(path.join(row.dir, 'config.json'))) !== row.configDigest || digest(json(path.join(row.dir, 'env.json'))) !== row.environmentDigest ||
-        digest(json(path.join(row.dir, 'operation.json'))) !== row.operationDigest) throw fail('VAULT_AGENT_STATE_CHANGED');
-    replacePrivate(path.join(row.dir, 'config.json'), JSON.stringify(row.config) + '\n');
-    replacePrivate(path.join(row.dir, 'env.json'), JSON.stringify(row.environment) + '\n');
-  }
   const complete = { ...identity, roleIdDigest: digest(privateBytes(path.join(root, 'creds/role_id'), 8192)) };
   replacePrivate(path.join(root, 'complete.json'), JSON.stringify(complete, null, 2) + '\n', { exclusive: true });
-  return { state: 'vault-agent-provisioned', sourceCommit: identity.sourceCommit, deployCommit: identity.deployCommit, apiInstances: identity.apiInstances, mode: identity.mode };
+  return { state: 'vault-agent-provisioned', sourceCommit: options.sourceCommit, deployCommit: options.deployCommit, apiInstances: apiNames(options.replicas), mode: identity.mode };
 }
 if (require.main === module) Promise.resolve().then(() => run(process.argv[2] || 'provision', input())).then(result => console.log(JSON.stringify(result))).catch(error => {
   console.error(JSON.stringify({ error: /^[A-Z0-9_]{1,80}$/.test(error?.code || '') ? error.code : 'VAULT_AGENT_BOOTSTRAP_FAILED' })); process.exitCode = 1;
 });
-module.exports = { input, run, preflight, policyRules, apiNames, selectApi, replacePrivate, privateBytes, validateApi, digest, SINK };
+module.exports = { input, run, preflight, policyRules, apiNames, replacePrivate, privateBytes, digest, SINK };

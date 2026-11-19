@@ -1,7 +1,6 @@
 'use strict';
 
 // Explicit synthetic deployment plan. No database, network or filesystem I/O.
-const path = require('node:path');
 const clinical = Object.freeze(['entries','treatments','devicestatus','profile','food','activity']);
 const ordered = Object.freeze(['entries','treatments','devicestatus','profile','food']);
 const serviceRoles = Object.freeze(['api','realtime','evaluator','tenant-admin']);
@@ -31,57 +30,12 @@ function catalogues({nativeSelection}={}) {
 function layout(prefix = 'nsdemo') {
   quote(prefix);
   if (prefix.length > 24) throw new TypeError('Deployment prefix too long');
-  const names = ['platform_verifier','pgstream','api','readiness','realtime','evaluator','alarm','suppression','outbox','owner_writer','owner_reader','owner_credentials','root_writer','operator','provisioner','display_reader','activity_reader','placement_publisher','ownership_operator','connector_writer','management_issuer','ui_registry',
+  const names = ['pgstream','api','readiness','realtime','evaluator','alarm','suppression','outbox','owner_writer','owner_reader','owner_credentials','root_writer','operator','provisioner','display_reader','activity_reader','placement_publisher','ownership_operator','connector_writer','management_issuer','ui_registry',
     ...serviceRoles.map(name=>'lifetime_'+name.replace('-','_'))];
   return {prefix,owner:prefix+'_owner',managementAuthorityOwner:prefix+'_management_authority',namespaces:Object.fromEntries(Object.keys(catalogues()).map(name=>[name,prefix+'_'+name])),
     roles:Object.fromEntries(names.map(name=>[name,prefix+'_'+name])),mount:prefix+'_transit'};
 }
 const { insertionGrants, grants } = require('../../lib/server/ordinary-deployment-grants');
-function documents({layout:l,urls,vaultAddress,registryMode=true,realtimeOwnership=null}) {
-  if(!registryMode)throw new TypeError('STATIC_PRODUCT_CONFIGURATION_RETIRED');
-  const ns=l.namespaces, base='/run/ns-config',ipc='/run/ns-ipc';
-  const domainNamespaces=Object.fromEntries(clinical.map(name=>[name,ns[name]]));
-  const limits={pageSize:100,maxRows:10000,maxBytes:8388608};
-  const pgAddress=new URL(urls.evaluator);
-  const evaluator={version:1,datastore:{hostname:pgAddress.hostname,port:Number(pgAddress.port||5432),database:decodeURIComponent(pgAddress.pathname.slice(1))},postgres:{connectionEnv:'NS_EVALUATOR_PG',namespaces:{...domainNamespaces,clock:ns.clock,checkpoint:ns.eval_checkpoint}},
-    consumer:'evaluator-compose-demo',...limits,timeIntervalMs:1000,socketOrderDomains:['treatments','devicestatus','profile'],
-    consumers:{realtime:{outbox:{connectionEnv:'NS_OUTBOX_PG',namespace:ns.outbox,maxRows:10000,maxBytes:8388608,maxConnections:2},
-      suppression:{connectionEnv:'NS_SUPPRESSION_PG',namespace:ns.alarm,maxRows:10000,maxBytes:8388608,maxConnections:2},
-      route:{id:'realtime-compose-demo',maxMessageBytes:1048576,operationTimeoutMs:5000},
-      maxPayloadBytes:524288,maxInflight:4,attemptTimeoutMs:10000,retryDelayMs:1000,pollIntervalMs:1000,retryIntervalMs:1000}}};
-  const realtime={version:1,postgres:{connectionEnv:'NS_REALTIME_PG',namespaces:{clock:ns.clock,checkpoint:ns.rt_checkpoint}},consumer:'realtime-compose-demo',
-    maxRows:limits.maxRows,maxBytes:limits.maxBytes,
-    maxMessageBytes:1048576,operationTimeoutMs:5000,authorizationRecheckMs:30000};
-  // Decision root-grant-ceiling-default-all: every tenant data permission unless
-  // the operator narrows it. Owner and root share this catalogue (one policy row).
-  const ownerCatalogue=['*'];
-  const api={version:1,domains:[...clinical,'settings'],legacy:true,context:true,writeClock:true,
-    subjectAdmin:{writerConnectionEnv:'NS_API_ROOT_WRITER_PG',ownerPolicy:{catalogue:ownerCatalogue.slice()}},
-    postgres:{connectionEnv:'NS_API_PG',readinessConnectionEnv:'NS_READINESS_PG',namespaces:{...domainNamespaces,settings:ns.settings,authorization:ns.authorization,secrets:ns.secrets,legacy:ns.legacy,access:ns.access,clock:ns.clock}},
-    vault:{address:vaultAddress,mount:l.mount,timeoutMs:5000},resolution:{mode:'direct-alias'},
-    accessTokens:{issuer:'nightscout-compose-demo',audience:'nightscout-data'},
-    socketForwarding:{maxTenants:10000,maxMessageBytes:1048576,operationTimeoutMs:5000,
-      alarm:{connectionEnv:'NS_ALARM_PG',namespace:ns.alarm},consumerState:{evaluatorConfigEnv:'MULTITENANT_EVALUATOR_CONFIG'}}};
-  const owner={version:1,postgres:{writerConnectionEnv:'NS_OWNER_WRITER_PG',accessConnectionEnv:'NS_OWNER_READER_PG',namespaces:{authorization:ns.authorization,credentials:ns.legacy,access:ns.access}},
-    ownerPolicy:{catalogue:ownerCatalogue.slice()},resolution:{mode:'direct-alias'},
-    management:{issuer:'nightscout-compose-management',audience:'nightscout-management',purpose:'management',consumer:'compose-owner',maxLifetimeSeconds:600}};
-  const configs={api,realtime,evaluator,'tenant-admin':owner};
-  // serve.internal: one socket per role process on the shared private
-  // directory; every peer address names the same paths.
-  const socketOf=role=>ipc+'/'+role+'.sock';
-  const common={...Object.fromEntries(serviceRoles.map(role=>[require('../../lib/server/internal-api/listener-config').envName(role)+'SOCKET',socketOf(role)])),NODE_EXTRA_CA_CERTS:'/run/ns-ca/ca.crt'};
-  const own=role=>({NS_SERVE_INTERNAL_SOCKET:socketOf(role)});
-  const environments={api:{...common,...own('api'),API_HOSTNAME:'0.0.0.0',API_PORT:'1337',MULTITENANT_PREVIEW_CONFIG:base+'/config.json',MULTITENANT_EVALUATOR_CONFIG:base+'/evaluator-metadata.json',...require('./clinical-isolation').apiEnvironment(),NS_API_PG:urls.api,NS_READINESS_PG:urls.readiness,NS_API_ROOT_WRITER_PG:urls.root_writer,NS_ALARM_PG:urls.alarm},
-    realtime:{...common,...own('realtime'),REALTIME_HOSTNAME:'0.0.0.0',REALTIME_PORT:'1339',MULTITENANT_REALTIME_CONFIG:base+'/config.json',NS_REALTIME_PG:urls.realtime},
-    evaluator:{...common,...own('evaluator'),MULTITENANT_EVALUATOR_CONFIG:base+'/config.json',NS_EVALUATOR_PG:urls.evaluator,NS_OUTBOX_PG:urls.outbox,NS_SUPPRESSION_PG:urls.suppression},
-    'tenant-admin':{...common,...own('tenant-admin'),TENANT_ADMIN_HOSTNAME:'0.0.0.0',TENANT_ADMIN_PORT:'1341',MULTITENANT_OWNER_PREVIEW_CONFIG:base+'/config.json',NS_OWNER_WRITER_PG:urls.owner_writer,NS_OWNER_READER_PG:urls.owner_reader}};
-  const operations={};
-  for(const role of serviceRoles){operations[role]={version:1,namespace:ns.control,connectionEnv:'NS_LIFETIME_PG'};Object.assign(environments[role],{NS_LIFETIME_PG:urls['lifetime_'+role.replace('-','_')],MULTITENANT_OPERATION_CONFIG:base+'/operation.json'});}
-  let docs = {configs,environments,operations};
-  docs = require('./registry-plan').expand(docs,{layout:l,urls,vaultAddress});
-  const evaluatorWorkers = require('./evaluator-workers');
-  return evaluatorWorkers.expand(require('./realtime-workers').expand(require('./replicas').expand(docs), realtimeOwnership), evaluatorWorkers.selection());
-}
 function lifecycle(l) {
   const aliases={rt_checkpoint:'checkpoint',eval_checkpoint:'evaluator_checkpoint',alarm:'alarm_suppression',outbox:'notification_outbox',display_settings:'tenant_settings'};
   const selected=catalogues(), admitted=new Map(require('../../lib/tenant-lifecycle').admittedCatalogue().map(row=>[row.kind,row]));
@@ -96,27 +50,4 @@ function lifecycle(l) {
   return {namespaces:Object.fromEntries(Object.entries(l.namespaces).filter(([name])=>!['control','registry','pool'].includes(name)).map(([name,namespace])=>[aliases[name]||name,namespace])),
     catalogues:Object.entries(tables).map(([name,tables])=>({kind:aliases[name]||name,candidate:selected[name],tables,secrets:name==='secrets'?['secret_records']:[]}))};
 }
-function validateFiles(directory, docs) {
-  const evaluated=docs.configs.evaluator;
-  const rawNative=docs.operations.evaluator.nativeSelection,native=rawNative===undefined?undefined:require('../../lib/tenant-lifecycle/native-selection').create(rawNative);
-  if(native&&(native.binding.namespace!==evaluated.postgres.namespaces.checkpoint||native.binding.consumer!==evaluated.consumer||native.binding.generation!==evaluated.pgstream.generation||native.binding.source.slot!==evaluated.pgstream.slot))throw new TypeError('COMPOSE_NATIVE_SELECTION_MISMATCH');
-  if(evaluated.pgstream)for(const [role,config]of Object.entries(docs.configs))if(role==='realtime'||role.startsWith('realtime-')){
-    if(config.changeFeed||config.completedOutput?.namespace!==evaluated.postgres.namespaces.checkpoint||config.completedOutput?.consumer!==evaluated.consumer)throw new TypeError('PGSTREAM_COMPLETED_SOURCE_MISMATCH');
-  }
-  const parsers={api:require('../../lib/server/serve/preview-config').load,realtime:require('../../lib/server/realtime/config').load,
-    evaluator:require('../../lib/server/serve/evaluator-config').load,'tenant-admin':require('../../lib/server/serve/owner-preview-config').load};
-  for(const role of Object.keys(docs.configs)){
-    const productRole = role.startsWith('api-') ? 'api' : role.startsWith('realtime-') ? 'realtime' : role.startsWith('evaluator-') ? 'evaluator' : role;
-    const env=Object.fromEntries(Object.entries(docs.environments[role]).map(([key,value])=>[key,typeof value==='string'?value.replace('/run/ns-config',path.join(directory,role)):value]));
-    const internal=require('../../lib/server/internal-api/listener-config').resolve([productRole],env);
-    const parsed=parsers[productRole](env,internal),operation=require('../../lib/server/serve/operation-cohort-config').load(env,internal);
-    if((operation.nativeSelection?.selectionDigest)!==(native?.selectionDigest))throw new TypeError('COMPOSE_NATIVE_SELECTION_MISMATCH');
-    require('./evaluator-workers').validate(docs, role, parsed, operation);
-
-  }
-  // The ui's own parser (aliases), on the written file when there is one, so a
-  // refusal surfaces at bootstrap instead of when the ui starts.
-  const uiFile=path.join(directory,'ui','config.json'),fs=require('node:fs');
-  require('./ui').parseConfig(fs.existsSync(uiFile)?JSON.parse(fs.readFileSync(uiFile,'utf8')):docs.ui);
-}
-module.exports={A,B,subject,tenantCount,tenantIds,tenantAlias,clinical,ordered,serviceRoles,quote,catalogues,layout,insertionGrants,grants,documents,lifecycle,validateFiles};
+module.exports={A,B,subject,tenantCount,tenantIds,tenantAlias,clinical,ordered,serviceRoles,quote,catalogues,layout,insertionGrants,grants,lifecycle};

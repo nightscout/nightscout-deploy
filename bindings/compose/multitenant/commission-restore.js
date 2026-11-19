@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 'use strict';
 
-// Explicit private DDL-operator commissioning, after tenant provisioning. This
-// grants the selected restore identity authority for the synthetic seed cohort;
+// Explicit private DDL-operator commissioning, after tenant provisioning. Only the recovery drills
+// (operator/drills/stack.sh up) and the restore demonstration (demo.sh demo) run it; ordinary
+// priming never does. This grants the selected restore identity authority for the synthetic seed cohort;
 // serving and provisioning identities cannot grant themselves this authority.
 // Existing inactive authority is a revocation and is never reactivated here.
 const fs = require('node:fs'), path = require('node:path');
@@ -10,7 +11,7 @@ const plan = require('./config'), bootstrap = require('./bootstrap');
 const fail = code => Object.assign(new Error(code), { code });
 async function commission(options) {
   const complete = JSON.parse(fs.readFileSync(path.join(options.output, 'bootstrap/complete.json'), 'utf8'));
-  if (complete.version !== 2 || complete.sourceCommit !== options.sourceCommit || complete.deployCommit !== options.deployCommit) throw fail('RESTORE_COMMISSION_SOURCE_MISMATCH');
+  if (complete.version !== 2) throw fail('RESTORE_COMMISSION_SOURCE_MISMATCH');
   const layout = plan.layout(), q = plan.quote, ns = layout.namespaces;
   const client = new (require('pg').Client)({ connectionString: options.pg.toString(), connectionTimeoutMillis: 10000, statement_timeout: 10000 });
   await client.connect();

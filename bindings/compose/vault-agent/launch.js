@@ -58,10 +58,10 @@ function plan (tree, source = process.env) {
   }
   const files = [path.join(base, 'compose.yaml')];
   const add = (file, expected) => { const name = path.join(state, file), bytes = read(name, 262144, true); if (expected !== undefined && bytes !== expected) throw fail('VAULT_AGENT_ROSTER_CHANGED'); files.push(name); };
-  add('compose.replicas.yaml', replicas.compose(count, path.join(base, 'compose.yaml')));
-  if (realtime) add('compose.realtime.yaml', rt.compose(realtime, path.join(base, 'compose.yaml'), apis));
+  add('compose.replicas.yaml');
+  if (realtime) add('compose.realtime.yaml', rt.compose(realtime, 'compose.yaml', apis));
   if (selected.NS_EVALUATOR_WORKERS !== undefined) {
-    const ev = require(path.join(base, 'evaluator-workers')); add('compose.evaluator.yaml', ev.compose(ev.selection(selected), path.join(base, 'compose.yaml')));
+    const ev = require(path.join(base, 'evaluator-workers')); add('compose.evaluator.yaml', ev.compose(ev.selection(selected), 'compose.yaml'));
   }
   files.push(path.join(here, 'compose.vault-agent.yaml'));
   const allowed = ['NS_VAULT_AGENT_TOKEN_TTL', 'NS_VAULT_AGENT_TOKEN_MAX_TTL', 'NS_VAULT_AGENT_KEEP_ENV_TOKENS'];
@@ -69,7 +69,7 @@ function plan (tree, source = process.env) {
   for (const key of allowed) if (source[key] !== undefined) runtime[key] = source[key];
   const options = require('./vault-agent-bootstrap').input({ ...runtime, NS_VAULT_AGENT_BOOTSTRAP: '1', NS_BOOTSTRAP_OUTPUT: '/state', VAULT_ADDR: 'https://vault:8200' });
   const stdin = ['# Generated API-only Agent sink custody.', 'services:', ...apis.flatMap(name => [
-    '  ' + name + ':', '    depends_on:', '      vault-agent: {condition: service_healthy}', '    volumes:',
+    '  ' + name + ':', '    environment:', '      NS_VAULT_TOKEN_FILE: /run/ns-vault/token', '    depends_on:', '      vault-agent: {condition: service_healthy}', '    volumes:',
     '      - ${NS_DEMO_STATE}/vault-agent/sink:/run/ns-vault:ro'])].join('\n') + '\n';
   return { root, base, state, project, envFile, files, stdin, runtime, apis, realtime: rtServices, evaluators: evServices,
     sourceCommit: selected.NS_SOURCE_COMMIT, deployCommit: selected.NS_DEPLOY_COMMIT, ttl: options.ttl, maxTtl: options.maxTtl };
@@ -89,12 +89,12 @@ function commands (selected, command, detail) {
       up(...selected.apis, ...selected.realtime, ...selected.evaluators, 'pgstream', 'tenant-admin', 'ui', 'nginx')];
   }
   if (command === 'prime' || command === 'demo') {
+    // Restore authority is granted only for the restore demonstration, never by ordinary priming.
     return [
       run('primer', 'node', 'deploy/multitenant/prime.js', 'provision'),
-      compose('--profile', 'ops', 'run', '--rm', '--no-deps', '-e', 'NS_DEMO_TENANTS=' + (process.env.NS_DEMO_TENANTS || '2'),
-        'bootstrap', 'node', 'deploy/multitenant/commission-restore.js'),
       run('primer', 'node', 'deploy/multitenant/prime.js', 'prime'), node(path.join(selected.base, 'publish-primer.js'), selected.state),
-      ...(command === 'demo' ? [run('demo')] : [])];
+      ...(command === 'demo' ? [compose('--profile', 'ops', 'run', '--rm', '--no-deps', '-e', 'NS_DEMO_TENANTS=' + (process.env.NS_DEMO_TENANTS || '2'),
+        'bootstrap', 'node', 'deploy/multitenant/commission-restore.js'), run('demo')] : [])];
   }
   if (command === 'secret-id') return [run('vault-agent-bootstrap', 'node', '/run/ns-overlay/vault-agent-bootstrap.js', 'secret-id')];
   if (command === 'agent' && ['stop', 'start', 'logs'].includes(detail)) return [compose(detail, 'vault-agent')];

@@ -32,20 +32,28 @@
       ] else [];
     local spec(role) =
       local agent = role == 'api';
-      local keep = ['secret-' + role, 'config-' + role, 'ns-ca', 'tmp'] +
+      local keep = ['secret-' + role, 'ns-ca', 'tmp'] +
                    (if agent then ['ns-vault', 'vault-token', 'vault-agent-config'] else []);
-      local init = source.initContainers[0];
+      local key = std.asciiUpper(std.strReplace(role, '-', '_'));
+      local publicPorts = { api: '1337', realtime: '1339', 'tenant-admin': '1341' };
+      local env = [
+        { name: 'NS_SERVE_INTERNAL_HOST', value: '0.0.0.0' },
+        { name: 'NS_SERVE_INTERNAL_PORT', value: std.toString($.ports[role]) },
+      ] + [{ name: 'NS_' + std.asciiUpper(std.strReplace(peer, '-', '_')) + '_INTERNAL_URL',
+             value: 'http://' + peer + '-internal:' + std.toString($.ports[peer]) + '/' } for peer in roles]
+        + (if std.objectHas(publicPorts, role) then [
+              { name: key + '_HOSTNAME', value: '0.0.0.0' }, { name: key + '_PORT', value: publicPorts[role] },
+           ] else [])
+        + (if std.member(['api', 'tenant-admin'], role) then [{ name: 'NS_VAULT_ADDR', value: 'https://vault:8200' }] else [])
+        + (if agent then [{ name: 'NS_VAULT_TOKEN_FILE', value: '/run/ns-vault/token' }] else []);
       source + {
-        initContainers: [init + {
-          command: std.slice(init.command, 0, 3, 1) + [role],
-          volumeMounts: [v for v in init.volumeMounts if std.member(['secret-' + role, 'config-' + role], v.name)],
-        }] + (if agent then [source.initContainers[1]] else []),
+        initContainers: if agent then [source.initContainers[1]] else [],
         containers: [x + {
-          env: x.env + sliceEnv(role),
+          env: x.env + env + sliceEnv(role),
           ports: x.ports + [{ name: 'int-role', containerPort: $.ports[role] }],
           // Core health endpoints on the role's private listener (lib/server/serve/role-health.js).
           // Startup budget 5 s x 180 = 900 s (Compose start_period) for a long tenant warm.
-          startupProbe: { httpGet: { path: '/healthz/ready', port: 'int-role' }, periodSeconds: 5, timeoutSeconds: 3, failureThreshold: 180 },
+          startupProbe: { httpGet: { path: '/healthz/isolation', port: 'int-role' }, periodSeconds: 5, timeoutSeconds: 3, failureThreshold: 180 },
           readinessProbe: { httpGet: { path: '/healthz/ready', port: 'int-role' }, periodSeconds: 2, timeoutSeconds: 3, failureThreshold: 30 },
           // Process liveness only: /healthz/live answers while the datastore is down; a role that
           // cannot recover the datastore within its bound exits on its own (datastore-loss-recover-in-place).

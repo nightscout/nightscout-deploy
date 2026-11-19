@@ -109,8 +109,10 @@ test('shipping plan starts serving workers before the independent lab client', (
   assert.ok(steps[5].endsWith('api api-2 api-3 api-4 realtime realtime-2 socket-edge evaluator evaluator-2 pgstream tenant-admin ui nginx'));
   assert.equal(steps.length,6);
   const lab = launch.commands(selected, 'prime').map(row => row.args.join(' '));
-  assert.ok(lab[0].includes('prime.js provision')); assert.ok(lab[1].includes('commission-restore.js'));
-  assert.ok(lab[2].includes('prime.js prime')); assert.ok(lab[3].includes('publish-primer.js'));
+  assert.ok(lab[0].includes('prime.js provision')); assert.ok(lab[1].includes('prime.js prime')); assert.ok(lab[2].includes('publish-primer.js'));
+  assert.ok(!lab.some(step => step.includes('commission-restore.js')));
+  const demo = launch.commands(selected, 'demo').map(row => row.args.join(' '));
+  assert.ok(demo[3].includes('commission-restore.js')); assert.ok(demo[4].endsWith('run --rm --no-deps demo'));
 });
 
 test('image build and read-only commands do not create runtime ownership state', () => {

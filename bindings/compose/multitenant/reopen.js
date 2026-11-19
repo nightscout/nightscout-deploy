@@ -83,7 +83,7 @@ function reopen(previousFile, image) {
     const temporary = targetFile + '.patch-' + process.pid;
     fs.writeFileSync(temporary, Object.entries(next).map(([k,v]) => k + '=' + v + '\n').join(''), { flag: 'wx', mode: 0o600 });
     fs.renameSync(temporary, targetFile);
-    execFileSync('./demo.sh', ['up','--stopped-seed',prior.sourceCommit,prior.deployCommit], {
+    execFileSync('./demo.sh', ['up'], {
       cwd: __dirname, env: { ...process.env, ...next }, stdio: 'inherit'
     });
   } finally { fs.closeSync(fd); }

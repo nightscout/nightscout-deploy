@@ -13,11 +13,8 @@ x-app: &app
   # restart: ${NS_COMPOSE_RESTART:-on-failure} (decision compose-restart-on-failure);
   # tests that inject failures or hold a role down set NS_COMPOSE_RESTART=no.
   restart: "no"
-  environment:
+  environment: &app-env
     NODE_EXTRA_CA_CERTS: /run/ns-ca/ca.crt
-    # Role configuration bound (core config-file.js; empty = core's 1 MiB default). Set with
-    # NS_BOOTSTRAP_CONFIG_MAX_BYTES so the bootstrap validates against the same value.
-    MULTITENANT_CONFIG_MAX_BYTES: ${NS_BOOTSTRAP_CONFIG_MAX_BYTES:-}
     NS_M7_DIAGNOSTICS: ${NS_M7_DIAGNOSTICS:-0}
     NS_M7_DIAGNOSTICS_INTERVAL_MS: ${NS_M7_DIAGNOSTICS_INTERVAL_MS:-5000}
     # Opt-in sampled clinical stage records (core lib/diagnostics/clinical-stages.js);
@@ -28,6 +25,13 @@ x-app: &app
   cap_drop: [ALL]
   read_only: true
   tmpfs: [/tmp:mode=1777]
+
+x-serving-env: &serving-env
+  <<: *app-env
+  NS_API_INTERNAL_SOCKET: /run/ns-ipc/api.sock
+  NS_REALTIME_INTERNAL_SOCKET: /run/ns-ipc/realtime.sock
+  NS_EVALUATOR_INTERNAL_SOCKET: /run/ns-ipc/evaluator.sock
+  NS_TENANT_ADMIN_INTERNAL_SOCKET: /run/ns-ipc/tenant-admin.sock
 
 services:
   postgres:
@@ -96,14 +100,11 @@ services:
       NS_DEPLOY_COMMIT: ${NS_DEPLOY_COMMIT:?Run prepare.js first}
       # Fixed service instances; maintenance still addresses every exact instance.
       NS_API_REPLICAS: ${NS_API_REPLICAS:-1}
-      NS_OPERATION_LEASE_SESSIONS: ${NS_OPERATION_LEASE_SESSIONS:-4}
       # Opt-in bounded REST admission per api process (clinical-isolation.js; empty = no limit).
       NS_API_REST_CONCURRENCY: ${NS_API_REST_CONCURRENCY:-}
       NS_API_REST_QUEUE: ${NS_API_REST_QUEUE:-}
       NS_API_REST_QUEUE_TIMEOUT_MS: ${NS_API_REST_QUEUE_TIMEOUT_MS:-}
       NS_API_REST_RETRY_AFTER_SECONDS: ${NS_API_REST_RETRY_AFTER_SECONDS:-}
-      # Off when empty. Large tenant counts only: see render.js input().
-      NS_BOOTSTRAP_CONFIG_MAX_BYTES: ${NS_BOOTSTRAP_CONFIG_MAX_BYTES:-}
       NS_CREDENTIALS_DIR: /run/ns-credentials
       NS_RENDER_OUTPUT: /state
       NS_BOOTSTRAP_OUTPUT: /state
@@ -118,6 +119,12 @@ services:
   # Operator provisioning is a private network service, never published.
   admin:
     <<: *app
+    environment:
+      <<: *app-env
+      ADMIN_HOSTNAME: admin
+      ADMIN_PORT: "1342"
+      NS_VAULT_ADDR: https://vault:8200
+      ADMIN_INSECURE_BIND_ACKNOWLEDGED: "true"
     command: [node, deploy/multitenant/entrypoint.js, admin]
     restart: ${NS_COMPOSE_RESTART:-on-failure}
     depends_on:
@@ -153,6 +160,16 @@ services:
   # site down.
   api:
     <<: *app
+    environment:
+      <<: *serving-env
+      NS_SERVE_INTERNAL_SOCKET: /run/ns-ipc/api.sock
+      API_HOSTNAME: 0.0.0.0
+      API_PORT: "1337"
+      NS_VAULT_ADDR: https://vault:8200
+      NS_API_REST_CONCURRENCY: ${NS_API_REST_CONCURRENCY:-}
+      NS_API_REST_QUEUE: ${NS_API_REST_QUEUE:-}
+      NS_API_REST_QUEUE_TIMEOUT_MS: ${NS_API_REST_QUEUE_TIMEOUT_MS:-}
+      NS_API_REST_RETRY_AFTER_SECONDS: ${NS_API_REST_RETRY_AFTER_SECONDS:-}
     command: [node, deploy/multitenant/entrypoint.js, api]
     restart: ${NS_COMPOSE_RESTART:-on-failure}
     depends_on:
@@ -175,6 +192,11 @@ services:
 
   realtime:
     <<: *app
+    environment:
+      <<: *serving-env
+      NS_SERVE_INTERNAL_SOCKET: /run/ns-ipc/realtime.sock
+      REALTIME_HOSTNAME: 0.0.0.0
+      REALTIME_PORT: "1339"
     command: [node, deploy/multitenant/entrypoint.js, realtime]
     restart: ${NS_COMPOSE_RESTART:-on-failure}
     depends_on:
@@ -209,6 +231,9 @@ services:
 
   evaluator:
     <<: *app
+    environment:
+      <<: *serving-env
+      NS_SERVE_INTERNAL_SOCKET: /run/ns-ipc/evaluator.sock
     command: [node, deploy/multitenant/entrypoint.js, evaluator]
     restart: ${NS_COMPOSE_RESTART:-on-failure}
     depends_on:
@@ -230,6 +255,12 @@ services:
 
   tenant-admin:
     <<: *app
+    environment:
+      <<: *serving-env
+      NS_SERVE_INTERNAL_SOCKET: /run/ns-ipc/tenant-admin.sock
+      TENANT_ADMIN_HOSTNAME: 0.0.0.0
+      TENANT_ADMIN_PORT: "1341"
+      NS_VAULT_ADDR: https://vault:8200
     command: [node, deploy/multitenant/entrypoint.js, tenant-admin]
     restart: ${NS_COMPOSE_RESTART:-on-failure}
     depends_on:
@@ -256,7 +287,6 @@ services:
       UI_HOSTNAME: 0.0.0.0
       UI_PORT: "1340"
       UI_PUBLIC_CONFIG: /run/ns-config/config.json
-      MULTITENANT_CONFIG_MAX_BYTES: ${NS_BOOTSTRAP_CONFIG_MAX_BYTES:-}
     healthcheck:
       test: [CMD, node, -e, "fetch('http://127.0.0.1:1340/healthz',{signal:AbortSignal.timeout(1500)}).then(async r=>{if(!r.ok||await r.text()!=='ok\\n')process.exitCode=1}).catch(()=>{process.exitCode=1})"]
       interval: 2s

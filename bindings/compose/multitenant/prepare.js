@@ -39,7 +39,6 @@ function prepare (args) {
   const evaluator = require('./evaluator-workers'), selectedEvaluator = evaluator.selection();
   if (selectedRealtime && selectedEvaluator && selectedRealtime.workers !== selectedEvaluator.workers) throw new TypeError('Static role counts must agree');
   if (selectedEvaluator) evaluator.assertSeed(selectedEvaluator);
-  const leaseSessions = require('./registry-plan').leaseSessions();
   require('./edge').policy();
   const isolation = require('./clinical-isolation');
   const clinicalIsolation = isolation.selection(process.env, { budget: isolation.connectionBudget({ apiReplicas,
@@ -82,7 +81,7 @@ function prepare (args) {
     (selectedEvaluator ? 'NS_EVALUATOR_WORKERS=' + selectedEvaluator.workers + '\nNS_PGSTREAM_WAL_SENDERS=' + Math.max(4, selectedEvaluator.workers + 2) + '\n' : '') +
     'NS_M7_DIAGNOSTICS=' + diagnostics.enabled + '\nNS_M7_DIAGNOSTICS_INTERVAL_MS=' + diagnostics.interval + '\n' +
     require('./clinical-isolation').envLines(clinicalIsolation) +
-    'NS_OPERATION_LEASE_SESSIONS=' + leaseSessions + '\nNS_DEMO_STATE=' + state + '\nNS_DEMO_BIND=' + options.bind + '\nNS_DEMO_PORT=' + options.port + '\nNS_SOURCE_COMMIT=' + source + '\n');
+    'NS_DEMO_STATE=' + state + '\nNS_DEMO_BIND=' + options.bind + '\nNS_DEMO_PORT=' + options.port + '\nNS_SOURCE_COMMIT=' + source + '\n');
   process.stdout.write('Prepared private synthetic deployment state. Start it with one up.\n');
   return {state, source};
 }

@@ -73,11 +73,10 @@ test('realtime K=2: every internal caller addresses the tenant owner Pod', { ski
   const ownership = require(path.join(core, 'lib/realtime-ownership'));
   const listener = require(path.join(core, 'lib/server/internal-api/listener-config'));
   const { createSliceAdapter } = require(path.join(core, 'lib/server/realtime/alarm-transport'));
-  const { environment } = require(path.join(root, 'ops/network-documents.cjs'));
   const k = 2, r = render({ slices: { realtime: k } });
   assert.equal(r.status, 0, r.error);
   const container = r.value.components.evaluator.statefulset.spec.template.spec.containers[0];
-  const source = environment(Object.fromEntries(container.env.filter(row => 'value' in row).map(row => [row.name, row.value])), 'evaluator');
+  const source = Object.fromEntries(container.env.filter(row => 'value' in row).map(row => [row.name, row.value]));
   const peers = ownership.peers(source, listener.resolve(['evaluator'], source), { maxBytes: 4096, timeoutMs: 1000 });
   assert.equal(peers.count, k);
   const pod = url => Number(/^http:\/\/realtime-(\d+)\.realtime-peers\./.exec(url)?.[1]);

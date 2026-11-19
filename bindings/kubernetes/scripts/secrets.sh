@@ -5,7 +5,7 @@
 # repository or printed. Local material lives in a private temporary directory (umask 077) that is
 # removed on exit.
 #
-#   NS_KUBE_CONTEXT=<explicit> NS_RUN_ID=<rendered> [NS_APPLICATION_TOPOLOGY=cohort|separate-k1] \
+#   NS_KUBE_CONTEXT=<explicit> NS_RUN_ID=<rendered> \
 #     scripts/secrets.sh seed <namespace> <app image>
 #
 # Creates ns-postgres-password, ns-vault-tls, ns-ca (CA signing key discarded),
@@ -48,10 +48,8 @@ head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$work/postgres-password"
 mkdir -m 700 "$work/seed"
 docker run --rm --network none --read-only --tmpfs /tmp --user "$(id -u):$(id -g)" -w /opt/app \
   -v "$work/seed:/seed" -v "$here/ops:/run/ns-overlay:ro" \
-  -e NS_APPLICATION_TOPOLOGY="${NS_APPLICATION_TOPOLOGY:-cohort}" -e NS_PGSTREAM=1 -e NS_API_REPLICAS="${NS_API_REPLICAS:-1}" \
-  ${NS_EVALUATOR_WORKERS:+-e NS_EVALUATOR_WORKERS="$NS_EVALUATOR_WORKERS"} ${NS_REALTIME_WORKERS:+-e NS_REALTIME_WORKERS="$NS_REALTIME_WORKERS"} \
-  --entrypoint node "$image" /run/ns-overlay/render-documents.cjs >/dev/null
-docs=$work/seed/documents
+  --entrypoint node "$image" /run/ns-overlay/seed.cjs >/dev/null
+docs=$work/seed/roles
 
 secret ns-postgres-password --from-file=postgres-password="$work/postgres-password"
 secret ns-vault-tls --from-file=server.crt="$work/server.crt" --from-file=server.key="$work/server.key"

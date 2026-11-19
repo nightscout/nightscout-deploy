@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Drill: the one-shot bootstrap (roles, schemas, migrations, grants) is killed part-way, and a
-# changed source or deployment revision is offered to an existing deployment.
+# changed source or deployment revision is offered to an existing deployment (it migrates up).
 # Runbook: ../runbooks/interrupted-upgrade.md
 #   drill-interrupted-bootstrap.sh interrupted   on a PREPARED, NEVER BOOTSTRAPPED deployment
 #   drill-interrupted-bootstrap.sh source-change on a running deployment
@@ -44,8 +44,9 @@ interrupted)
 source-change)
   before=$(sha256sum < "$state/bootstrap/complete.json")
   other=$(printf 'a%.0s' $(seq 40))
-  step changed-source-refused "\"$("$stack" compose --profile ops run --rm -e NS_SOURCE_COMMIT="$other" bootstrap 2>&1 | code)\"" '"BOOTSTRAP_SOURCE_CHANGED_RECREATE_DEMO"'
-  step changed-deployment-revision-refused "\"$("$stack" compose --profile ops run --rm -e NS_DEPLOY_COMMIT="$other" bootstrap 2>&1 | code)\"" '"BOOTSTRAP_SOURCE_CHANGED_RECREATE_DEMO"'
+  # A changed revision is brought forward with migrate up, never refused.
+  step changed-source-migrates "\"$("$stack" compose --profile ops run --rm -e NS_SOURCE_COMMIT="$other" bootstrap 2>/dev/null | sed -n 's/.*"state":"\([a-z-]*\)".*/\1/p' | tail -1)\"" '"existing-demo-unsealed"'
+  step changed-deployment-revision-migrates "\"$("$stack" compose --profile ops run --rm -e NS_DEPLOY_COMMIT="$other" bootstrap 2>/dev/null | sed -n 's/.*"state":"\([a-z-]*\)".*/\1/p' | tail -1)\"" '"existing-demo-unsealed"'
   step completion-record-untouched "\"$(sha256sum < "$state/bootstrap/complete.json" | cut -c1-64)\"" "\"${before%% *}\""
   step control-same-source-accepted "\"$("$stack" bootstrap 2>/dev/null | sed -n 's/.*"state":"\([a-z-]*\)".*/\1/p' | tail -1)\"" '"existing-demo-unsealed"'
   step roles-still-healthy "$("$stack" ps | grep -c 'running.healthy' || true)" 8

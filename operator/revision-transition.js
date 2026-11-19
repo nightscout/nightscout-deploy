@@ -28,7 +28,7 @@ function validate(plan) {
       ![plan.source, plan.target].every(row => row && path.isAbsolute(row.root || '') && SHA.test(row.sourceCommit || '') && SHA.test(row.deployCommit || '')) ||
       plan.source.sourceCommit === plan.target.sourceCommit || !plan.database ||
       !['name', 'oid', 'systemIdentifier'].every(key => typeof plan.database[key] === 'string' && plan.database[key]) ||
-      !/^sha256:[a-f0-9]{64}$/.test(plan.target.image || '') || !plan.rollbackNamespaces || typeof plan.rollbackNamespaces !== 'object') throw fail('REVISION_PLAN_REFUSED');
+      !/^sha256:[a-f0-9]{64}$/.test(plan.target.image || '')) throw fail('REVISION_PLAN_REFUSED');
   return plan;
 }
 
@@ -101,6 +101,8 @@ async function execute(command, plan, env = process.env) {
   if (command === 'preflight') return { state: 'source-and-target-admitted', serving: false };
   stopped(plan);
   const custody = coldBackup(plan);
+  if (command === 'rollback') return { state: 'restore-platform-backup', backup: plan.coldBackup,
+    serving: false, next: 'Restore the paired PostgreSQL, Vault and private state backup into a fresh deployment before starting the source image.' };
   if (!env.NS_REVISION_PG) throw fail('REVISION_DIRECT_CONNECTION_REQUIRED');
   const { Client } = require(path.join(library, 'node_modules/pg'));
   const connection = new Client({ connectionString: env.NS_REVISION_PG, connectionTimeoutMillis: 10000, statement_timeout: 30000 });
@@ -115,12 +117,7 @@ async function execute(command, plan, env = process.env) {
     beginOperation(plan.directory, command, plan, custody);
     let result;
     if (command === 'upgrade') result = await operations.upgrade(connection, { migrate, source: { ...source, sourceCommit: plan.source.sourceCommit }, sourceCommit: plan.target.sourceCommit });
-    else if (command === 'rollback') {
-      const upgradeRecord = privateJson(path.join(plan.directory, 'upgrade-record.json'));
-      const old = createDeploymentOperations({ ...source, namespaces: plan.rollbackNamespaces, directory: plan.directory });
-      const artifact = await old.load(upgradeRecord.backup.name);
-      result = await old.rollback(connection, artifact, { migrate, upgraded: target.namespaces, upgradeRecord });
-    } else {
+    else {
       const record = privateJson(path.join(plan.directory, 'upgrade-record.json'));
       operations.checkRecord(record);
       for (const catalogue of operations.admission().catalogues) await migrate('check', { namespace: catalogue.namespace, catalogue: catalogue.catalogue });
@@ -128,7 +125,7 @@ async function execute(command, plan, env = process.env) {
       if (complete.sourceCommit !== plan.source.sourceCommit || complete.deployCommit !== plan.source.deployCommit) throw fail('REVISION_BOOTSTRAP_BINDING_CHANGED');
       // This first supported profile retains its existing configuration contract.
       // A changed generator needs a separately specified configuration transition.
-      for (const file of ['config.js', 'registry-plan.js', 'pgstream.js']) {
+      for (const file of ['config.js', 'pgstream.js']) {
         if (!fs.readFileSync(path.join(plan.source.root, 'deploy/multitenant', file)).equals(fs.readFileSync(path.join(plan.target.root, 'deploy/multitenant', file)))) throw fail('REVISION_CONFIGURATION_TRANSITION_UNSUPPORTED');
       }
       const labels = JSON.parse(execFileSync('docker', ['image', 'inspect', '--format', '{{json .Config.Labels}}', plan.target.image], { encoding: 'utf8' }));

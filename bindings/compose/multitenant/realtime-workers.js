@@ -9,34 +9,17 @@ function selection(source = process.env) {
   return {workers: Number(source.NS_REALTIME_WORKERS)};
 }
 function initial(selected) { return selected ? staticOwnership().plan(selected.workers, 1) : null; }
-function expand(docs, selected) {
-  if (!selected) return docs;
-  const shape = selected.realtime ? selected : initial(selected);
-  const workers = shape.realtime, count = shape.count;
-  if (!docs.configs.realtime) throw new TypeError('Expected unexpanded realtime roster');
-  const environments = {}, operations = {...docs.operations}, configs = {...docs.configs};
-  const privatePeers = JSON.stringify(workers.map(worker => ({socket: worker.socketPath})));
-  for (const [role, env] of Object.entries(docs.environments)) {
-    environments[role] = {...env};
-    delete environments[role].NS_REALTIME_INTERNAL_SOCKET; delete environments[role].NS_REALTIME_INTERNAL_URL;
-    if (role.startsWith('evaluator')) environments[role].NS_REALTIME_SLICE_PEERS = privatePeers;
-  }
-  for (const worker of workers) {
-    configs[worker.service] = docs.configs.realtime;
-    // Index and count as environment settings (decision statefulset-ordinal-scaling).
-    environments[worker.service] = {...environments.realtime, NS_SERVE_INTERNAL_SOCKET: worker.socketPath,
-      NS_SLICE_ORDINAL: String(worker.ordinal), NS_SLICE_COUNT: String(count)};
-    operations[worker.service] = {...docs.operations.realtime};
-  }
-  return {...docs, configs, environments, operations, realtimeOwnership: shape,
-    socketEdgeEnvironment: {NS_REALTIME_STATIC_COUNT: String(count), [staticOwnership().MAP]: JSON.stringify(shape.routes)}};
-}
 function compose(selected, composeFile) {
   if (!selected) return '';
   const shape = initial(selected), lines = ['# Fixed static realtime owners; stop all old owners before changing K.', 'services:',
     '  bootstrap:', '    environment:', '      NS_REALTIME_WORKERS: "' + selected.workers + '"'];
+  const peers = shape.realtime.map(worker => ({ socket: worker.socketPath }));
+  lines.push('  evaluator:', '    environment:', '      NS_REALTIME_SLICE_PEERS: ' + JSON.stringify(JSON.stringify(peers)));
   for (const worker of shape.realtime) {
-    lines.push('  ' + worker.service + ':', '    healthcheck:',
+    lines.push('  ' + worker.service + ':', '    environment:',
+      '      NS_SERVE_INTERNAL_SOCKET: ' + worker.socketPath, '      NS_REALTIME_INTERNAL_SOCKET: ' + worker.socketPath,
+      '      NS_SLICE_ORDINAL: "' + worker.ordinal + '"', '      NS_SLICE_COUNT: "' + shape.count + '"',
+      '    healthcheck:',
       '      test: [CMD, node, bin/nightscout.js, healthcheck, --endpoint, ready, --socket, ' + worker.socketPath + ']');
     if (worker.ordinal) lines.push('    extends: {file: ' + JSON.stringify(composeFile) + ', service: realtime}',
       '    volumes:', '      - ${NS_DEMO_STATE}/' + worker.service + ':/run/ns-config:ro',
@@ -50,4 +33,4 @@ function compose(selected, composeFile) {
   return lines.join('\n') + '\n';
 }
 function services(selected) { return selected ? [...Array.from({length: selected.workers}, (_, ordinal) => serviceOf(ordinal)), 'socket-edge'] : ['realtime']; }
-module.exports = {selection, initial, expand, compose, serviceOf, services};
+module.exports = {selection, initial, compose, serviceOf, services};

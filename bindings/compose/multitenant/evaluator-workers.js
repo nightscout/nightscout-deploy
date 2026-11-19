@@ -28,41 +28,6 @@ function assertSeed(selected) {
   // Idle ordinals are valid: registry live-add is not a topology change.
 }
 
-function expand(docs, selected) {
-  if (!selected) return docs;
-  const workers = roster(selected), receivers = workers.map(worker => worker.url);
-  const evaluator = docs.configs.evaluator, operation = docs.operations.evaluator;
-  for (const env of Object.values(docs.environments)) delete env.NS_EVALUATOR_INTERNAL_SOCKET;
-  const baseEnvironment = docs.environments.evaluator;
-  for (const [ordinal, {service, url, socket}] of workers.entries()) {
-    docs.configs[service] = {
-      ...evaluator, pgstream: { ...evaluator.pgstream, receiver: { ...evaluator.pgstream.receiver, url } }
-    };
-    docs.environments[service] = {
-      ...baseEnvironment, NS_SERVE_INTERNAL_SOCKET: socket,
-      NS_POOL_EVALUATOR_MAX: '4', NS_POOL_OPERATION_MAX: '8',
-      [PROFILE]: JSON.stringify({ count: workers.length, ordinal, receivers })
-    };
-    docs.operations[service] = { ...operation };
-  }
-  docs.evaluatorWorkers = selected;
-  return docs;
-}
-
-function validate(docs, role, parsed, operation) {
-  if (!docs.evaluatorWorkers) return;
-  const workers = roster(docs.evaluatorWorkers);
-  const ordinal = workers.findIndex(worker => worker.service === role);
-  if (ordinal === -1) return;
-  const primary = docs.configs.evaluator;
-  if (parsed.processAssignment?.ordinal !== ordinal ||
-      JSON.stringify(parsed.processAssignment.receivers) !== JSON.stringify(workers.map(worker => worker.url)) ||
-      parsed.consumer !== primary.consumer || parsed.pgstream.slot !== primary.pgstream.slot ||
-      parsed.pgstream.generation !== primary.pgstream.generation || parsed.pgstream.streamRole !== primary.pgstream.streamRole) {
-    throw new TypeError('Deployment evaluator native source or assignment mismatch');
-  }
-}
-
 function compose(selected, composeFile) {
   if (!selected) return '';
   const workers = services(selected);
@@ -70,12 +35,19 @@ function compose(selected, composeFile) {
     '      NS_EVALUATOR_WORKERS: "' + selected.workers + '"',
     '  pgstream:',
     '    depends_on:', ...workers.map(service => '      ' + service + ': {condition: service_started}'),
-    '    restart: unless-stopped', '  evaluator:', '    restart: unless-stopped'];
-  for (const service of workers.slice(1)) lines.push('  ' + service + ':',
-    '    extends: {file: ' + JSON.stringify(composeFile) + ', service: evaluator}', '    restart: unless-stopped',
-    '    volumes:', '      - ${NS_DEMO_STATE}/' + service + ':/run/ns-config:ro',
-    '      - ${NS_DEMO_STATE}/ipc:/run/ns-ipc', '      - ${NS_DEMO_STATE}/tls/ca.crt:/run/ns-ca/ca.crt:ro');
+    '    restart: unless-stopped'];
+  for (const [ordinal, item] of roster(selected).entries()) {
+    const { service, url, socket } = item;
+    lines.push('  ' + service + ':', '    restart: unless-stopped', '    environment:',
+      '      NS_SERVE_INTERNAL_SOCKET: ' + socket, '      NS_EVALUATOR_INTERNAL_SOCKET: ' + socket,
+      '      NS_PGSTREAM_RECEIVER_URL: ' + url,
+      '      NS_PGSTREAM_EVALUATOR_SLICE: ' + JSON.stringify(JSON.stringify({ count: workers.length, ordinal, receivers: roster(selected).map(r => r.url) })),
+      '    healthcheck:', '      test: [CMD, node, bin/nightscout.js, healthcheck, --endpoint, ready, --socket, ' + socket + ']');
+    if (ordinal > 0) lines.push('    extends: {file: ' + JSON.stringify(composeFile) + ', service: evaluator}',
+      '    volumes:', '      - ${NS_DEMO_STATE}/' + service + ':/run/ns-config:ro',
+      '      - ${NS_DEMO_STATE}/ipc:/run/ns-ipc', '      - ${NS_DEMO_STATE}/tls/ca.crt:/run/ns-ca/ca.crt:ro');
+  }
   return lines.join('\n') + '\n';
 }
 
-module.exports = { selection, services, roster, assertSeed, expand, validate, compose };
+module.exports = { selection, services, roster, assertSeed, compose };

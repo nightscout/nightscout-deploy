@@ -10,8 +10,9 @@ deployment revisions it ran for.
 ## Explicit ordinary revision transition
 
 `node operator/revision-transition.js <preflight|upgrade|activate|rollback> <private-plan.json>`
-composes the admitted core deployment operations. It never starts a role. Bootstrap still refuses
-an implicit source change (`BOOTSTRAP_SOURCE_CHANGED_RECREATE_DEMO`). Only the explicit recorded
+composes the admitted core deployment operations. It never starts a role. Bootstrap no longer
+refuses a changed source or deployment revision: on a completed deployment it unseals Vault and
+runs migrate up, and the roles' readiness checks decide whether they serve. The explicit recorded
 `activate` operation updates the prepared target environment and bootstrap source binding after
 the admitted upgrade checks succeed. A started operation is never automatically replayed:
 `REVISION_INTERRUPTED_OR_ALREADY_RUN` means keep effects stopped and inspect the original records,
@@ -37,7 +38,7 @@ binding's existing project grammar, including its ordinary default), absolute
 contains its absolute clean overlaid core `root`, full `sourceCommit` and `deployCommit`; target
 also contains its immutable `image` ID. `database` names the actual `name`, `oid` and
 `systemIdentifier`. `cohort` lists every existing non-infrastructure container's exact `id` and
-immutable `image`. `rollbackNamespaces` maps every admitted kind to a distinct fresh namespace.
+immutable `image`. Rollback uses the paired PostgreSQL, Vault and private state backup from before the migration.
 Obtain these expectations from actual Git, image, Docker and database inspection. The command
 rechecks them. Supply the direct DBA connection only through `NS_REVISION_PG`.
 
@@ -105,45 +106,11 @@ input/completion/due/current-authority and subsequent new-write/client checks re
 
 ### Backup-based rollback
 
-Stop the exact current cohort and keep the upgraded namespaces and captures. With a new explicit
-current cohort in the private plan, run `rollback`. Core checks that the older binary refuses the
-upgraded catalogues, restores the verified pre-upgrade domain artifact into fresh namespaces, and
-checks the older catalogues there. It never runs a down migration or decrements a migration ledger.
-Its record names the loss boundary: writes after the backup instant are absent.
-
-Before old serving resumes, restore the complete paired cold backup into an empty deployment with
-the predecessor's exact source/image, using [whole-deployment recovery](backup-and-restore.md).
-This restores global authority, registry, keys and credentials together. Preserve the upgraded
-original project; use separate project, port and network ranges for the replacement rehearsal.
-Compare census and both tenants' authorized content to the backup, including the deliberate
-post-backup write loss. A domain-only fresh-namespace restore does not authorize serving.
-
-### Reproduced scope and retained evidence
-
-The `revision-transition-20261116` local two-tenant rehearsal retains originals under
-`/tmp/ns-revision-transition-20261116`. Upgrade/source preservation, old-binary refusal and fresh
-domain rollback, full paired-backup replacement and authorized old/current API/WebSocket content
-were exercised. The old-WAL 503 and first failed new-input convergence remain failures of the
-unqualified preserved-slot path, not failures relabelled as passes. The planned replacement and
-subsequent physical/input/completed/due proof qualify the explicit path above. Raw captures,
-credentials, database archives and synthetic traces are private and untracked.
-
-Final affected controls: **38 passed** in installed core context, including ordinary valid-slot
-refusal, complete cohort/image bindings, changed archive refusal, interrupted-operation replay,
-current-content/restore/clock controls and single-use revision-slot custody. The actual stopped
-deployment also refused a changed upgrade-record hash and deliberately broken full identity;
-the slot position stayed unchanged, full identity was restored, and the positive operation passed.
-The final helper SHA256 was
-`d668f50c6aa30013133ba8dce91f872ab665721c1727b7b0c2b9a3d51753a5c0`.
-Retained originals include `revision-negative-controls.log`, `slot-revision-receipt-final.json`,
-`final-reopen.log` (durable work/new-write checks plus the initial viewer startup refusal),
-`final-reopen-viewer02.log` (authorized frames after readiness), `rollback-viewer.log`, and both
-`cold-backup/` and `cold-upgraded-final/`. Both exact projects' containers, networks and volumes
-were independently absent after cleanup; ports 20880 and 20881 were free. No shared run was changed.
-
-This is one ordinary single-host revision pair, not HA, provider delivery exactly-once, an online
-upgrade, a revision matrix or evidence for an entered capacity run. Runtime integration owns the
-future joined candidate and its acceptance; this helper leaf does not alter ongoing runs.
+Stop the effect-serving roles. Run `rollback` to identify the matching platform backup.
+Restore the paired PostgreSQL data, Vault storage and private state into a fresh deployment
+using the [whole-deployment recovery procedure](backup-and-restore.md). Reopen the
+source image after its database and Vault checks pass. This returns every tenant to the backup
+instant. Writes accepted after that instant need separate recovery.
 
 ## The bootstrap was killed part-way
 

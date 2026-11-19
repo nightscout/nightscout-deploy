@@ -25,6 +25,15 @@ if [ -f .env ]; then
   fi
 fi
 case "${1:-}" in
+  snapshot)
+    [ "$#" -eq 2 ] || exit 64
+    "${compose[@]}" stop
+    exec node fixture.js snapshot "$2"
+    ;;
+  restore-fixture)
+    shift
+    exec node fixture.js restore "$@"
+    ;;
   patch)
     shift
     exec node reopen.js "$@"
@@ -64,10 +73,11 @@ case "${1:-}" in
       exit 1
     fi
     "${compose[@]}" --profile ops run --rm --no-deps primer node deploy/multitenant/prime.js provision
-    "${compose[@]}" --profile ops run --rm --no-deps -e NS_DEMO_TENANTS="${NS_DEMO_TENANTS:-2}" bootstrap node deploy/multitenant/commission-restore.js
     "${compose[@]}" --profile ops run --rm --no-deps primer node deploy/multitenant/prime.js prime
     node publish-primer.js "$(dirname "$replica_file")"
     if [[ "$1" = demo ]]; then
+      # Only the restore demonstration needs restore authority; ordinary priming never grants it.
+      "${compose[@]}" --profile ops run --rm --no-deps -e NS_DEMO_TENANTS="${NS_DEMO_TENANTS:-2}" bootstrap node deploy/multitenant/commission-restore.js
       exec "${compose[@]}" --profile ops run --rm --no-deps demo
     fi
     ;;
@@ -87,7 +97,7 @@ case "${1:-}" in
     exec "${compose[@]}" down
     ;;
   *)
-    echo 'Usage: demo.sh prepare [--bind 169.254.1.1] | config | build [--image local-tag] | bootstrap | up | prime | patch /absolute/prepared/.env local-image | demo | pgstream-rebootstrap /absolute/private-plan.json | status | stop | down' >&2
+    echo 'Usage: demo.sh prepare [--bind 169.254.1.1] | config | build [--image local-tag] | bootstrap | up | prime | snapshot /new/directory | restore-fixture /snapshot --project NAME --state /new/state | patch /absolute/prepared/.env local-image | demo | pgstream-rebootstrap /absolute/private-plan.json | status | stop | down' >&2
     exit 64
     ;;
 esac

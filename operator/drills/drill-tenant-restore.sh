@@ -9,19 +9,21 @@ drill=tenant-restore
 source "$(dirname "$0")/lib.sh"
 name=tr; fresh $name
 seeded=$(driver tr-seed seed $name); tenant=$(echo "$seeded" | field tenant); digest=$(echo "$seeded" | field digest)
-step artifact-published "\"$( [ -f "$state/artifacts/tenant-artifact-$digest/artifact.json" ] && echo yes || echo no)\"" '"yes"'
+step artifact-published "\"$( [ -f "$state/artifacts/tenant-artifact-$digest/manifest.json" ] && echo yes || echo no)\"" '"yes"'
 step control-state-check-fails-before-restore "\"$(driver tr-c1 verify-state $name | field error)\"" '"DRILL_STATE_MISMATCH"'
 step control-history-check-fails-before-restore "\"$(driver tr-c2 verify-history $name | field error)\"" '"DRILL_HISTORY_MISMATCH"'
 
 # Control: artifact content changed after export (digest field left as exported).
 other=$(printf '%s' "$digest" | tr '0-9a-f' '1-9a-f0')
-cp -a "$state/artifacts/tenant-artifact-$digest" "$state/artifacts/tenant-artifact-$other"
-sed -i "s/$digest/$other/; s/\"sgv\":123/\"sgv\":321/" "$state/artifacts/tenant-artifact-$other/artifact.json"
-refusal=$(driver tr-c3 restore $name --digest "$other" | field error || true)
+table="$state/artifacts/tenant-artifact-$digest/entries.entries.csv"
+cp -p "$table" "$state/drill/table-original.csv"
+printf '\n' >> "$table"
+refusal=$(driver tr-c3 restore $name --digest "$digest" | field error || true)
+mv "$state/drill/table-original.csv" "$table"
 step control-changed-artifact-refused "\"$( [ -n "$refusal" ] && echo refused || echo accepted)\"" '"refused"'
 printf '{"drill":"%s","step":"changed-artifact-refusal-code","observed":"%s"}\n' "$drill" "$refusal"
 # Control: an intact artifact stored under a different digest name.
-rm -rf "$state/artifacts/tenant-artifact-$other"; cp -a "$state/artifacts/tenant-artifact-$digest" "$state/artifacts/tenant-artifact-$other"
+cp -a "$state/artifacts/tenant-artifact-$digest" "$state/artifacts/tenant-artifact-$other"
 step control-misnamed-artifact-refused "\"$(driver tr-c4 restore $name --digest "$other" | field error)\"" '"LIFECYCLE_ARTIFACT_DIGEST"'
 rm -rf "$state/artifacts/tenant-artifact-$other"
 step tenant-still-open-after-refusals "\"$(window "$tenant")\"" '"active|false|false"'
