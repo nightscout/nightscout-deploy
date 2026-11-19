@@ -17,9 +17,9 @@ function checkNetworks (config) {
   }
   return true;
 }
-// Start order: each runtime role waits for its dependencies' healthchecks. The edge waits only for
-// the roles it routes to; evaluator or tenant-admin health must never gate access to the site.
-const ORDER = {api: ['postgres', 'vault'], realtime: ['api'], evaluator: ['realtime'], 'tenant-admin': ['api'],
+// Start order: each runtime role waits for the stores it uses, not for another role. The edge waits
+// only for the roles it routes to; evaluator or tenant-admin health must never gate access to the site.
+const ORDER = {api: ['postgres', 'vault'], realtime: ['postgres'], evaluator: ['postgres'], 'tenant-admin': ['postgres', 'vault'],
   nginx: ['api', 'realtime', 'ui']};
 const EDGE_INDEPENDENT = ['evaluator', 'tenant-admin'];
 function checkOrder (config) {

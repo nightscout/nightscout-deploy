@@ -135,9 +135,11 @@ services:
       - ${NS_DEMO_STATE}/primer:/run/ns-primer
 
   # Start order (bootstrap is the explicit one-shot step that `demo.sh up` runs first; it stays in
-  # profile ops): postgres and vault healthy -> api -> realtime -> evaluator; tenant-admin after api.
-  # Every edge is `service_healthy` on the healthchecks below. nginx waits for the roles it serves
-  # (api, realtime, ui) only, so an unhealthy evaluator or tenant-admin never keeps the site down.
+  # profile ops): the roles wait only for the stores they use and then start together. Realtime
+  # retries a not-ready api within NS_TENANT_WARM_RETRY_MS; the evaluator's wake to realtime is
+  # best effort and realtime reconciles. pgstream waits for its receiver process to start. nginx
+  # waits for the roles it serves (api, realtime, ui) only, so an unhealthy evaluator or
+  # tenant-admin never keeps the site down.
   api:
     <<: *app
     command: [node, deploy/multitenant/entrypoint.js, api]
@@ -162,7 +164,7 @@ services:
     <<: *app
     command: [node, deploy/multitenant/entrypoint.js, realtime]
     depends_on:
-      api: {condition: service_healthy}
+      postgres: {condition: service_healthy}
     healthcheck:
       test: [CMD, node, deploy/multitenant/health.js, realtime]
       interval: 2s
@@ -194,7 +196,7 @@ services:
     command: [node, deploy/multitenant/entrypoint.js, evaluator]
     restart: "on-failure:3"
     depends_on:
-      realtime: {condition: service_healthy}
+      postgres: {condition: service_healthy}
     healthcheck:
       test: [CMD, node, deploy/multitenant/health.js, evaluator]
       interval: 2s
@@ -215,7 +217,6 @@ services:
     depends_on:
       postgres: {condition: service_healthy}
       vault: {condition: service_healthy}
-      api: {condition: service_healthy}
     healthcheck:
       test: [CMD, node, deploy/multitenant/health.js, tenant-admin]
       interval: 2s
