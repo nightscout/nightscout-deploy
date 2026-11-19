@@ -89,6 +89,11 @@
     "memory": "128Mi",
     "ephemeral-storage": "16Mi"
   },
+  "wait-for-jobs": {
+    "cpu": "50m",
+    "memory": "48Mi",
+    "ephemeral-storage": "16Mi"
+  },
   "wait-stores": {
     "cpu": "25m",
     "memory": "32Mi",
