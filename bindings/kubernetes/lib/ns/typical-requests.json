@@ -19,11 +19,6 @@
     "memory": "512Mi",
     "ephemeral-storage": "16Mi"
   },
-  "done": {
-    "cpu": "85m",
-    "memory": "14Mi",
-    "ephemeral-storage": "16Mi"
-  },
   "evaluator": {
     "cpu": "364m",
     "memory": "224Mi",

@@ -53,6 +53,8 @@ function prepare (args) {
     fs.mkdirSync(path.join(state, name), {mode: 0o700});
   }
   write(path.join(state, 'bootstrap/postgres-password'), crypto.randomBytes(32).toString('hex') + '\n');
+  // Every role credential exists before the first up (decision provisioning-secrets-in).
+  require('./credentials').seed(path.join(state, 'credentials'));
   const tls = path.join(state, 'tls');
   const openssl = args => execFileSync('openssl', args, {cwd: tls, stdio: ['ignore', 'ignore', 'pipe']});
   openssl(['req', '-x509', '-newkey', 'rsa:3072', '-nodes', '-keyout', 'ca.key', '-out', 'ca.crt', '-days', '30', '-subj', '/CN=Nightscout synthetic Compose CA']);
@@ -81,7 +83,7 @@ function prepare (args) {
     'NS_M7_DIAGNOSTICS=' + diagnostics.enabled + '\nNS_M7_DIAGNOSTICS_INTERVAL_MS=' + diagnostics.interval + '\n' +
     require('./clinical-isolation').envLines(clinicalIsolation) +
     'NS_OPERATION_LEASE_SESSIONS=' + leaseSessions + '\nNS_DEMO_STATE=' + state + '\nNS_DEMO_BIND=' + options.bind + '\nNS_DEMO_PORT=' + options.port + '\nNS_SOURCE_COMMIT=' + source + '\n');
-  process.stdout.write('Prepared private synthetic deployment state. Run the explicit bootstrap before starting roles.\n');
+  process.stdout.write('Prepared private synthetic deployment state. Start it with one up.\n');
   return {state, source};
 }
 if (require.main === module) {

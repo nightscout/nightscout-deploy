@@ -43,29 +43,15 @@ case "${1:-}" in
     ;;
   bootstrap)
     node build.js --check-image
-    exec "${compose[@]}" --profile ops run --rm bootstrap
+    exec "${compose[@]}" run --rm bootstrap
     ;;
   up)
     node build.js --check-image
-    existing=()
-    if [[ "${2:-}" = --stopped-seed ]]; then
-      [ "$#" -eq 4 ] || exit 64
-      node -e 'const p=require("./reopen");p.stoppedFixture(p.prepared(require("path").resolve(".env")));'
-      existing=(--no-deps)
-      "${compose[@]}" up -d --no-recreate --no-build --pull never vault
-      "${compose[@]}" up -d --no-recreate --no-build --pull never --wait --wait-timeout 90 postgres
-      "${compose[@]}" --profile ops run --rm --no-deps bootstrap node deploy/multitenant/bootstrap.js migrate "$3" "$4"
-    else
-      [ "$#" -eq 1 ] || exit 64
-      "${compose[@]}" --profile ops run --rm bootstrap
-    fi
-    "${compose[@]}" up -d "${existing[@]}" --no-build --pull never --wait --wait-timeout 90 admin
-    "${compose[@]}" --profile ops run --rm --no-deps primer node deploy/multitenant/platform-verify.js
-    if [[ "${2:-}" = --stopped-seed ]]; then
-      "${compose[@]}" --profile ops run --rm --no-deps bootstrap node deploy/multitenant/bootstrap.js finish "$3" "$4"
-    fi
+    [ "$#" -eq 1 ] || exit 64
+    # admin and every role wait for the one-shot bootstrap (render, then provision) to complete.
+    "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 90 admin
     replicas=$(node -e 'const fs=require("node:fs"),lines=fs.readFileSync(".env","utf8").split("\n");const n=Number((lines.find(x=>x.startsWith("NS_API_REPLICAS="))||"NS_API_REPLICAS=1").slice(16));if(!Number.isSafeInteger(n)||n<1||n>16)process.exit(1);console.log(Array.from({length:n},(_,i)=>i?"api-"+(i+1):"api").join(" "));')
-    "${compose[@]}" up -d "${existing[@]}" --no-build --pull never --wait --wait-timeout 900 $replicas $realtime_services $evaluator_services pgstream tenant-admin ui nginx
+    "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 900 $replicas $realtime_services $evaluator_services pgstream tenant-admin ui nginx
     ;;
   prime|demo)
     node build.js --check-image

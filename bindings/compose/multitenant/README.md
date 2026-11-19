@@ -34,45 +34,16 @@ cd deploy/multitenant
 ./demo.sh prepare
 node check-compose.js
 ./demo.sh build
-./demo.sh bootstrap
 ./demo.sh up
 ./demo.sh status
 ./demo.sh demo
 ```
 
-### Run a compatible patch on the same seed
+### Patch a seeded fixture
 
-Commission and prime A once with `./demo.sh up` and `./demo.sh prime`. Keep
-exclusive custody of the prepared project, PostgreSQL and Vault volumes, and
-private state. Stop A with `./demo.sh stop` so its containers remain available
-for the mount checks. Use a clean overlay of the selected core and deployment
-patch for B. From B’s `deploy/multitenant` directory run
-
-```bash
-./demo.sh build --image nightscout-seed:patch
-./demo.sh patch /absolute/path/to/A/deploy/multitenant/.env nightscout-seed:patch
-```
-
-The command checks the image’s two revisions, pins its local image ID in B’s
-private `.env`, and reuses the prepared role roster, credentials, network and
-logical slot. It checks the native database identity and every installed
-catalogue, applies pending target migrations, and runs the private platform
-verification before starting the serving roles. The target must support the
-existing grants, role configuration, namespaces, WAL and tenant data.
-Transitions needing new grants, replacement of the slot or changes to the
-topology require the corresponding offline upgrade procedure.
-
-To repeat B, run `./demo.sh stop` followed by
-`./demo.sh patch "$PWD/.env" nightscout-seed:patch`. To close it, use
-`./demo.sh down` from B. This retains the volumes and private state for their
-owner. Each deployment has its own credential lifetime.
-
-If migration or verification fails, keep the fixture offline. Inspect the
-reported refusal. A pending transition binds retries to the same patch.
-Correct the cause, stop the project and repeat the patch command. For
-`SEED_PATCH_TENANT_FLOOR_BACKFILL_REQUIRED`, use the existing private admin
-[tenant-floor backfill](PLATFORM-UPGRADE.md) while serving is stopped.
-Bootstrap and priming are for commissioning a fresh fixture.
+The stopped-seed patch path (`./demo.sh patch`, `reopen.js`) pinned the database's stream identity
+and is retired with that pin (decision `stream-source-identity-in-data`). `./demo.sh up --stopped-seed`
+now refuses its arguments. A replacement uses the ordinary one-up flow on the retained volumes.
 
 Overlaid on a core checkout by nightscout-deploy's `tools/compose-overlay.sh`,
 this directory carries a marker (`.overlay.json`) naming the nightscout-deploy
@@ -82,9 +53,13 @@ build input and that commit for this directory, byte for byte (only `.env`,
 `BUILD_INPUTS_DIRTY`. The image is built from the two commits and labelled with
 both (`org.opencontainers.image.revision`, `org.nightscout.deploy.revision`).
 
-`bootstrap` prepares infrastructure only: schemas, grants, role configurations,
-the private admin service and maintained pgstream capture metadata. `up` starts the private admin,
-verifies platform state and starts every serving role. Run `./demo.sh prime` to populate the lab.
+`prepare` seeds every credential before the first start (`credentials.js`: one PostgreSQL password
+per role and the Vault token ids, under the private state's `credentials/`). `up` is one apply: the
+one-shot `bootstrap` service renders every role document from those credentials (`render.js`), then
+creates the schemas, roles, grants, Vault tokens and pgstream capture metadata from the same
+credentials, and every role waits for it to complete (decision `provisioning-secrets-in`). A
+repeat `up` renders again and finds the database already provisioned. `./demo.sh bootstrap` runs
+the one-shot step alone. Run `./demo.sh prime` to populate the lab.
 The `demo` command also runs this step before the two-tenant demonstration. The lab client provisions synthetic
 tenants through admin. A separate commissioning step grants restore access, then the client creates
 synthetic DATA subjects and samples.
@@ -165,7 +140,7 @@ credentials, password clauses, Vault tokens, JWT-shaped strings and long hex
 runs are redacted from both. Generated role configurations and environments use compact JSON. The optional
 `NS_BOOTSTRAP_CONFIG_MAX_BYTES` (off when empty; 65,536 to 67,108,864) is passed
 by Compose to every role container, and to the ownership overlay's admin, as
-core's `MULTITENANT_CONFIG_MAX_BYTES`, and the bootstrap validates the files it
+core's `MULTITENANT_CONFIG_MAX_BYTES`, and `render.js` validates the files it
 writes against the same value. It never enters `env.json`. `load-env.js` takes its
 bound on `env.json` from core's reader (`lib/server/serve/config-file.js`), and
 keeps the fixed 1 MiB bound with a core that has no such module.

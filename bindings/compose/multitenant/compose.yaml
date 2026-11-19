@@ -73,11 +73,14 @@ services:
       retries: 1
     networks: [backend]
 
+  # One-shot provisioning, part of every `up` (decision provisioning-secrets-in). It renders the role
+  # documents from the credentials prepare.js seeded, then creates the PostgreSQL roles, schemas and
+  # Vault tokens from the same credentials. Every role waits for it to complete; a repeat `up` renders
+  # again and finds the database already provisioned.
   bootstrap:
     <<: *app
-    profiles: [ops]
     user: "1000:1000"
-    command: [node, deploy/multitenant/bootstrap.js]
+    command: [sh, -c, "node deploy/multitenant/render.js && exec node deploy/multitenant/bootstrap.js"]
     depends_on:
       postgres: {condition: service_healthy}
       vault: {condition: service_started}
@@ -86,6 +89,7 @@ services:
       VAULT_ADDR: https://vault:8200
       NS_COMPOSE_BOOTSTRAP: "1"
       NS_PGSTREAM: ${NS_PGSTREAM:-1}
+      NS_SOURCE_COMMIT: ${NS_SOURCE_COMMIT:?Run prepare.js first}
       NS_DEPLOY_COMMIT: ${NS_DEPLOY_COMMIT:?Run prepare.js first}
       # Fixed service instances; maintenance still addresses every exact instance.
       NS_API_REPLICAS: ${NS_API_REPLICAS:-1}
@@ -95,15 +99,17 @@ services:
       NS_API_REST_QUEUE: ${NS_API_REST_QUEUE:-}
       NS_API_REST_QUEUE_TIMEOUT_MS: ${NS_API_REST_QUEUE_TIMEOUT_MS:-}
       NS_API_REST_RETRY_AFTER_SECONDS: ${NS_API_REST_RETRY_AFTER_SECONDS:-}
-      # Off when empty. Healthy feed rotation period for evaluator and realtime (registry-plan.js).
-      # Off when empty. Large tenant counts only: see bootstrap.js input().
+      # Off when empty. Large tenant counts only: see render.js input().
       NS_BOOTSTRAP_CONFIG_MAX_BYTES: ${NS_BOOTSTRAP_CONFIG_MAX_BYTES:-}
+      NS_CREDENTIALS_DIR: /run/ns-credentials
+      NS_RENDER_OUTPUT: /state
       NS_BOOTSTRAP_OUTPUT: /state
       NS_POSTGRES_HOST: postgres
       NS_POSTGRES_DATABASE: nightscout_compose_test
       NS_POSTGRES_PASSWORD_FILE: /state/bootstrap/postgres-password
     volumes:
       - ${NS_DEMO_STATE}:/state
+      - ${NS_DEMO_STATE}/credentials:/run/ns-credentials:ro
       - ${NS_DEMO_STATE}/tls/ca.crt:/run/ns-ca/ca.crt:ro
 
   # Operator provisioning is a private network service, never published.
@@ -111,6 +117,7 @@ services:
     <<: *app
     command: [node, deploy/multitenant/entrypoint.js, admin]
     depends_on:
+      bootstrap: {condition: service_completed_successfully}
       postgres: {condition: service_healthy}
       vault: {condition: service_healthy}
     healthcheck:
@@ -134,16 +141,17 @@ services:
     volumes:
       - ${NS_DEMO_STATE}/primer:/run/ns-primer
 
-  # Start order (bootstrap is the explicit one-shot step that `demo.sh up` runs first; it stays in
-  # profile ops): the roles wait only for the stores they use and then start together. Realtime
-  # retries a not-ready api within NS_TENANT_WARM_RETRY_MS; the evaluator's wake to realtime is
-  # best effort and realtime reconciles. pgstream waits for its receiver process to start. nginx
-  # waits for the roles it serves (api, realtime, ui) only, so an unhealthy evaluator or
-  # tenant-admin never keeps the site down.
+  # Start order: every role waits for the one-shot bootstrap to complete and for the stores it
+  # uses, then the roles start together. Realtime retries a not-ready api within
+  # NS_TENANT_WARM_RETRY_MS; the evaluator's wake to realtime is best effort and realtime
+  # reconciles. pgstream waits for its receiver process to start. nginx waits for the roles it
+  # serves (api, realtime, ui) only, so an unhealthy evaluator or tenant-admin never keeps the
+  # site down.
   api:
     <<: *app
     command: [node, deploy/multitenant/entrypoint.js, api]
     depends_on:
+      bootstrap: {condition: service_completed_successfully}
       postgres: {condition: service_healthy}
       vault: {condition: service_healthy}
     healthcheck:
@@ -164,6 +172,7 @@ services:
     <<: *app
     command: [node, deploy/multitenant/entrypoint.js, realtime]
     depends_on:
+      bootstrap: {condition: service_completed_successfully}
       postgres: {condition: service_healthy}
     healthcheck:
       test: [CMD, node, deploy/multitenant/health.js, realtime]
@@ -186,6 +195,7 @@ services:
     command: [/usr/local/bin/pgstream, run, -c, /run/ns-stream/pgstream.yaml, --log-level, info]
     restart: unless-stopped
     depends_on:
+      bootstrap: {condition: service_completed_successfully}
       postgres: {condition: service_healthy}
       evaluator: {condition: service_started}
     volumes:
@@ -196,6 +206,7 @@ services:
     command: [node, deploy/multitenant/entrypoint.js, evaluator]
     restart: "on-failure:3"
     depends_on:
+      bootstrap: {condition: service_completed_successfully}
       postgres: {condition: service_healthy}
     healthcheck:
       test: [CMD, node, deploy/multitenant/health.js, evaluator]
@@ -215,6 +226,7 @@ services:
     <<: *app
     command: [node, deploy/multitenant/entrypoint.js, tenant-admin]
     depends_on:
+      bootstrap: {condition: service_completed_successfully}
       postgres: {condition: service_healthy}
       vault: {condition: service_healthy}
     healthcheck:
@@ -230,6 +242,8 @@ services:
   ui:
     <<: *app
     command: [node, -r, ./deploy/multitenant/load-env.js, deploy/multitenant/ui.js]
+    depends_on:
+      bootstrap: {condition: service_completed_successfully}
     environment:
       UI_HOSTNAME: 0.0.0.0
       UI_PORT: "1340"

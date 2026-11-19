@@ -67,19 +67,16 @@ test('only the lab client argument changes between ten and ten thousand tenants'
   const small = render({ tenantCount: 10 }), large = render({ tenantCount: 10000 });
   for (const result of [small, large]) assert.equal(result.status, 0, result.error);
   function normalize(manifests, expectedCount) {
-    const client = manifests.primer.job.spec.template.spec.initContainers.find(container => container.name === 'primer');
+    const client = manifests.primer.job.spec.template.spec.containers.find(container => container.name === 'primer');
     assert.deepEqual(client.args, ['--tenant-count', String(expectedCount)]);
     client.args = [];
-    const verification = manifests.verification.job.spec.template.spec;
-    assert.deepEqual(verification.initContainers.map(container => container.name), ['install-config']);
-    assert.ok(verification.containers[0].command.includes('verify'));
-    assert.ok(!manifests.primer.job.spec.template.spec.containers[0].command.includes('verify'));
+    assert.ok(!manifests.verification, 'no verification Job');
     return manifests;
   }
   assert.deepEqual(normalize(small.value, 10), normalize(large.value, 10000));
 });
 
-test('fixture requests admit optional per-role limits and disk-backed primer state', () => {
+test('fixture requests admit optional per-role limits and claim-backed primer results', () => {
   const fixture = render({});
   assert.equal(fixture.status, 0, fixture.error);
   for (const workload of Object.values(fixture.value)) {
@@ -94,7 +91,14 @@ test('fixture requests admit optional per-role limits and disk-backed primer sta
   }
   const primer = fixture.value.primer.job.spec.template.spec;
   const state = primer.volumes.find(v => v.name === 'client-state');
+  // Disposable storage keeps the results on the Pod's disk unless a claim is named.
   assert.deepEqual(state.emptyDir, {});
+  assert.ok(!fixture.value.primer.results);
+  const claimed = render({ storage: { claims: { primerResults: 'synthetic-results' } } });
+  assert.equal(claimed.value.primer.job.spec.template.spec.volumes.find(v => v.name === 'client-state').persistentVolumeClaim.claimName, 'synthetic-results');
+  const dynamic = render({ profile: 'standard', storage: { mode: 'dynamic' } });
+  assert.equal(dynamic.value.primer.job.spec.template.spec.volumes.find(v => v.name === 'client-state').persistentVolumeClaim.claimName, 'primer-results');
+  assert.equal(dynamic.value.primer.results.kind, 'PersistentVolumeClaim');
   const bounded = render({ resources: { vault: { limits: { memory: '384Mi' } } } });
   assert.equal(bounded.status, 0, bounded.error);
   assert.deepEqual(bounded.value.vault.statefulset.spec.template.spec.containers[0].resources.limits, { memory: '384Mi' });

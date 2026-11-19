@@ -10,13 +10,13 @@
 //                                  ClusterIP only, NetworkPolicy admits operator Pods only
 //   ui, edge (Deployments)         the shipped pages and the reference nginx (consumer entry)
 //   postgres, vault (StatefulSets) the backing stores, same image digests as Compose
-//   provision (Job)                source bootstrap -> Vault Kubernetes auth -> document proof
-//   verification (Job)             private admin platform verification
+//   provision (Job)                PostgreSQL roles and schemas, Vault tokens, Vault Kubernetes auth
 //   primer (Job)                   optional synthetic tenant provisioning through admin
 //
-// No credential is rendered. Every private document reaches a Pod through a Secret that
-// scripts/secrets.sh creates at apply time from generated or provisioned material; this file
-// only names the Secrets.
+// No credential is rendered. Secrets flow in, never out (decision provisioning-secrets-in):
+// scripts/secrets.sh seeds every credential and renders every role document before apply, the
+// provision Job only reads its mounted credentials, and one apply converges. This file only names
+// the Secrets.
 {
   defaults:: {
     namespace: 'nightscout-preview',
@@ -83,21 +83,14 @@
         requests: { cpu: '25m', memory: '32Mi', 'ephemeral-storage': '16Mi' },
         limits: { cpu: '500m', memory: '256Mi', 'ephemeral-storage': '128Mi' },
       }
-      for name in ['install-config', 'vault-agent', 'wait-stores', 'bootstrap', 'vault-kubernetes-auth', 'done', 'primer', 'api', 'realtime', 'evaluator', 'tenant-admin', 'admin', 'ui', 'pgstream', 'postgres', 'nginx', 'vault']
+      for name in ['install-config', 'vault-agent', 'wait-stores', 'bootstrap', 'vault-kubernetes-auth', 'primer', 'api', 'realtime', 'evaluator', 'tenant-admin', 'admin', 'ui', 'pgstream', 'postgres', 'nginx', 'vault']
     },
-    storage: { mode: 'dynamic', postgres: '1Gi', vault: '256Mi', provisionState: '64Mi', claims: {} },
+    storage: { mode: 'dynamic', postgres: '1Gi', vault: '256Mi', provisionState: '64Mi', primerResults: '64Mi', claims: {} },
   },
 
   raw(overrides):: {
     local c = std.mergePatch($.defaults, overrides),
     local ns = c.namespace,
-    local source = import '../../assets/source-contract.json',
-    local helper = if std.objectHas(source, 'runtimeBootstrapHelper') then source.runtimeBootstrapHelper else null,
-    local helperAnnotations = if helper == null then {} else {
-      'nightscout.org/bootstrap-helper-commit': helper.deployCommit,
-      'nightscout.org/bootstrap-helper-sha256': helper.sha256,
-      'nightscout.org/instance-acceptance': 'PENDING',
-    },
     local verifiedRoles = ['api', 'evaluator', 'realtime'],
     local adminFiles = ['env.json', 'config.json', 'vault-token', 'management-vault-token'],
     local targetNames = [role + '.' + kind + '.json' for role in verifiedRoles for kind in ['config', 'env', 'operation']],
@@ -640,11 +633,6 @@
 
     // ---------------------------------------------------------------- provisioning
     provision: {
-      [if helper != null then 'bootstrapHelper']: {
-        apiVersion: 'v1', kind: 'ConfigMap', immutable: true,
-        metadata: meta('bootstrap-diagnostic', 'provision') + { annotations: helperAnnotations },
-        data: { 'bootstrap.js': importstr '../../assets/bootstrap-helper.js' },
-      },
       state: {
         apiVersion: 'v1',
         kind: 'PersistentVolumeClaim',
@@ -657,23 +645,21 @@
         metadata: meta('provision-scripts', 'provision'),
         data: {
           'vault-kubernetes-auth.js': importstr '../../ops/vault-kubernetes-auth.js',
-          'candidate-documents.cjs': importstr '../../ops/candidate-documents.cjs',
-          'source-contract.json': std.manifestJson({coreCommit: c.sourceCommit, deployCommit: if c.imageDeployCommit == null then c.sourceCommit else c.imageDeployCommit}),
-          'network-documents.cjs': importstr '../../ops/network-documents.cjs',
         },
       },
-      // Explicit provisioning, separate from serving startup. Steps run in order as init
-      // containers; no retry (backoffLimit 0) so an uncertain result is never re-run silently.
-      // Compose: bootstrap, vault-agent-bootstrap, ownership-grants (profile ops).
+      // Explicit provisioning, separate from serving startup: wait for PostgreSQL, create the roles,
+      // schemas and Vault tokens from the seeded credentials, then configure Vault Kubernetes auth.
+      // No retry (backoffLimit 0) so an uncertain result is never re-run silently. The Job writes no
+      // role document and holds nothing for export; it completes when Kubernetes auth is configured.
       job: {
         apiVersion: 'batch/v1',
         kind: 'Job',
-        metadata: meta('provision', 'provision') + (if helper != null then { annotations: helperAnnotations } else {}),
+        metadata: meta('provision', 'provision'),
         spec: {
           backoffLimit: 0,
           activeDeadlineSeconds: c.provisionDeadlineSeconds,
           template: {
-            metadata: { labels: labels('provision') } + (if helper != null then { annotations: helperAnnotations } else {}),
+            metadata: { labels: labels('provision') },
             spec: {
               restartPolicy: 'Never',
               automountServiceAccountToken: false,
@@ -697,10 +683,11 @@
                   caMount,
                   { name: 'scripts', mountPath: '/run/ns-overlay', readOnly: true },
                   tmpMount,
-                ] + (if name == 'bootstrap' then [{ name: 'postgres-password', mountPath: '/run/secrets', readOnly: true }] else []) +
-                    (if helper != null && name == 'bootstrap' then [{
-                      name: 'bootstrap-diagnostic', mountPath: helper.mountPath, subPath: 'bootstrap.js', readOnly: true,
-                    }] else []),
+                ] + (if name == 'bootstrap' then [
+                  { name: 'postgres-password', mountPath: '/run/secrets', readOnly: true },
+                  { name: 'credentials-postgres', mountPath: '/run/ns-credentials/postgres', readOnly: true },
+                  { name: 'credentials-vault', mountPath: '/run/ns-credentials/vault', readOnly: true },
+                ] else []),
               },
               initContainers: [
                 // Bootstrap checks the Vault API itself, including when the store is sealed.
@@ -717,7 +704,10 @@
                   { name: 'NS_POSTGRES_HOST', value: 'postgres' },
                   { name: 'NS_POSTGRES_DATABASE', value: 'nightscout_compose_test' },
                   { name: 'NS_POSTGRES_PASSWORD_FILE', value: '/run/secrets/postgres-password' },
+                  { name: 'NS_CREDENTIALS_DIR', value: '/run/ns-credentials' },
                 ]),
+              ],
+              containers: [
                 step('vault-kubernetes-auth', ['node', '/run/ns-overlay/vault-kubernetes-auth.js', 'provision'], [
                   { name: 'NS_VAULT_K8S_AUTH', value: '1' },
                   { name: 'NS_VAULT_K8S_NAMESPACE', valueFrom: { fieldRef: { fieldPath: 'metadata.namespace' } } },
@@ -726,72 +716,57 @@
                   { name: 'NS_VAULT_AGENT_TOKEN_TTL', value: c.vaultAgent.tokenTtl },
                   { name: 'NS_VAULT_AGENT_TOKEN_MAX_TTL', value: c.vaultAgent.tokenMaxTtl },
                 ]),
-
-              ],
-              containers: [
-                // Keep this container alive for private tar export, including disposable state.
-                // Publisher acknowledges only after every Secret has been created. No private log.
-                step('done', ['node', '/run/ns-overlay/candidate-documents.cjs', 'hold'], [
-                  { name: 'NS_APPLICATION_TOPOLOGY', value: c.applicationTopology },
-                  { name: 'NS_FIXTURE_NAMESPACE', valueFrom: { fieldRef: { fieldPath: 'metadata.namespace' } } },
-                  { name: 'NS_FIXTURE_RUN_ID', valueFrom: { fieldRef: { fieldPath: "metadata.labels['nightscout.org/run-id']" } } },
-                ]),
               ],
               volumes: [
                 { name: 'state', persistentVolumeClaim: { claimName: 'provision-state' } },
                 { name: 'postgres-password', secret: { secretName: 'ns-postgres-password', defaultMode: 288 } },
+                // Seeded before apply; only this Job mounts them.
+                { name: 'credentials-postgres', secret: { secretName: 'ns-credentials-postgres', defaultMode: 288 } },
+                { name: 'credentials-vault', secret: { secretName: 'ns-credentials-vault', defaultMode: 288 } },
                 ca,
                 { name: 'scripts', configMap: { name: 'provision-scripts' } },
                 tmp,
-              ] + (if helper == null then [] else [{
-                name: 'bootstrap-diagnostic', configMap: {
-                  name: 'bootstrap-diagnostic', defaultMode: 292,
-                },
-              }]),
+              ],
             },
           },
         },
       },
     },
 
-    // Verification needs only the database-wide admin proof. The lab client has
-    // separate custody of the private results returned by tenant provisioning.
-    local clientJob(jobName) = {
+    // The lab client writes its private results to its own claim, where an in-cluster consumer
+    // mounts them; nothing waits for an export.
+    local clientJob(jobName, command, extra={}) = {
       job: {
         apiVersion: 'batch/v1', kind: 'Job', metadata: meta(jobName, 'operator'),
         spec: { suspend: true, backoffLimit: 0, activeDeadlineSeconds: c.provisionDeadlineSeconds,
           template: { metadata: { labels: labels('operator') }, spec: {
             restartPolicy: 'Never', automountServiceAccountToken: false, enableServiceLinks: false,
             securityContext: podSecurity,
-            local provisioning = jobName == 'primer',
-            local config = { name: 'config-primer', mountPath: '/run/ns-primer', subPath: 'd' },
-            local result = { name: 'client-state', mountPath: '/run/ns-client' },
-            initContainers: [installConfig(['primer'])] + (if provisioning then [{
-              name: 'primer', image: c.images.app, securityContext: hardened,
-              command: ['node', 'deploy/multitenant/prime.js', 'provision'],
-              args: ['--tenant-count', std.toString(c.tenantCount)],
-              env: [{ name: 'NS_PRIMER_STATE', value: result.mountPath },
-                    { name: 'NS_PRIMER_CONFIG', value: '/run/ns-primer/config.json' }],
-              volumeMounts: [config, result, tmpMount],
-            }] else []),
-            containers: [{ name: 'done', image: c.images.app, securityContext: hardened,
-              command: ['node', '/run/ns-overlay/candidate-documents.cjs', if provisioning then 'export-client' else 'verify'],
-              env: [
-                { name: 'NS_FIXTURE_NAMESPACE', valueFrom: { fieldRef: { fieldPath: 'metadata.namespace' } } },
-                { name: 'NS_FIXTURE_RUN_ID', valueFrom: { fieldRef: { fieldPath: "metadata.labels['nightscout.org/run-id']" } } },
-              ],
-              [if provisioning then 'readinessProbe']: { exec: { command: ['test', '-s', '/run/ns-client/provisioned.json'] }, periodSeconds: 2 },
-              volumeMounts: [config, { name: 'scripts', mountPath: '/run/ns-overlay', readOnly: true }, tmpMount] +
-                            (if provisioning then [result] else []),
-            }],
-            volumes: configVolumes('primer') + [tmp, { name: 'scripts', configMap: { name: 'provision-scripts' } }] +
-                     (if provisioning then [{ name: 'client-state', emptyDir: {} }] else []),
+            initContainers: [installConfig(['primer'])],
+            containers: [{
+              name: jobName, image: c.images.app, imagePullPolicy: 'IfNotPresent', securityContext: hardened,
+              command: command,
+              volumeMounts: [{ name: 'config-primer', mountPath: '/run/ns-primer', subPath: 'd' }, tmpMount] + std.get(extra, 'mounts', []),
+            } + std.get(extra, 'container', {})],
+            volumes: configVolumes('primer') + [tmp] + std.get(extra, 'volumes', []),
           } },
         },
       },
-    },
-    verification: clientJob('verification'),
-    primer: clientJob('primer'),
+    } + std.get(extra, 'objects', {}),
+    primer: clientJob('primer', ['node', 'deploy/multitenant/prime.js', 'provision'], {
+      container: {
+        args: ['--tenant-count', std.toString(c.tenantCount)],
+        env: [{ name: 'NS_PRIMER_STATE', value: '/run/ns-client' }, { name: 'NS_PRIMER_CONFIG', value: '/run/ns-primer/config.json' }],
+      },
+      mounts: [{ name: 'client-state', mountPath: '/run/ns-client' }],
+      volumes: [{ name: 'client-state', persistentVolumeClaim: { claimName: 'primer-results' } }],
+      objects: {
+        results: {
+          apiVersion: 'v1', kind: 'PersistentVolumeClaim', metadata: meta('primer-results', 'operator'),
+          spec: { accessModes: ['ReadWriteOnce'], resources: { requests: { storage: c.storage.primerResults } } },
+        },
+      },
+    }),
     // ---------------------------------------------------------------- network policy
     // Compose: one internal backend network plus a published edge. Here the namespace denies
     // ingress by default and admits each path the Compose topology uses. Enforcement depends on
@@ -821,15 +796,11 @@
     },
 
     // ---------------------------------------------------------------- inventory (not applied)
-    // Which PostgreSQL identity (<prefix>_<name>) each workload connects as, from the Compose
-    // plan's per-role environment documents. check/invariants.js compares it with
-    // ../compose/multitenant/config.js and the ownership overlay. Tanka ignores non-manifests.
+    // Rendering facts check/invariants.js reads. Tanka ignores non-manifests.
     inventory:: {
       prefix: c.prefix,
       sourceCommit: c.sourceCommit,
       evaluatorPool: c.evaluatorPool,
-      postgresIdentities: source.postgresIdentities,
-
     },
   },
 
@@ -839,8 +810,6 @@
     local original = $.raw(overrides);
     local typical = import 'typical-requests.json';
     assert std.member(['cohort', 'separate-k1'], c.applicationTopology) : 'unknown applicationTopology';
-    local source = import '../../assets/source-contract.json';
-    local helper = if std.objectHas(source, 'runtimeBootstrapHelper') then source.runtimeBootstrapHelper else null;
     assert std.member(['limits-v1', 'requests-v1'], c.resourceAccounting) : 'unknown resource accounting';
     local raw = if c.applicationTopology == 'separate-k1' then (import 'components.libsonnet').render(original, c) else original;
     local collect(v) = if std.isArray(v) then std.flattenArrays([collect(x) for x in v]) else if !std.isObject(v) then [] else if std.objectHas(v, 'apiVersion') && std.objectHas(v, 'kind') then [v] else std.flattenArrays([collect(v[k]) for k in std.objectFields(v)]);
@@ -883,12 +852,17 @@
               imagePullSecrets: c.imagePullSecrets,
               containers: containers('containers'),
               [if std.objectHas(spec,'initContainers') then 'initContainers']: containers('initContainers'),
-              volumes: [if name == 'provision' && x.name == 'state' && c.storage.mode != 'dynamic' then stateVolume('provisionState','state') else x for x in spec.volumes] +
+              // Without dynamic storage the lab client keeps its results on a named claim when one is
+              // given, else on the Pod's disk-backed emptyDir.
+              volumes: [if name == 'provision' && x.name == 'state' && c.storage.mode != 'dynamic' then stateVolume('provisionState','state')
+                        else if name == 'primer' && x.name == 'client-state' && c.storage.mode != 'dynamic' then
+                          (if std.objectHas(c.storage.claims, 'primerResults') then { name: x.name, persistentVolumeClaim: { claimName: c.storage.claims.primerResults } } else { name: x.name, emptyDir: {} })
+                        else x for x in spec.volumes] +
                 (if c.storage.mode != 'dynamic' && std.member(['postgres','vault'],name) then [stateVolume(name,'data')] else []),
             } },
           } }
         else {})
-      else { [k]: decorate(v[k]) for k in std.objectFields(v) if !(k == 'state' && std.objectHas(v,'job') && c.storage.mode != 'dynamic') };
+      else { [k]: decorate(v[k]) for k in std.objectFields(v) if !(std.member(['state', 'results'], k) && std.objectHas(v,'job') && c.storage.mode != 'dynamic') };
     local resources = decorate(raw);
     local workloads = [w for w in collect(resources) if std.member(['Deployment','StatefulSet','Job'], w.kind)];
     local rendered = resources + { budget: (import 'namespace-budget.libsonnet')(workloads, c.namespace, c.runId) };
@@ -913,16 +887,17 @@
           'tenant-admin': ['env.json','config.json','operation.json','vault-token'],
           admin: ['env.json','config.json','vault-token','management-vault-token'] +
                  [item.path for item in rendered.admin.deployment.spec.template.spec.volumes[0].secret.items if std.startsWith(item.path, 'verification/')],
-          ui: ['env.json','config.json'], pgstream: ['pgstream.yaml'], primer: ['config.json','expected-verification.json'],
+          ui: ['env.json','config.json'], pgstream: ['pgstream.yaml'], primer: ['config.json'],
         },
         ownership: { namespace: c.namespace, label: { 'nightscout.org/run-id': c.runId }, clusterScoped: [{ kind: 'ClusterRoleBinding', name: c.namespace + '-vault-tokenreview' }] },
         services: { [v.metadata.name]: { selector: v.spec.selector, type: if std.objectHas(v.spec,'type') then v.spec.type else 'ClusterIP', ports: if std.objectHas(v.spec,'ports') then v.spec.ports else [] } for v in [v for v in collect(rendered) if v.kind == 'Service'] },
-        configMaps: ['vault-config','vault-agent-config','edge-nginx','provision-scripts'] + (if helper == null then [] else ['bootstrap-diagnostic']),
+        configMaps: ['vault-config','vault-agent-config','edge-nginx','provision-scripts'],
         imagePullSecrets: c.imagePullSecrets,
         placement: c.placement,
         placementByWorkload: c.placementByWorkload,
-        export: { provision: { job: 'provision', container: 'done', readyFile: '/state/.ready', acknowledgeFile: '/state/.exported' }, primer: { job: 'primer', container: 'done', privateResult: '/run/ns-client/provisioned.json', acknowledgeFile: '/run/ns-client/.exported' } },
-        order: ['seed Secrets', 'apply stores and policies', 'apply provision Job', 'export documents and acknowledge', 'apply private admin', 'complete verification Job', 'apply serving workloads', 'run optional lab client and export its private results', 'observe correctness', 'delete only owned namespace and tokenreview binding'],
+        seed: { script: 'scripts/secrets.sh seed', credentials: ['ns-credentials-postgres', 'ns-credentials-vault'], mountedBy: ['provision'] },
+        results: { primer: { claim: 'primer-results', file: 'provisioned.json' } },
+        order: ['seed Secrets and rendered role documents', 'apply', 'run optional lab client; its private results stay on its claim', 'observe correctness', 'delete only owned namespace and tokenreview binding'],
         workloads: {
           [v.metadata.name]: {
             kind: v.kind, replicas: if v.kind == 'Job' then 1 else v.spec.replicas,

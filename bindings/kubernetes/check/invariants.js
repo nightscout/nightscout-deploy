@@ -2,7 +2,7 @@
 'use strict';
 
 // Invariants of the rendered Kubernetes binding. Offline: renders with `tk eval`, reads no
-// cluster. Every check has a break-it control in check/controls.js.
+// cluster. Break-it controls for these checks live in check/controls.js.
 //
 //   node check/invariants.js [--root <tanka root>] [--env environments/preview] [--compose <bindings/compose dir>]
 //
@@ -148,7 +148,7 @@ function checks (all, inventory, composeDir, envMain) {
   });
 
   run('secrets-by-reference', fail => {
-    const SECRET_NAME = /^(?!.*_(TTL|FILE|PATH|ENV)$).*(PASSWORD|TOKEN|SECRET|CREDENTIAL|PRIVATE)|_PG$|^NS_VAULT_[0-9]+$/;
+    const SECRET_NAME = /^(?!.*_(TTL|FILE|PATH|ENV|DIR)$).*(PASSWORD|TOKEN|SECRET|CREDENTIAL|PRIVATE)|_PG$|^NS_VAULT_[0-9]+$/;
     const SECRET_VALUE = [/[a-z]+:\/\/[^\s/:@]+:[^\s@]+@/i, /\bhvs\.[A-Za-z0-9_-]{20,}/, /-----BEGIN [A-Z ]*PRIVATE KEY-----/];
     for (const m of all) if (m.kind === 'Secret') fail('Secret/' + m.metadata.name + ' is rendered; Secrets are created at apply time, never committed');
     for (const m of all.filter(m => m.kind === 'ConfigMap')) {
@@ -283,23 +283,8 @@ function checks (all, inventory, composeDir, envMain) {
     if (!allowed) fail('source admin provisioning requires Vault TCP8200 ingress');
   });
 
-  run('postgres-identities-match-compose', fail => {
-    const contract = JSON.parse(fs.readFileSync(path.join(__dirname, '../assets/source-contract.json')));
-    for (const [role, names] of Object.entries(contract.postgresIdentities)) {
-      const want=[...names].sort(), have=[...(inventory.postgresIdentities[role]||[])].sort();
-      if (JSON.stringify(want)!==JSON.stringify(have)) fail(role+': binding names '+have.join(',')+', Compose names '+want.join(','));
-    }
-  });
-
   run('source-command-identity', fail => {
-    const contract = JSON.parse(fs.readFileSync(path.join(__dirname, '../assets/source-contract.json')));
     if(inventory.evaluatorPool.partition!=='off')fail('C2 pgstream evaluator partition is unqualified and must remain off');
-    for (const w of workloads) for (const c of containersOf(podSpec(w))) {
-      if (['install-config','wait-stores','vault-kubernetes-auth','done','vault-agent','postgres','vault','nginx'].includes(c.name)) continue;
-      const want=contract.commands[c.name];
-      if (want && JSON.stringify(c.command)!==JSON.stringify(want)) fail(c.name+' command differs from source Compose');
-      if (c.image!==inventory.images.app) fail(c.name+' image differs from declared immutable application image');
-    }
     for (const w of workloads) {
       for (const c of containersOf(podSpec(w))) if (!['postgres','vault','vault-agent','nginx'].includes(c.name) && c.image!==inventory.images.app) fail(c.name+' image differs from declared immutable application image');
       const a=w.metadata.annotations||{};
@@ -345,30 +330,29 @@ function checks (all, inventory, composeDir, envMain) {
   });
 
   run('provision-boundary', fail => {
+    // Secrets flow in, never out (decision provisioning-secrets-in): the provision Job consumes
+    // seeded credentials, holds nothing for export, and no workload waits for an acknowledgement.
     const job=workloads.find(w=>w.metadata.name==='provision');
     if(job?.spec.backoffLimit!==0||!job?.spec.activeDeadlineSeconds)fail('provision requires no retry and a finite deadline');
-    const spec=podSpec(job), names=(spec.initContainers||[]).map(c=>c.name);
-    if(names.join(',')!=='wait-stores,bootstrap,vault-kubernetes-auth')fail('provision must use source-owned registry bootstrap followed by Kubernetes auth');
+    const spec=podSpec(job);
+    if((spec.initContainers||[]).map(c=>c.name).join(',')!=='wait-stores,bootstrap'||spec.containers.map(c=>c.name).join(',')!=='vault-kubernetes-auth')
+      fail('provision must run the registry bootstrap followed by Kubernetes auth');
     if((spec.volumes||[]).some(v=>v.name==='ownership-grants'))fail('C2 already owns admin grants; historical overlay is refused');
-    const done=spec.containers.find(c=>c.name==='done');
-    if (JSON.stringify(done.command) !== JSON.stringify(['node', '/run/ns-overlay/candidate-documents.cjs', 'hold'])) fail('provision must hold private output until explicit export');
-    if (containersOf(spec).filter(c => c.volumeMounts.some(v => v.name === 'postgres-password')).map(c => c.name).join() !== 'bootstrap')
-      fail('only the SQL bootstrap container may mount the setup credential');
+    const credentialMounts=['postgres-password','credentials-postgres','credentials-vault'];
+    if (containersOf(spec).filter(c => c.volumeMounts.some(v => credentialMounts.includes(v.name))).map(c => c.name).join() !== 'bootstrap')
+      fail('only the SQL bootstrap container may mount the setup credentials');
+    for (const w of workloads) {
+      if (w.metadata.name !== 'provision' && (podSpec(w).volumes || []).some(v => /^ns-credentials-/.test(v.secret?.secretName || ''))) fail(id(w) + ' mounts the seeded provisioning credentials');
+      for (const c of containersOf(podSpec(w))) if (c.name === 'done' || /\.exported|\.ready\b|candidate-documents/.test(JSON.stringify([c.command, c.args, c.readinessProbe])))
+        fail(id(w) + ' container ' + c.name + ' holds output for export');
+    }
     const primer=workloads.find(w=>w.metadata.name==='primer');
     if(primer?.spec.suspend!==true || primer?.spec.backoffLimit!==0 || !primer?.spec.activeDeadlineSeconds)fail('primer must be an explicit suspended finite no-retry Job');
     const primerSpec = podSpec(primer);
-    const verification = workloads.find(w => w.metadata.name === 'verification');
-    const verifySpec = verification && podSpec(verification);
-    if (!verifySpec || verification.spec.backoffLimit !== 0 || !verification.spec.activeDeadlineSeconds ||
-        verifySpec.initContainers.some(c => c.name === 'primer') ||
-        !verifySpec.containers.some(c => c.command?.includes('verify')))
-      fail('platform verification must complete independently of tenant provisioning');
-    if (!primerSpec.containers.some(c => c.readinessProbe?.exec?.command.includes('/run/ns-client/provisioned.json')))
-      fail('lab client must retain its private provisioning results until export');
-    for (const job of [primerSpec, verifySpec]) {
-      if (job?.volumes.some(v => v.secret && v.secret.secretName !== 'ns-config-primer'))
-        fail('admin clients mount only their unprivileged source documents');
-    }
+    if (!primerSpec.volumes.some(v => v.name === 'client-state')) fail('lab client results need their own volume');
+    if (primerSpec.volumes.some(v => v.secret && v.secret.secretName !== 'ns-config-primer'))
+      fail('the lab client mounts only its unprivileged source documents');
+    if (workloads.some(w => w.metadata.name === 'verification')) fail('platform verification is retired; no verification Job');
     const admin = workloads.find(w => w.metadata.name === 'admin');
     const adminSpec = podSpec(admin);
     const adminTargetPaths = adminSpec.volumes.find(v => v.name === 'secret-admin')?.secret.items?.map(item => item.path);
@@ -379,13 +363,12 @@ function checks (all, inventory, composeDir, envMain) {
     const sqlPolicy = all.find(m => m.kind === 'NetworkPolicy' && m.metadata.name === 'postgres-from-app');
     const sqlPeers = sqlPolicy.spec.ingress.flatMap(rule => rule.from.map(peer => peer.podSelector?.matchLabels?.['app.kubernetes.io/component']));
     if (sqlPeers.includes('operator')) fail('operator network policy must not admit direct PostgreSQL traffic');
-    if (inventory.postgresIdentities.ui?.includes('ui_registry') && !sqlPeers.includes('ui'))
+    if (!sqlPeers.includes('ui'))
       fail('UI registry identity needs scoped PostgreSQL ingress');
     const installers=workloads.flatMap(w=>(podSpec(w).initContainers||[]).filter(c=>c.name==='install-config'));
     if(installers.some(c=>!JSON.stringify(c.command).includes("!n.startsWith('.')")))fail('installer must copy all source documents including extensionless token files');
   });
 
-  if (separate) run('separate-k1', fail => require('./separate-k1').check(all, inventory, fail));
   return results;
 }
 

@@ -7,7 +7,15 @@ implementation. Source parser checks do not establish effective native SQL grant
 
 ## Provisioning and restart
 
-`node deploy/multitenant/bootstrap.js` is a **one-shot operator command**. It requires:
+Credentials exist before the first start (decision `provisioning-secrets-in`). `prepare.js`
+seeds one PostgreSQL password per deployment role and the Vault token ids into the private
+state's `credentials/` directory (`credentials.js`, hex values, 0600). `render.js` writes every
+role document from them; `bootstrap.js` creates the roles (`CREATE ROLE ... PASSWORD`) and the
+Vault tokens (with the seeded ids) from the same files. Nothing reads a credential back out of a
+container.
+
+`node deploy/multitenant/bootstrap.js` is a **one-shot provisioning step** that Compose runs on
+every `up` before any role starts. It requires:
 
 - `NS_COMPOSE_BOOTSTRAP=1`, `NS_BOOTSTRAP_OUTPUT=/state`, and the exact image
   `NS_SOURCE_COMMIT` (40 hexadecimal characters).
@@ -15,11 +23,12 @@ implementation. Source parser checks do not establish effective native SQL grant
   an explicitly supplied `NS_BOOTSTRAP_POSTGRES_URL`. The dedicated database is
   `nightscout_compose_test`; other database names refuse.
 - `VAULT_ADDR=https://vault:8200` and `NODE_EXTRA_CA_CERTS=/run/ns-ca/ca.crt`.
+- `NS_CREDENTIALS_DIR` (default `/run/ns-credentials`) naming the seeded credentials.
 
 The command initializes/unseals the demo Vault with one share/one threshold,
-creates fresh restricted PostgreSQL logins and a separate NOLOGIN object owner,
+creates fresh restricted PostgreSQL logins with the seeded passwords and a separate NOLOGIN object owner,
 executes the actual reviewed catalogue migrations, grants exact capabilities,
-creates scoped tenant Transit keys/tokens and seeds synthetic tenants A and B.
+creates the scoped Transit policies and tokens with the seeded ids. Tenants are provisioned later through admin.
 Single-share unseal custody is a local demonstration convenience, not a production
 Vault recovery policy. Bootstrap is the only service with the administrator
 password, Vault initialization material and writable `/state` root.

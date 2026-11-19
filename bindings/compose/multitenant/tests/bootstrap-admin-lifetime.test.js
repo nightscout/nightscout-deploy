@@ -30,7 +30,7 @@ for (const finishFails of [false, true]) {
       await admin.query();
       events.push('finish-settled');
       if (finishFails) throw finishError;
-      return 'complete';
+      return {state: 'complete'};
     }
     // Exercise bootstrap's real try/finally with only its external setup ports replaced.
     const modules = {
@@ -42,7 +42,7 @@ for (const finishFails of [false, true]) {
       '../../lib/management-sessions/authority': {grants: () => ({authorityOwner: [], issuer: []})},
       './platform-startup': {install: async () => {}},
       './pgstream': {enabled: () => true, descriptor: () => ({pgstream: {slot: 'fixture'}}), init: async () => {}},
-      './native-lifecycle': {source: async () => ({})},
+      './credentials': {read: () => ({postgres: {}, vault: {}})},
       './registry-bootstrap': {finish}
     };
     const file = require.resolve('../bootstrap');
@@ -51,10 +51,10 @@ for (const finishFails of [false, true]) {
     loaded.require = name => Object.hasOwn(modules, name) ? modules[name] : require(name);
     loaded._compile(fs.readFileSync(file, 'utf8'), file);
     const result = loaded.exports.bootstrap({
-      output, vault: {origin: 'https://fixture.invalid'}, pg: {pathname: '/fixture', toString: () => ''}
+      output, credentials: '/fixture-credentials', vault: {origin: 'https://fixture.invalid'}, pg: {pathname: '/fixture', toString: () => ''}
     });
     if (finishFails) await assert.rejects(result, error => error === finishError);
-    else assert.equal(await result, 'complete');
+    else assert.equal((await result).state, 'complete');
     assert.deepEqual(events, ['finish-start', 'finish-settled', 'close']);
   });
 }

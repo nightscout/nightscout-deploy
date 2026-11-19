@@ -15,9 +15,12 @@ test('generated maintained role files pass actual product parsers without constr
   assert(sql.includes('REVOKE SELECT ON "'+layout.namespaces.entries+'"."entries" FROM "'+layout.roles.realtime+'"'));
   assert(!sql.includes('GRANT SELECT ON "'+layout.namespaces.entries+'"."entries" TO "'+layout.roles.realtime+'"'));
   assert.throws(()=>plan.documents({layout,urls,registryMode:false}),/STATIC_PRODUCT_CONFIGURATION_RETIRED/);
-  const writePrivate=(file,value)=>{fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,JSON.stringify(value));};
-  await require('../registry-bootstrap').finish({options:{output:root,uid:process.getuid(),gid:process.getgid(),sourceCommit:'a'.repeat(40),deployCommit:'b'.repeat(40),vault:{origin:'https://vault:8200'}},request:async()=>({auth:{client_token:'synthetic'}}),rootToken:'synthetic',layout,roleURLs:urls,writePrivate});
-  assert.equal(constructed,0);assert(fs.existsSync(path.join(root,'bootstrap/complete.json')));assert(!fs.existsSync(path.join(root,'feed-reader')));assert(fs.existsSync(path.join(root,'pgstream/pgstream.yaml')));assert(!fs.existsSync(path.join(root,'evaluator/pgstream.yaml')));assert(!('NS_PGSTREAM_BINARY' in JSON.parse(fs.readFileSync(path.join(root,'evaluator/env.json')))));assert(!('NS_PGSTREAM_CONFIG' in JSON.parse(fs.readFileSync(path.join(root,'evaluator/env.json')))));
+  // Every role document renders before apply from seeded credentials, with no database or Vault.
+  const credentials=path.join(root,'credentials');require('../credentials').seed(credentials,Object.keys(layout.roles));
+  const render=require('../render');render.render(render.input({NS_CREDENTIALS_DIR:credentials,NS_RENDER_OUTPUT:path.join(root,'state')}));
+  const state=path.join(root,'state'),read=file=>JSON.parse(fs.readFileSync(path.join(state,file)));
+  assert.equal(constructed,0);assert(!fs.existsSync(path.join(state,'bootstrap')));assert(!fs.existsSync(path.join(state,'feed-reader')));assert(fs.existsSync(path.join(state,'pgstream/pgstream.yaml')));assert(!fs.existsSync(path.join(state,'evaluator/pgstream.yaml')));assert(!('NS_PGSTREAM_BINARY' in read('evaluator/env.json')));assert(!('NS_PGSTREAM_CONFIG' in read('evaluator/env.json')));
+  for(const role of plan.serviceRoles)assert(!('nativeSelection' in read(role+'/operation.json')),role+' carries no stream identity pin');
  }finally{Module._load=load;fs.rmSync(root,{recursive:true,force:true});}
 });
 test('legacy capture disable refuses before product preparation',()=>{

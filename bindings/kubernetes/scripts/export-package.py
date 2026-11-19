@@ -19,7 +19,7 @@ with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
         elif item.isfile():
             dest.parent.mkdir(parents=True,exist_ok=True);dest.write_bytes(tar.extractfile(item).read());dest.chmod(item.mode)
 files={str(f.relative_to(package)):hashlib.sha256(f.read_bytes()).hexdigest() for f in sorted(package.rglob('*')) if f.is_file()}
-receipt={'schemaVersion':1,'bindingCommit':commit,'archiveSha256':hashlib.sha256(archive).hexdigest(),'filesSha256':files,'appSourceContract':json.loads((package/'assets/source-contract.json').read_text()),'scope':'Immutable local package; image publication and cluster/capacity acceptance NOT_GRANTED'}
+receipt={'schemaVersion':1,'bindingCommit':commit,'archiveSha256':hashlib.sha256(archive).hexdigest(),'filesSha256':files,'scope':'Immutable local package; image publication and cluster/capacity acceptance NOT_GRANTED'}
 (out/'package-receipt.json').write_text(json.dumps(receipt,indent=2,sort_keys=True)+'\n')
 # An ordinary private-style consumer has no access to sibling Compose source.
 consumer=out/'consumer';env=consumer/'environments/fixture';env.mkdir(parents=True)

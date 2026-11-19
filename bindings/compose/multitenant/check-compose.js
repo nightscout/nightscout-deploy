@@ -124,7 +124,10 @@ function check (config) {
   }
   assert(config.services.primer.profiles.includes('ops'), 'Lab priming must remain explicit');
   assert(!Object.keys(config.services.primer.environment || {}).some(name => /PG|PASSWORD|TOKEN|VAULT/.test(name)), 'Lab primer must not receive database or Vault credentials');
-  assert(config.services.bootstrap.profiles.includes('ops'), 'Bootstrap must remain explicit');
+  // One apply converges (decision provisioning-secrets-in): the one-shot bootstrap runs on every up
+  // and each runtime role waits for it to complete.
+  assert(!config.services.bootstrap.profiles?.length, 'Bootstrap must run as part of up');
+  for (const name of runtime.filter(name => name !== 'nginx')) assert(config.services[name].depends_on?.bootstrap?.condition === 'service_completed_successfully', name + ' must wait for bootstrap to complete');
   assert(config.services.demo.profiles.includes('ops'), 'Restore demonstration must remain explicit');
   checkOrder(config);
   const ports = config.services.nginx.ports;
