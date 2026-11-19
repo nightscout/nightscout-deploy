@@ -73,3 +73,14 @@ test('reserved-connection grants name clinical roles and never a REST-serving or
   const merged = {...layout, roles: {...layout.roles, outbox: layout.roles.api}};
   assert.throws(() => isolation.grants(merged), /REST-serving role cannot use reserved connections/);
 });
+
+test('max_connections is sized from the declared role pools, including the evaluator receiver pool', () => {
+  const shape = {apiReplicas: 16, realtimeWorkers: 8, evaluatorWorkers: 8};
+  // 16 x api 4 + 8 x realtime 4 + 8 x (evaluator 4 + receiver 2 + operation 8)
+  assert.equal(isolation.connectionBudget(shape, {}), 208);
+  assert.equal(isolation.connectionBudget(shape, {NS_POOL_RECEIVER_MAX: '6'}) - isolation.connectionBudget(shape, {}), 8 * 4);
+  assert.equal(isolation.selection({}, {budget: 208}).maxConnections, 3 + 40 + 208);
+  assert.equal(isolation.selection({}, {budget: 22}).maxConnections, 140);
+  assert.equal(isolation.selection({NS_POSTGRES_MAX_CONNECTIONS: '200'}, {budget: 208}).maxConnections, 200);
+  assert.throws(() => isolation.connectionBudget(shape, {NS_POOL_RECEIVER_MAX: 'x'}), /NS_POOL_RECEIVER_MAX/);
+});

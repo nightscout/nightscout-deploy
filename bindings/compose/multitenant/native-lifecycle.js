@@ -51,8 +51,9 @@ async function install({admin,adminURL,layout,selection}){
 }
 async function upgradeReceipts({admin,adminURL,selection}){
  const namespace=native.validate(selection).binding.lifecycleNamespace;
+ // Receipts are native-only; the retired receipt cutover (core native-receipt-cutover.js) has no step here.
  await require('../../lib/migrations/postgres').run('up',{direct:true,connectionString:adminURL,namespace,catalogue:native.catalogue(selection),statementTimeoutMs:10000});
- return require('../../lib/pgstream/native-receipt-cutover').upgrade(admin,selection);
+ return 0;
 }
 module.exports={source,select,attach,grants,install,upgradeReceipts};
 if(require.main===module){

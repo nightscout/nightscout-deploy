@@ -39,12 +39,35 @@ const SUPERUSER_RESERVED = 3;
 // are never members.
 const CLINICAL_ROLE_KINDS = Object.freeze(['pgstream', 'evaluator', 'realtime', 'outbox', 'suppression', 'lifetime_evaluator', 'lifetime_realtime']);
 
+// Declared PostgreSQL connection budget (decision pg-connection-budget): each
+// role process's pools (core lib/server/serve/pool-config.js, NS_POOL_<ROLE>_MAX,
+// defaults below) times its process count. An evaluator process opens the
+// evaluation, stream-receipt (RECEIVER, decision ack-path-tenant-independent) and
+// operation pools. Side clients (readiness, migration, listeners) are not yet
+// declared; they use the headroom above the budget.
+const POOL_DEFAULTS = Object.freeze({ API: 4, REALTIME: 4, EVALUATOR: 4, RECEIVER: 2, OPERATION: 8 });
+function poolMax (source, role) {
+  const raw = source['NS_POOL_' + role + '_MAX'];
+  if (raw === undefined || raw === '') return POOL_DEFAULTS[role];
+  if (typeof raw !== 'string' || !/^[1-9][0-9]{0,3}$/.test(raw)) fail('NS_POOL_' + role + '_MAX must be a whole number 1..9999');
+  return Number(raw);
+}
+function connectionBudget ({ apiReplicas = 1, realtimeWorkers = 1, evaluatorWorkers = 1 } = {}, source = process.env) {
+  const pool = role => poolMax(source, role);
+  return apiReplicas * pool('API') + realtimeWorkers * pool('REALTIME') +
+    evaluatorWorkers * (pool('EVALUATOR') + pool('RECEIVER') + pool('OPERATION'));
+}
 function fail (message) { throw new TypeError(message); }
-function selection (source = process.env) {
+// With a declared budget, an unset NS_POSTGRES_MAX_CONNECTIONS is sized to hold
+// it beside the superuser and clinical reservations, never below the default.
+function selection (source = process.env, { budget } = {}) {
   const selected = {};
   for (const [key, name] of Object.entries(NAMES)) {
     const raw = source[name];
-    if (raw === undefined || raw === '') { selected[key] = DEFAULTS[key]; continue; }
+    if (raw === undefined || raw === '') {
+      selected[key] = DEFAULTS[key];
+      continue;
+    }
     const [lower, upper] = RANGES[key];
     if (typeof raw !== 'string' || !/^[0-9]{1,6}$/.test(raw) || Number(raw) < lower || Number(raw) > upper) fail(name + ' must be ' + lower + '..' + upper);
     selected[key] = Number(raw);
@@ -52,6 +75,9 @@ function selection (source = process.env) {
   // As core does at boot: a queue/timeout/Retry-After value without a concurrency is refused, never ignored.
   const stray = REST_KEYS.slice(1).find(key => selected[key] !== null);
   if (selected.restConcurrency === null && stray) fail(NAMES[stray] + ' requires ' + NAMES.restConcurrency);
+  if (budget !== undefined && (source[NAMES.maxConnections] === undefined || source[NAMES.maxConnections] === '')) {
+    selected.maxConnections = Math.max(DEFAULTS.maxConnections, SUPERUSER_RESERVED + selected.clinicalReserved + budget);
+  }
   if (selected.maxConnections - SUPERUSER_RESERVED - selected.clinicalReserved < 1) {
     fail(NAMES.clinicalReserved + ' must leave general connection slots below ' + NAMES.maxConnections);
   }
@@ -81,4 +107,4 @@ function grants (layout, quote = require('./config').quote) {
 function envLines (selected = selection()) {
   return Object.entries(NAMES).filter(([key]) => selected[key] !== null).map(([key, name]) => name + '=' + selected[key] + '\n').join('');
 }
-module.exports = { NAMES, DEFAULTS, REST_KEYS, SUPERUSER_RESERVED, CLINICAL_ROLE_KINDS, selection, apiEnvironment, postgresArguments, clinicalRoles, grants, envLines };
+module.exports = { NAMES, DEFAULTS, REST_KEYS, SUPERUSER_RESERVED, CLINICAL_ROLE_KINDS, POOL_DEFAULTS, connectionBudget, selection, apiEnvironment, postgresArguments, clinicalRoles, grants, envLines };

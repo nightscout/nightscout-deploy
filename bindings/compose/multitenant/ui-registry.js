@@ -1,7 +1,7 @@
 'use strict';
 
-// Public presentation admission uses only the registry's fixed host-lookup and
-// revision capabilities. Configuration cannot select a module or SQL body.
+// Public presentation admission uses only the registry's fixed host-lookup,
+// revision and addressed-change capabilities. Configuration cannot select a module or SQL body.
 const path = require('node:path');
 const ROOT = path.resolve(__dirname, '../..');
 const NAME = /^[a-z][a-z0-9_]{0,62}$/;
@@ -29,7 +29,7 @@ async function authority(connection, namespace) {
     EXISTS(SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
       WHERE p.prosecdef AND n.nspname NOT IN ('pg_catalog','information_schema')
       AND pg_catalog.has_function_privilege(r.oid,p.oid,'EXECUTE')
-      AND NOT(n.nspname=$1 AND p.oid IN (pg_catalog.to_regprocedure($1||'.tenant_registry_lookup(text,text)'),pg_catalog.to_regprocedure($1||'.tenant_registry_revision()')))) AS extra_definer,
+      AND NOT(n.nspname=$1 AND p.oid IN (pg_catalog.to_regprocedure($1||'.tenant_registry_lookup(text,text)'),pg_catalog.to_regprocedure($1||'.tenant_registry_revision()'),pg_catalog.to_regprocedure($1||'.tenant_registry_changed(bigint,uuid[])')))) AS extra_definer,
     EXISTS(SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
       WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND CASE WHEN c.relkind='S' THEN pg_catalog.has_sequence_privilege(r.oid,c.oid,'USAGE,SELECT,UPDATE') ELSE false END) AS sequence_access
     FROM pg_catalog.pg_roles r WHERE r.rolname=current_user`, [namespace])).rows;

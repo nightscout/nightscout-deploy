@@ -408,7 +408,7 @@ A queue, timeout or Retry-After value without a concurrency is refused at prepar
 | `NS_API_REST_QUEUE` | core: 0 | requests that may wait for a slot; others get 503 `REST_ADMISSION_REFUSED` |
 | `NS_API_REST_QUEUE_TIMEOUT_MS` | core: 1000 | longest wait for a slot before the 503 |
 | `NS_API_REST_RETRY_AFTER_SECONDS` | core: 1 | `Retry-After` on the 503 |
-| `NS_POSTGRES_MAX_CONNECTIONS` | 140 | PostgreSQL `max_connections` |
+| `NS_POSTGRES_MAX_CONNECTIONS` | 140, or more when the declared pool budget needs it | PostgreSQL `max_connections`. Unset, it is sized to hold 3 superuser slots, the clinical reservation and the role pools (`NS_POOL_<ROLE>_MAX` x processes: api x replicas, realtime x workers, evaluator + receiver + operation x evaluator workers), never below 140 |
 | `NS_POSTGRES_CLINICAL_RESERVED_CONNECTIONS` | 40 | PostgreSQL `reserved_connections` |
 
 When a limit is set, a refused request runs no handler, so a refused write has no

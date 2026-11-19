@@ -41,7 +41,9 @@ function prepare (args) {
   if (selectedEvaluator) evaluator.assertSeed(selectedEvaluator);
   const leaseSessions = require('./registry-plan').leaseSessions();
   require('./edge').policy();
-  const clinicalIsolation = require('./clinical-isolation').selection();
+  const isolation = require('./clinical-isolation');
+  const clinicalIsolation = isolation.selection(process.env, { budget: isolation.connectionBudget({ apiReplicas,
+    realtimeWorkers: selectedRealtime?.workers ?? 1, evaluatorWorkers: selectedEvaluator?.workers ?? 1 }) });
   const source = require('./build').assertCleanSource(path.join(base, '../..'));
   const deployCommit = require('./build').overlay(path.join(base, '../..'))?.deployCommit || source;
   if (!/^[a-f0-9]{40}$/.test(source)) throw new Error('Source commit unavailable');
