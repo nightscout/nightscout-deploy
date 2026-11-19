@@ -57,26 +57,6 @@ test('failure report keeps the stable code and adds redacted detail and location
   assert(text.includes('postgres://<redacted>@postgres:5432/nightscout_compose_test'));
   assert.equal(bootstrap.redact('duplicate key value violates unique constraint'),'duplicate key value violates unique constraint');
 });
-test('generated role documents are compact; custody files stay indented',()=>{
-  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'ns-compose-compact-'));
-  try{
-    const value={tenants:[{id:'a',aliases:['one.example.test']}]};
-    bootstrap.writePrivate(path.join(directory,'role.json'),value,{},{compact:true});
-    bootstrap.writePrivate(path.join(directory,'custody.json'),value);
-    assert.equal(fs.readFileSync(path.join(directory,'role.json'),'utf8'),JSON.stringify(value)+'\n');
-    assert.equal(fs.readFileSync(path.join(directory,'custody.json'),'utf8'),JSON.stringify(value,null,2)+'\n');
-  }finally{fs.rmSync(directory,{recursive:true});}
-});
-test('config cap option is off by default and bounded when set',()=>{
-  const env={NS_COMPOSE_BOOTSTRAP:'1',NS_BOOTSTRAP_OUTPUT:'/tmp/state',NS_SOURCE_COMMIT:'a'.repeat(40),NS_BOOTSTRAP_POSTGRES_URL:'postgres://postgres:synthetic-only@postgres:5432/nightscout_compose_test',VAULT_ADDR:'https://vault:8200'};
-  assert.equal(bootstrap.input(env).configMaxBytes,undefined);
-  assert.equal(bootstrap.input({...env,NS_BOOTSTRAP_CONFIG_MAX_BYTES:''}).configMaxBytes,undefined);
-  assert.equal(bootstrap.input({...env,NS_BOOTSTRAP_CONFIG_MAX_BYTES:'4194304'}).configMaxBytes,4194304);
-  assert.throws(()=>bootstrap.input({...env,NS_BOOTSTRAP_CONFIG_MAX_BYTES:'4MiB'}),/BOOTSTRAP_CONFIG_MAX_BYTES_INVALID/);
-  assert.throws(()=>bootstrap.input({...env,NS_BOOTSTRAP_CONFIG_MAX_BYTES:'65535'}),/BOOTSTRAP_CONFIG_MAX_BYTES_INVALID/);
-  assert.throws(()=>bootstrap.input({...env,NS_BOOTSTRAP_CONFIG_MAX_BYTES:'67108865'}),/BOOTSTRAP_CONFIG_MAX_BYTES_INVALID/);
-  assert.equal(bootstrap.input({...env,NS_BOOTSTRAP_CONFIG_MAX_BYTES:'67108864'}).configMaxBytes,67108864);
-});
 test('bootstrap validation runs the ui parser: an empty ui roster refuses at bootstrap',()=>{
   const {docs}=generated(),directory=files(docs);
   try{

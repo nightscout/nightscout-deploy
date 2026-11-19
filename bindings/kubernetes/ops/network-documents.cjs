@@ -20,30 +20,5 @@ function project(root) {
   const read = name => JSON.parse(fs.readFileSync(path.join(root, name), 'utf8'));
   const write = (name, value) => fs.writeFileSync(path.join(root, name), JSON.stringify(value), { mode: 0o600 });
   for (const role of ROLES) write(role + '/env.json', environment(read(role + '/env.json'), role));
-  // The admin screens exactly the documents that the serving roles will load.
-  for (const role of ['api', 'evaluator', 'realtime']) {
-    const env = read(role + '/env.json');
-    const base = '/run/ns-config/verification';
-    const target = Object.fromEntries(Object.entries(env).map(([name, value]) => [name,
-      value.replaceAll('/run/ns-config/config.json', base + '/' + role + '.config.json')
-        .replaceAll('/run/ns-config/evaluator-metadata.json', base + '/evaluator.config.json')
-        .replaceAll('/run/ns-config/operation.json', base + '/' + role + '.operation.json')]));
-    write('admin/verification/' + role + '.env.json', target);
-  }
-  const operatorFile = path.join(root, 'ops/config.json');
-  if (fs.existsSync(operatorFile)) {
-    const config = read('ops/config.json');
-    // The source registry operator has no participant addresses; leave it
-    // byte-for-byte. Otherwise address each participant this binding runs as
-    // its own Deployment; the source parser judges the rest.
-    const participants = config?.control?.participants;
-    if (!Array.isArray(participants)) return;
-    for (const participant of participants) {
-      if (!ROLES.includes(participant?.id)) continue;
-      const { maxBytes, timeoutMs } = participant.endpoint || {};
-      participant.endpoint = { url: address(participant.id), trust: 'network', maxBytes, timeoutMs };
-    }
-    write('ops/config.json', config);
-  }
 }
 module.exports = { PORTS, ROLES, address, environment, project };

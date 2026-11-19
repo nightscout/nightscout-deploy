@@ -2,25 +2,22 @@
 'use strict';
 
 // Kubernetes counterpart of ../../compose/vault-agent/vault-agent-bootstrap.js. Runs in the
-// application image as a step of the provision Job, after the imported bootstrap.js, with the
-// provisioning state at /state. It never prints a credential.
+// application image as the last step of the provision Job, after bootstrap.js, with the Job's own
+// state at /state (Vault initialization custody and layout). It never prints a credential and
+// writes no role document: the api documents were rendered before apply with the Agent sink as
+// their token file (ops/render-documents.cjs, decision provisioning-secrets-in).
 //
-// Same policy as the Compose step (the union of the imported per-tenant policies plus the
-// Agent's renew-self and lookup-self) and the same rewrite of the api document to the sink.
-// The login differs, as decision vault-agent-sidecar sets: Kubernetes auth bound to the cohort's
-// service account and namespace, with a projected token of a dedicated audience, instead of an
-// AppRole role_id/secret_id pair. No AppRole material is created or written.
+// Policy: the api's serving policy plus the Agent's renew-self and lookup-self. The login is
+// Kubernetes auth bound to the cohort's service account and namespace, with a projected token of a
+// dedicated audience (decision vault-agent-sidecar). No AppRole material is created or written.
 //
 //   provision  enable kubernetes auth, configure it against the in-cluster API, write the policy,
-//              create the role, point the api document at the sink, record completion
+//              create the role, record completion
 const fs = require('node:fs'), path = require('node:path');
 const fail = code => Object.assign(new Error(code), { code });
 const DURATION = /^[1-9][0-9]{0,5}[smh]$/;
 const NAME = /^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/;
-const { isDeepStrictEqual } = require('node:util');
-const SOURCE_TOKEN_FILE = '/run/ns-config/vault-token';
 const SINK = '/run/ns-vault/token';
-
 function input (env = process.env) {
   if (env.NS_VAULT_K8S_AUTH !== '1' || !/^\/[\w/.-]+$/.test(env.NS_BOOTSTRAP_OUTPUT || '')) throw fail('EXPLICIT_VAULT_K8S_AUTH_REQUIRED');
   const vault = new URL(env.VAULT_ADDR || 'https://vault:8200');
@@ -43,31 +40,6 @@ function writePrivate (file, value, { flag = 'wx' } = {}) {
   fs.chmodSync(file, 0o600);
 }
 
-// Rename only whole private documents. A failed Job can leave one copy at
-// the selected sink. Both source paths are checked before resuming the pair.
-function replacePrivateJson(file, value) {
-  const staging = fs.mkdtempSync(path.join(path.dirname(file), '.vault-update-'));
-  try {
-    const next = path.join(staging, 'next');
-    writePrivate(next, JSON.stringify(value, null, 2) + '\n');
-    fs.renameSync(next, file);
-  } finally {
-    fs.rmSync(staging, { recursive: true, force: true });
-  }
-}
-
-function verificationCopy(output, api) {
-  if (!api.platformVerification) return null;
-  const file = path.join(output, 'admin', 'verification', 'api.config.json');
-  if (!fs.existsSync(file)) throw fail('VAULT_VERIFICATION_DOCUMENT_REQUIRED');
-  const copy = readPrivateJson(file);
-  if (api.platformVerification.role !== 'api' || ![SOURCE_TOKEN_FILE, SINK].includes(copy.vault?.tokenFile) ||
-      !isDeepStrictEqual(api, { ...copy, vault: { ...copy.vault, tokenFile: api.vault.tokenFile } })) {
-    throw fail('VAULT_VERIFICATION_DOCUMENT_CHANGED');
-  }
-  return file;
-}
-
 async function provision ({ vault, output, ttl, maxTtl, namespace, serviceAccount, audience }) {
   const bootstrapDir = path.join(output, 'bootstrap'), agentDir = path.join(output, 'vault-agent');
   if (!fs.existsSync(path.join(bootstrapDir, 'complete.json'))) throw fail('IMPORTED_BOOTSTRAP_INCOMPLETE');
@@ -86,23 +58,9 @@ async function provision ({ vault, output, ttl, maxTtl, namespace, serviceAccoun
     const text = await response.text();
     return text ? JSON.parse(text) : {};
   }
-  const apiDir = path.join(output, 'api'), apiConfig = readPrivateJson(path.join(apiDir, 'config.json')), apiEnv = readPrivateJson(path.join(apiDir, 'env.json'));
-  const registry = !!apiConfig.registry && apiConfig.tenants === undefined &&
-    (apiConfig.vault?.tokenFile === SOURCE_TOKEN_FILE || (apiConfig.platformVerification && apiConfig.vault?.tokenFile === SINK));
-  const verificationFile = registry ? verificationCopy(output, apiConfig) : null;
-  if (!registry && (!Array.isArray(apiConfig.tenants) || !apiConfig.tenants.length)) throw fail('IMPORTED_API_CONFIG_INVALID');
-  const rules = [];
-  if (registry) {
-    const policy = await request('sys/policies/acl/' + layout.prefix + '_api');
-    if (typeof policy?.data?.policy !== 'string' || !policy.data.policy) throw fail('IMPORTED_TENANT_POLICY_MISSING');
-    rules.push(policy.data.policy);
-  }
-  for (const [i, tenant] of (registry ? [] : apiConfig.tenants).entries()) {
-    if (!tenant.vault || typeof tenant.vault.tokenEnv !== 'string') throw fail('IMPORTED_API_CONFIG_INVALID');
-    const policy = await request('sys/policies/acl/' + layout.prefix + '_tenant_' + i);
-    if (typeof policy?.data?.policy !== 'string' || !policy.data.policy) throw fail('IMPORTED_TENANT_POLICY_MISSING');
-    rules.push('# tenant ' + i + ' (imported policy ' + layout.prefix + '_tenant_' + i + ')', policy.data.policy);
-  }
+  const policy = await request('sys/policies/acl/' + layout.prefix + '_api');
+  if (typeof policy?.data?.policy !== 'string' || !policy.data.policy) throw fail('IMPORTED_TENANT_POLICY_MISSING');
+  const rules = [policy.data.policy];
   rules.push('# Vault Agent token self-management', 'path "auth/token/renew-self" { capabilities = ["update"] }', 'path "auth/token/lookup-self" { capabilities = ["read"] }');
   // 400 "path is already in use" when a previous partial run enabled the method.
   await request('sys/auth/kubernetes', { type: 'kubernetes' }, 'POST', { accept: [400] });
@@ -113,19 +71,8 @@ async function provision ({ vault, output, ttl, maxTtl, namespace, serviceAccoun
   await request('auth/kubernetes/role/' + roleName, { bound_service_account_names: [serviceAccount], bound_service_account_namespaces: [namespace],
     audience, token_policies: [policyName], token_no_default_policy: true, token_type: 'service', token_ttl: ttl, token_max_ttl: maxTtl });
   fs.mkdirSync(agentDir, { recursive: true, mode: 0o700 });
-  const envKeys = (registry ? [] : apiConfig.tenants).map(tenant => tenant.vault.tokenEnv);
-  if (registry) apiConfig.vault.tokenFile = SINK;
-  for (const tenant of (registry ? [] : apiConfig.tenants)) { delete tenant.vault.tokenEnv; tenant.vault.tokenFile = SINK; }
-  for (const key of envKeys) delete apiEnv[key];
-  if (verificationFile) {
-    replacePrivateJson(verificationFile, apiConfig);
-    replacePrivateJson(path.join(apiDir, 'config.json'), apiConfig);
-  } else {
-    writePrivate(path.join(apiDir, 'config.json'), JSON.stringify(apiConfig, null, 2) + '\n', { flag: 'w' });
-    writePrivate(path.join(apiDir, 'env.json'), JSON.stringify(apiEnv, null, 2) + '\n', { flag: 'w' });
-  }
   writePrivate(completeFile, JSON.stringify({ version: 1, method: 'kubernetes', role: roleName, policy: policyName, serviceAccount, namespace, audience,
-    tokenTtl: ttl, tokenMaxTtl: maxTtl, sink: SINK, mode: registry ? 'registry' : 'static', tenants: registry ? null : apiConfig.tenants.length }, null, 2) + '\n');
+    tokenTtl: ttl, tokenMaxTtl: maxTtl, sink: SINK, mode: 'registry' }, null, 2) + '\n');
   return { state: 'vault-agent-provisioned', method: 'kubernetes', role: roleName, policy: policyName, sink: SINK };
 }
 

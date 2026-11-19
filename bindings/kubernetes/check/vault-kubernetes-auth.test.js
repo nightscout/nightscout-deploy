@@ -10,11 +10,9 @@ const { input, provision } = require('../ops/vault-kubernetes-auth');
 function state () {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ns-k8s-auth-'));
   const put = (file, value) => { fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true, mode: 0o700 }); fs.writeFileSync(path.join(dir, file), JSON.stringify(value), { mode: 0o600 }); };
-  put('bootstrap/complete.json', { version: 1 });
+  put('bootstrap/complete.json', { version: 2 });
   put('bootstrap/vault-init.json', { root_token: 'synthetic-root-token' });
   put('bootstrap/layout.json', { prefix: 'nsdemo', mount: 'nsdemo_transit' });
-  put('api/config.json', { tenants: [{ id: 'a', vault: { tokenEnv: 'NS_VAULT_0' } }, { id: 'b', vault: { tokenEnv: 'NS_VAULT_1' } }] });
-  put('api/env.json', { NS_VAULT_0: 'synthetic-0', NS_VAULT_1: 'synthetic-1', NS_API_PG: 'synthetic' });
   return dir;
 }
 function fakeVault ({ missingPolicy = false } = {}) {
@@ -22,10 +20,9 @@ function fakeVault ({ missingPolicy = false } = {}) {
   globalThis.fetch = async (url, init) => {
     const resource = new URL(url).pathname.replace(/^\/v1\//, '');
     calls.push({ resource, method: init.method, body: init.body ? JSON.parse(init.body) : undefined });
-    const m = /^sys\/policies\/acl\/nsdemo_tenant_(\d)$/.exec(resource);
-    if (m && init.method === 'GET') {
+    if (resource === 'sys/policies/acl/nsdemo_api' && init.method === 'GET') {
       if (missingPolicy) return new Response('{}', { status: 404 });
-      return new Response(JSON.stringify({ data: { policy: 'path "nsdemo_transit/encrypt/tenant-' + m[1] + '-data" { capabilities = ["update"] }' } }), { status: 200 });
+      return new Response(JSON.stringify({ data: { policy: 'path "nsdemo_transit/decrypt/tenant-data-*" { capabilities = ["update"] }' } }), { status: 200 });
     }
     return new Response(null, { status: 204 });
   };
@@ -34,8 +31,9 @@ function fakeVault ({ missingPolicy = false } = {}) {
 const options = output => input({ NS_VAULT_K8S_AUTH: '1', NS_BOOTSTRAP_OUTPUT: output, NS_VAULT_K8S_NAMESPACE: 'nightscout-preview',
   NS_VAULT_K8S_SERVICE_ACCOUNT: 'ns-cohort', NS_VAULT_K8S_AUDIENCE: 'vault', VAULT_ADDR: 'https://vault:8200' });
 
-test('binds the deployment role to the cohort service account and moves api to the sink', async () => {
+test('binds the deployment role to the cohort service account with the api policy and writes no role document', async () => {
   const dir = state(), calls = fakeVault();
+  const before = fs.readdirSync(dir).sort();
   const result = await provision(options(dir));
   assert.strictEqual(result.method, 'kubernetes');
   assert.ok(!calls.some(c => /approle/.test(c.resource)), 'no AppRole material');
@@ -44,17 +42,14 @@ test('binds the deployment role to the cohort service account and moves api to t
   assert.deepStrictEqual([role.bound_service_account_names, role.bound_service_account_namespaces, role.audience, role.token_policies],
     [['ns-cohort'], ['nightscout-preview'], 'vault', ['nsdemo_vault_agent']]);
   const policy = calls.find(c => c.resource === 'sys/policies/acl/nsdemo_vault_agent').body.policy;
-  assert.match(policy, /tenant-0-data/); assert.match(policy, /tenant-1-data/); assert.match(policy, /renew-self/);
-  const api = JSON.parse(fs.readFileSync(path.join(dir, 'api/config.json'), 'utf8'));
-  assert.deepStrictEqual(api.tenants.map(t => t.vault), [{ tokenFile: '/run/ns-vault/token' }, { tokenFile: '/run/ns-vault/token' }]);
-  const env = JSON.parse(fs.readFileSync(path.join(dir, 'api/env.json'), 'utf8'));
-  assert.deepStrictEqual(Object.keys(env), ['NS_API_PG'], 'environment tokens dropped');
-  for (const f of ['api/config.json', 'api/env.json', 'vault-agent/complete.json']) assert.strictEqual(fs.statSync(path.join(dir, f)).mode & 0o777, 0o600, f);
+  assert.match(policy, /decrypt\/tenant-data-\*/); assert.match(policy, /renew-self/);
+  assert.deepStrictEqual(fs.readdirSync(dir).sort(), [...before, 'vault-agent'].sort(), 'only its own completion record');
+  assert.strictEqual(fs.statSync(path.join(dir, 'vault-agent/complete.json')).mode & 0o777, 0o600);
   assert.deepStrictEqual(await provision(options(dir)), { state: 'existing-vault-agent-provisioned' });
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('a missing tenant policy refuses before any auth change', async () => {
+test('a missing api policy refuses before any auth change', async () => {
   const dir = state(), calls = fakeVault({ missingPolicy: true });
   await assert.rejects(provision(options(dir)), { code: 'VAULT_K8S_AUTH_VAULT_REFUSED' });
   assert.ok(!calls.some(c => c.resource.startsWith('sys/auth') || c.resource.startsWith('auth/')));
@@ -65,18 +60,4 @@ test('a missing tenant policy refuses before any auth change', async () => {
 test('input refuses plain http and a bad service-account name', () => {
   assert.throws(() => input({ NS_VAULT_K8S_AUTH: '1', NS_BOOTSTRAP_OUTPUT: '/state', NS_VAULT_K8S_NAMESPACE: 'n', NS_VAULT_K8S_SERVICE_ACCOUNT: 's', VAULT_ADDR: 'http://vault:8200' }), { code: 'BOOTSTRAP_VAULT_HTTPS_REQUIRED' });
   assert.throws(() => input({ NS_VAULT_K8S_AUTH: '1', NS_BOOTSTRAP_OUTPUT: '/state', NS_VAULT_K8S_NAMESPACE: 'n', NS_VAULT_K8S_SERVICE_ACCOUNT: 'Bad_Name' }), { code: 'VAULT_K8S_BINDING_INVALID' });
-});
-
-
-test('registry C2 imports source API policy and rewrites the supported tokenFile', async () => {
-  const dir=state();
-  fs.writeFileSync(path.join(dir,'api/config.json'),JSON.stringify({registry:{namespace:'synthetic_registry'},vault:{tokenFile:'/run/ns-config/vault-token'}}),{mode:0o600});
-  fs.writeFileSync(path.join(dir,'api/env.json'),JSON.stringify({MULTITENANT_PREVIEW_CONFIG:'/run/ns-config/config.json'}),{mode:0o600});
-  const calls=[];
-  globalThis.fetch=async(url,init)=>{const resource=new URL(url).pathname.slice(4);calls.push({resource,body:init.body&&JSON.parse(init.body)});return resource==='sys/policies/acl/nsdemo_api'?new Response(JSON.stringify({data:{policy:'path "nsdemo_transit/decrypt/tenant-data-*" { capabilities = ["update"] }'}})):new Response(null,{status:204});};
-  await provision(options(dir));
-  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(dir,'api/config.json'))).vault.tokenFile,'/run/ns-vault/token');
-  assert.match(calls.find(c=>c.resource==='sys/policies/acl/nsdemo_vault_agent').body.policy,/decrypt\/tenant-data-\*/);
-  assert.ok(!calls.some(c=>/tenant_[0-9]/.test(c.resource)));
-  fs.rmSync(dir,{recursive:true,force:true});
 });

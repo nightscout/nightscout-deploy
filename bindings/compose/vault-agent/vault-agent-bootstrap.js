@@ -80,7 +80,9 @@ function selectApi (config, environment, { selected = false } = {}) {
   const next = structuredClone(config), env = { ...environment }, removedEnvironment = [];
   let mode;
   if (next.registry && next.tenants === undefined && next.vault && typeof next.vault.tokenFile === 'string' && next.vault.tokenEnv === undefined) {
-    mode = 'registry'; if (next.vault.tokenFile !== (selected ? SINK : '/run/ns-config/vault-token')) throw fail('IMPORTED_API_CONFIG_INVALID'); next.vault.tokenFile = SINK;
+    // The overlay renders the api at the sink before apply (NS_API_VAULT_TOKEN_FILE); a seeded
+    // token-file document is still converted.
+    mode = 'registry'; if (![SINK, ...(selected ? [] : ['/run/ns-config/vault-token'])].includes(next.vault.tokenFile)) throw fail('IMPORTED_API_CONFIG_INVALID'); next.vault.tokenFile = SINK;
   } else if (!next.registry && Array.isArray(next.tenants) && next.tenants.length) {
     mode = 'static'; const ids = new Set();
     for (const tenant of next.tenants) {

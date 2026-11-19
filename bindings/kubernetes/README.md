@@ -15,28 +15,22 @@ inputs and verify their contracts; the historical capture grants no current qual
 
 ## Source and runtime ownership
 
-`assets/source-contract.json` records the actual immutable image receipt, source commands, SQL
-identities and file checksums measured by `check/source-equivalence.py`. The image contains core
-and deployment bytes; the Kubernetes binding has its own later commit. Set `imageDeployCommit`
-to the deployment bytes in the image and `bindingIdentity` to the package commit. A local Docker
-image ID is not a pullable OCI manifest digest. Image delivery needs operator-supplied, verified
-registry references or another explicitly qualified delivery path.
-
-The capture supports platform verification v2 and v3. The constructor checks the selected
-version against the installed source and preserves each version's startup proof without a lease.
-Unknown versions and a v2/v3 mismatch refuse preparation. A later binding commit can use an
-existing image only while its complete Compose runtime tree still matches `imageDeployCommit`.
+The image contains core and deployment bytes; the Kubernetes binding has its own later commit.
+Set `imageDeployCommit` to the deployment bytes in the image and `bindingIdentity` to the package
+commit. Image identity is the immutable image digest (the Pod `imageID`), not a source-file
+checksum. A local Docker image ID is not a pullable OCI manifest digest. Image delivery needs
+operator-supplied, verified registry references or another explicitly qualified delivery path.
 
 | Source capability | Kubernetes binding |
 |---|---|
 | API, realtime, evaluator, tenant-admin | api, tenant-admin: one Deployment per role, Recreate, one replica. evaluator, realtime: StatefulSets (slice = pod index). Private HTTP between roles |
 | Maintained pgstream producer | Independent one-replica Recreate Deployment, same binary command and private wire Secret; private evaluator intake Service selects the evaluator workload for the chosen profile |
 | PostgreSQL/wal2json | Explicit supplied image digest and the source streaming/connection settings; image entrypoint retained for initdb |
-| Source bootstrap | Explicit no-retry Job with a finite deadline; source creates registry/admin/management documents and slot/publication configuration |
+| Source bootstrap | Explicit no-retry Job with a finite deadline; consumes seeded credentials and creates roles, schemas, Vault tokens and slot/publication configuration; role documents are rendered before apply |
 | API Vault policy | Kubernetes-auth helper imports the source-created policy and adapts the supported tokenFile; projected audience-bound token feeds the native Vault Agent sidecar |
 | Admin | Source entrypoint and complete private source documents; only its copied ADMIN_HOSTNAME changes to the actual Pod IP; ClusterIP and operator-only NetworkPolicy |
 | UI and edge | Source UI preload/command and byte-identical nginx asset; ClusterIP consumer entry |
-| Tenant provisioning | A database verification Job admits serving. An independent lab Job provisions synthetic tenants through the private admin API. |
+| Tenant provisioning | An independent lab Job provisions synthetic tenants through the private admin API. |
 
 Core constructs the tenant documents, credentials, application lifecycle state and authority.
 The binding projects only deployment addresses before the admin screens those documents.
@@ -86,14 +80,14 @@ ports, edge/operator to consumer API/realtime ports, and only pgstream to stream
 Services and edge routes do not expose private listeners. Actual NetworkPolicy enforcement requires
 a live negative connectivity check.
 
-P's `startup-v2` platform verification runs through private admin before serving. Its receipt has
-namespace, exact role roster and generation digests, with no lease or timestamp. The verification Job publishes the receipt in its completion log; the source verifier refuses anything but
-a complete `verified` receipt. Each serving role checks its own proof generation and fails closed,
-and serving admission checks current database, role and epoch identity, so the binding does not
-re-derive the generations. The provision `done` container only projects network addresses,
-publishes a public provenance record and holds the private state for export; source, catalogue,
-commit and binary identity come from the image digest and Job ordering
-(`architecture-justified-removal`).
+Secrets flow into Jobs and roles, never out (decision `provisioning-secrets-in`).
+`scripts/secrets.sh seed` creates every credential before apply and renders every role document
+from them in the application image (`ops/render-documents.cjs`, which runs the deployment's
+`credentials.js` and `render.js`). The provision Job only reads its mounted
+`ns-credentials-postgres` and `ns-credentials-vault` Secrets to create the PostgreSQL roles and the
+Vault tokens with the seeded ids. Vault's own unseal key and root token come from its
+initialization and stay on the Job's `provision-state` volume. No container holds output for
+export and nothing waits for an acknowledgement.
 
 Recreate and one replica express rollout intent. They do not prove old-backend termination for a
 manual Pod delete, partition or restore. Qualification must observe the actual old process/backend
@@ -116,7 +110,7 @@ requires environment-owned headroom/admission checks; it does not reserve resour
 |---|---|---|
 | `dynamic` (legacy default) | PostgreSQL/Vault claim templates and provision-state PVC | May incur new volume charges |
 | `disposable` | Bounded per-Pod emptyDir; no PVC | Backing-store Pod replacement loses state; never a durability result |
-| `existing-claim` | Only explicit `storage.claims.{postgres,vault,provisionState}` references | Requires operator-owned, unshared claims and storage qualification |
+| `existing-claim` | Only explicit `storage.claims.{postgres,vault,provisionState}` references (optional `primerResults`) | Requires operator-owned, unshared claims and storage qualification |
 
 `profile: 'existing-capacity'` refuses dynamic storage and public Services. Its gate also rejects
 provider-resource manifests, hostPath and unbounded emptyDirs. It cannot prove actual node headroom,
@@ -145,21 +139,9 @@ bash check/golden.sh
 
 `inventory` is a hidden Jsonnet field and is never applied. It names source/image/binding identity,
 run ownership, workloads/commands/budgets, Services, document filenames, Secret references, storage,
-export rendezvous paths and the commissioning order. `check/invariants.js --root <consumer-root>
---env <environment>` checks a private consumer without needing a Compose checkout.
-
-To remeasure source equivalence, provide the exact local immutable app image and frozen Compose tree:
-
-```bash
-python check/source-equivalence.py --compose <frozen-bindings/compose> --image <local-image-id> --diagnostic <immutable-candidate-receipt>
-```
-
-This starts only an inert network-disabled Node document constructor. It records the embedded
-receipt, the installed source bytes and binary digest as the image carries them (a later
-binding-only Compose commit is not a refusal), then compares all SQL identities and source
-commands with the retained contract unless `--capture` is given. It does
-not rerun application acceptance. `--capture` updates the retained source facts and must accompany
-an explicitly selected new source tuple, never a relabeling of inherited acceptance.
+the seeded Secrets, where lab client results stay, and the commissioning order.
+`check/invariants.js --root <consumer-root> --env <environment>` checks a private consumer without
+needing a Compose checkout.
 
 ## Export a clean package
 
@@ -183,42 +165,25 @@ performed by the offline checks above.
 
 1. Inspect the exact rendered objects/inventory and environment preflight. Create only the owned
    Namespace and explicit trust/policy/ConfigMap/store objects. Do not borrow existing workload state.
-2. Operator runs `scripts/secrets.sh seed <namespace> <compat-arg>` with explicit `NS_KUBE_CONTEXT`
-   and matching `NS_RUN_ID`. The helper verifies Namespace ownership and refuses existing Secrets.
-3. Apply the provision Job. Its bootstrap reaches the Vault API over TLS at the headless
-   `vault-bootstrap` Service, including during unseal. The serving Service uses Vault health
-   readiness. An uninitialized fixture accepts bootstrap and a sealed fixture returns HTTP 503.
-   The fixture certificate covers both Service names. After bootstrap and Kubernetes auth,
-   the `done` container waits at `/state/.ready` for private export within `activeDeadlineSeconds`.
-4. Operator runs `scripts/secrets.sh publish <namespace> <compat-image-arg>`. It verifies the owned
-   Pod UID, exports directly into a private temporary directory, creates role Secrets, then
-   acknowledges `/state/.exported`. Job completion follows export. There is no reader Pod or volume.
-5. Apply the private admin Deployment and wait for its health check. Run the verification Job
-   with suspension disabled. Wait for Job completion and collect the public receipt from its
-   `done` container log. The serving roles check their live verification generation at startup.
-6. Apply the serving workloads. Run the optional primer Job with suspension disabled when
-   synthetic tenants are needed. Its client generates the roster from `--tenant-count` and
-   provisions it through admin. In its `done` container, run
-   `NS_PRIMER_CONFIG=/run/ns-primer/config.json NS_PRIMER_STATE=/run/ns-client node deploy/multitenant/prime.js prime`
-   to create synthetic DATA credentials. Export the required files from `/run/ns-client`
-   into the owned private test packet. Touch `/run/ns-client/.exported` once custody transfers.
-   The finite Job deadline covers these steps. Private client results use a disk-backed
-   `emptyDir` with no volume size limit. The configuration Secret contains the client endpoints and verification selection.
-7. Observe the tiny synthetic trial under the finite environment deadline. Cleanup verifies actual
+2. Operator runs `scripts/secrets.sh seed <namespace> <app image>` with explicit `NS_KUBE_CONTEXT`,
+   matching `NS_RUN_ID` and the binding's `NS_APPLICATION_TOPOLOGY`. The helper verifies Namespace
+   ownership, refuses existing Secrets, and needs docker with the application image locally.
+3. Apply everything once. The provision Job's bootstrap reaches the Vault API over TLS at the
+   headless `vault-bootstrap` Service, including during unseal; the serving Service uses Vault
+   health readiness. The fixture certificate covers both Service names. The Job completes after
+   Kubernetes auth is configured; the roles start from their seeded documents and become ready once
+   their schemas and Vault tokens exist.
+4. Run the optional primer Job with suspension disabled when synthetic tenants are needed. It
+   provisions the `--tenant-count` roster through admin and writes its private results to
+   `/run/ns-client` on its own volume: the `primer-results` claim with dynamic storage, a claim
+   named in `storage.claims.primerResults`, or otherwise the Pod's disk-backed `emptyDir`. An
+   in-cluster consumer mounts that claim; nothing is exported by `kubectl exec`.
+5. Observe the tiny synthetic trial under the finite environment deadline. Cleanup verifies actual
    Namespace UID/run label and the exact tokenreview binding ownership before deleting those owned
    resources. Retain private evidence before removing disposable storage. Namespace deletion does
    not delete existing external claims; their retention/cleanup remains with their owner.
 
 Missing durable ownership,
-source/image mismatch, incomplete provisioning, or failed application admission remains a refusal.
-Run the focused C3 document controls in its network-isolated local app image:
-
-```bash
-docker run --rm --network none --read-only --tmpfs /tmp:rw,nosuid,nodev,size=32m \
-  --mount "type=bind,source=$PWD,target=/check,readonly" \
-  --entrypoint node "$(jq -r .localImageId assets/source-contract.json)" --test /check/check/candidate-documents.test.cjs
-```
-
-The test constructs documents from the installed source and exercises the source admin controller
-and client with a synthetic verification response. Kubernetes application and capacity evidence
-requires an admitted run and the existing write, storage, clinical, frame and authority oracles.
+incomplete provisioning, or failed application admission remains a refusal. Kubernetes application
+and capacity evidence requires an admitted run and the existing write, storage, clinical, frame and
+authority oracles.

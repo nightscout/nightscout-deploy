@@ -44,6 +44,12 @@ services:
     read_only: true
     tmpfs: [/tmp:mode=1777]
 
+  # The one-shot bootstrap renders the api documents with the Agent sink as their token file, so a
+  # repeat `up` keeps them (decision provisioning-secrets-in).
+  bootstrap:
+    environment:
+      NS_API_VAULT_TOKEN_FILE: /run/ns-vault/token
+
   # One-shot step after the imported bootstrap: enable AppRole, write the Transit policy,
   # create the role, write role_id/secret_id into the private state (0600), and point the
   # api document at the sink. Runs the application image so it carries no extra tooling.

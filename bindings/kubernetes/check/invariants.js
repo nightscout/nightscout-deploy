@@ -93,6 +93,67 @@ function checks (all, inventory, composeDir, envMain) {
     if(maps.length!==1 || !require('node:util').isDeepStrictEqual(maps[0].data,{'nginx.conf':projected}) || maps[0].binaryData)fail('EDGE_CONFIGMAP_CHANGED');
   });
 
+  run('admin-not-public', fail => {
+    if (all.some(m => m.kind === 'Ingress')) fail('an Ingress is rendered; the consumer entry is the edge Service only');
+    for (const svc of services) {
+      const type = svc.spec.type || 'ClusterIP';
+      const consumer = (svc.metadata.annotations || {})['nightscout.org/consumer-entry'] === 'true';
+      for (const sp of svc.spec.ports || []) {
+        for (const t of resolve(svc, sp)) {
+          if (t.port.name !== 'int-admin' && t.port.containerPort !== 1342) continue;
+          if (type !== 'ClusterIP') fail('Service/' + svc.metadata.name + ' exposes the admin port as ' + type);
+          if (consumer) fail('Service/' + svc.metadata.name + ' is the consumer entry and exposes the admin port');
+          if (svc.metadata.name !== 'admin') fail('Service/' + svc.metadata.name + ' exposes the admin port; only Service/admin may');
+        }
+      }
+      if (type !== 'ClusterIP' && !consumer) fail('Service/' + svc.metadata.name + ' is ' + type + ' but is not the consumer entry');
+    }
+    const nginx = all.find(m => m.kind === 'ConfigMap' && m.metadata.name === 'edge-nginx');
+    if (!nginx) fail('edge nginx ConfigMap missing');
+    else if (/\badmin\b\s*:|:1342\b|tenant-admin|:1341\b/.test(nginx.data['nginx.conf'].replace(/location[^{]*\{\s*return 404;\s*\}/g, ''))) fail('the edge nginx.conf routes to the admin or owner plane');
+    const adminPods = workloads.filter(w => containersOf(podSpec(w)).some(c => (c.ports || []).some(p => p.name === 'int-admin')));
+    for (const w of adminPods) {
+      const pols = all.filter(m => m.kind === 'NetworkPolicy' && Object.keys(m.spec.podSelector.matchLabels || {}).length && selects(m.spec.podSelector.matchLabels, podLabels(w)));
+      if (!pols.length) fail(id(w) + ' has no NetworkPolicy of its own; the namespace default would be its only boundary');
+      for (const p of pols) for (const rule of p.spec.ingress || []) {
+        const from = rule.from || [];
+        if (!from.length || from.some(f => f.ipBlock || f.namespaceSelector || (f.podSelector || {}).matchLabels?.['app.kubernetes.io/component'] !== 'operator')) fail('NetworkPolicy/' + p.metadata.name + ' admits more than operator Pods to the admin plane');
+      }
+    }
+  });
+
+  run('secrets-by-reference', fail => {
+    const SECRET_NAME = /^(?!.*_(TTL|FILE|PATH|ENV|DIR)$).*(PASSWORD|TOKEN|SECRET|CREDENTIAL|PRIVATE)|_PG$|^NS_VAULT_[0-9]+$/;
+    const SECRET_VALUE = [/[a-z]+:\/\/[^\s/:@]+:[^\s@]+@/i, /\bhvs\.[A-Za-z0-9_-]{20,}/, /-----BEGIN [A-Z ]*PRIVATE KEY-----/];
+    for (const m of all) if (m.kind === 'Secret') fail('Secret/' + m.metadata.name + ' is rendered; Secrets are created at apply time, never committed');
+    for (const m of all.filter(m => m.kind === 'ConfigMap')) {
+      for (const [k, v] of Object.entries(m.data || {})) if (SECRET_VALUE.some(re => re.test(v))) fail('ConfigMap/' + m.metadata.name + ' key ' + k + ' holds credential material');
+    }
+    for (const w of workloads) {
+      const spec = podSpec(w);
+      for (const c of containersOf(spec)) {
+        for (const e of c.env || []) {
+          if (e.value !== undefined && (SECRET_NAME.test(e.name) || SECRET_VALUE.some(re => re.test(e.value)))) fail(id(w) + ' container ' + c.name + ' env ' + e.name + ' is a literal; it must come from a Secret reference');
+          if (e.valueFrom && e.valueFrom.configMapKeyRef && SECRET_NAME.test(e.name)) fail(id(w) + ' container ' + c.name + ' env ' + e.name + ' comes from a ConfigMap');
+        }
+        for (const f of c.envFrom || []) if (!f.secretRef) fail(id(w) + ' container ' + c.name + ' envFrom must be a secretRef');
+        for (const vm of c.volumeMounts || []) {
+          const vol = (spec.volumes || []).find(v => v.name === vm.name);
+          if (/^\/run\/(ns-secret|secrets)(\/|$)/.test(vm.mountPath) && !(vol && vol.secret)) fail(id(w) + ' container ' + c.name + ' mounts ' + vm.mountPath + ' from a non-Secret volume ' + vm.name);
+        }
+      }
+      for (const v of spec.volumes || []) if (/^secret-/.test(v.name) && !v.secret) fail(id(w) + ' volume ' + v.name + ' is named as private documents but is not a Secret');
+    }
+  });
+
+  run('images-pinned', fail => {
+    const DIGEST = /@sha256:[0-9a-f]{64}$/;
+    const EXACT = /:(v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?|[0-9a-f]{40})$/;
+    for (const w of workloads) for (const c of containersOf(podSpec(w))) {
+      if (typeof c.image !== 'string' || !(DIGEST.test(c.image) || EXACT.test(c.image))) fail(id(w) + ' container ' + c.name + ' image ' + c.image + ' is not pinned by digest or exact tag');
+    }
+  });
+
   run('independent-pgstream', fail => {
     const streams=workloads.filter(w=>(podSpec(w).containers||[]).some(c=>c.name==='pgstream'));
     if(streams.length!==1)return fail('exactly one pgstream workload required');
@@ -117,9 +178,6 @@ function checks (all, inventory, composeDir, envMain) {
     if (hosts.length !== 1) return fail('the evaluator must run in exactly one workload, found ' + hosts.length);
     const w = hosts[0];
     if (w.kind !== 'StatefulSet' || w.spec.replicas !== 1) fail(id(w) + ' must be a one-replica StatefulSet');
-    const container = podSpec(w).containers.find(c => c.name === 'evaluator');
-    const probe = JSON.stringify(container.readinessProbe || {});
-    if (probe !== JSON.stringify({ exec: { command: ['node', 'deploy/multitenant/health.js', 'evaluator'] }, failureThreshold: 30, periodSeconds: 2, timeoutSeconds: 3 })) fail('evaluator readiness must be the role health check only');
   });
 
   run('realtime-slices', fail => {
@@ -131,19 +189,15 @@ function checks (all, inventory, composeDir, envMain) {
     if (env.NS_SLICE_ORDINAL?.valueFrom?.fieldRef?.fieldPath !== "metadata.labels['apps.kubernetes.io/pod-index']") fail('NS_SLICE_ORDINAL must come from the pod-index label');
   });
 
-  run('startup-budget', fail => {
-    // Compose gives api, realtime and evaluator start_period 900s; the binding's startupProbe on the
-    // same health command must allow at least as long, so readiness is not judged during a warm.
-    for (const role of ['api', 'realtime', 'evaluator']) {
+  run('role-probes', fail => {
+    // Core health endpoints on the role's private listener; startup allows the 900 s warm budget.
+    for (const role of ['api', 'realtime', 'evaluator', 'tenant-admin']) {
       const hosts = workloads.flatMap(w => (podSpec(w).containers || []).filter(c => c.name === role).map(c => [w, c]));
       if (!hosts.length) fail('no container named ' + role);
       for (const [w, c] of hosts) {
-        const p = c.startupProbe;
-        if (!p) { fail(id(w) + ' container ' + role + ' has no startupProbe'); continue; }
-        const want = JSON.stringify(['node', 'deploy/multitenant/health.js', role]);
-        if (JSON.stringify((p.exec || {}).command) !== want) fail(id(w) + ' container ' + role + ' startupProbe must run the role health check ' + want);
-        const budget = (p.periodSeconds || 10) * (p.failureThreshold || 3);
-        if (budget < 900) fail(id(w) + ' container ' + role + ' startupProbe allows ' + budget + ' s; it must allow at least 900 s (Compose start_period)');
+        if (c.readinessProbe?.httpGet?.path !== '/healthz/ready' || c.startupProbe?.httpGet?.path !== '/healthz/ready' || c.livenessProbe?.httpGet?.path !== '/healthz/live') fail(id(w) + ' container ' + role + ' must probe /healthz/ready (startup, readiness) and /healthz/live (liveness)');
+        const p = c.startupProbe || {};
+        if ((p.periodSeconds || 10) * (p.failureThreshold || 3) < 900) fail(id(w) + ' container ' + role + ' startupProbe must allow at least 900 s (Compose start_period)');
       }
     }
   });
@@ -179,22 +233,7 @@ function checks (all, inventory, composeDir, envMain) {
     if (!allowed) fail('source admin provisioning requires Vault TCP8200 ingress');
   });
 
-  run('postgres-identities-match-compose', fail => {
-    const contract = JSON.parse(fs.readFileSync(path.join(__dirname, '../assets/source-contract.json')));
-    for (const [role, names] of Object.entries(contract.postgresIdentities)) {
-      const want=[...names].sort(), have=[...(inventory.postgresIdentities[role]||[])].sort();
-      if (JSON.stringify(want)!==JSON.stringify(have)) fail(role+': binding names '+have.join(',')+', Compose names '+want.join(','));
-    }
-  });
-
   run('source-command-identity', fail => {
-    const contract = JSON.parse(fs.readFileSync(path.join(__dirname, '../assets/source-contract.json')));
-    for (const w of workloads) for (const c of containersOf(podSpec(w))) {
-      if (['install-config','wait-stores','vault-kubernetes-auth','done','vault-agent','postgres','vault','nginx'].includes(c.name)) continue;
-      const want=contract.commands[c.name];
-      if (want && JSON.stringify(c.command)!==JSON.stringify(want)) fail(c.name+' command differs from source Compose');
-      if (c.image!==inventory.images.app) fail(c.name+' image differs from declared immutable application image');
-    }
     for (const w of workloads) {
       for (const c of containersOf(podSpec(w))) if (!['postgres','vault','vault-agent','nginx'].includes(c.name) && c.image!==inventory.images.app) fail(c.name+' image differs from declared immutable application image');
       const a=w.metadata.annotations||{};
@@ -240,41 +279,38 @@ function checks (all, inventory, composeDir, envMain) {
   });
 
   run('provision-boundary', fail => {
+    // Secrets flow in, never out (decision provisioning-secrets-in): the provision Job consumes
+    // seeded credentials, holds nothing for export, and no workload waits for an acknowledgement.
     const job=workloads.find(w=>w.metadata.name==='provision');
     if(job?.spec.backoffLimit!==0||!job?.spec.activeDeadlineSeconds)fail('provision requires no retry and a finite deadline');
-    const spec=podSpec(job), names=(spec.initContainers||[]).map(c=>c.name);
-    if(names.join(',')!=='wait-stores,bootstrap,vault-kubernetes-auth')fail('provision must use source-owned registry bootstrap followed by Kubernetes auth');
+    const spec=podSpec(job);
+    if((spec.initContainers||[]).map(c=>c.name).join(',')!=='wait-stores,bootstrap'||spec.containers.map(c=>c.name).join(',')!=='vault-kubernetes-auth')
+      fail('provision must run the registry bootstrap followed by Kubernetes auth');
     if((spec.volumes||[]).some(v=>v.name==='ownership-grants'))fail('C2 already owns admin grants; historical overlay is refused');
-    const done=spec.containers.find(c=>c.name==='done');
-    if (JSON.stringify(done.command) !== JSON.stringify(['node', '/run/ns-overlay/candidate-documents.cjs', 'hold'])) fail('provision must hold private output until explicit export');
-    if (containersOf(spec).filter(c => c.volumeMounts.some(v => v.name === 'postgres-password')).map(c => c.name).join() !== 'bootstrap')
-      fail('only the SQL bootstrap container may mount the setup credential');
+    const credentialMounts=['postgres-password','credentials-postgres','credentials-vault'];
+    if (containersOf(spec).filter(c => c.volumeMounts.some(v => credentialMounts.includes(v.name))).map(c => c.name).join() !== 'bootstrap')
+      fail('only the SQL bootstrap container may mount the setup credentials');
+    for (const w of workloads) {
+      if (w.metadata.name !== 'provision' && (podSpec(w).volumes || []).some(v => /^ns-credentials-/.test(v.secret?.secretName || ''))) fail(id(w) + ' mounts the seeded provisioning credentials');
+      for (const c of containersOf(podSpec(w))) if (c.name === 'done' || /\.exported|\.ready\b|candidate-documents/.test(JSON.stringify([c.command, c.args, c.readinessProbe])))
+        fail(id(w) + ' container ' + c.name + ' holds output for export');
+    }
     const primer=workloads.find(w=>w.metadata.name==='primer');
     if(primer?.spec.suspend!==true || primer?.spec.backoffLimit!==0 || !primer?.spec.activeDeadlineSeconds)fail('primer must be an explicit suspended finite no-retry Job');
     const primerSpec = podSpec(primer);
-    const verification = workloads.find(w => w.metadata.name === 'verification');
-    const verifySpec = verification && podSpec(verification);
-    if (!verifySpec || verification.spec.backoffLimit !== 0 || !verification.spec.activeDeadlineSeconds ||
-        verifySpec.initContainers.some(c => c.name === 'primer') ||
-        !verifySpec.containers.some(c => c.command?.includes('verify')))
-      fail('platform verification must complete independently of tenant provisioning');
-    if (!primerSpec.containers.some(c => c.readinessProbe?.exec?.command.includes('/run/ns-client/provisioned.json')))
-      fail('lab client must retain its private provisioning results until export');
-    for (const job of [primerSpec, verifySpec]) {
-      if (job?.volumes.some(v => v.secret && v.secret.secretName !== 'ns-config-primer'))
-        fail('admin clients mount only their unprivileged source documents');
-    }
+    if (!primerSpec.volumes.some(v => v.name === 'client-state')) fail('lab client results need their own volume');
+    if (primerSpec.volumes.some(v => v.secret && v.secret.secretName !== 'ns-config-primer'))
+      fail('the lab client mounts only its unprivileged source documents');
+    if (workloads.some(w => w.metadata.name === 'verification')) fail('platform verification is retired; no verification Job');
     const admin = workloads.find(w => w.metadata.name === 'admin');
     const adminSpec = podSpec(admin);
-    const adminTargetPaths = adminSpec.volumes.find(v => v.name === 'secret-admin')?.secret.items?.map(item => item.path);
-    const targetPaths = ['api', 'evaluator', 'realtime'].flatMap(role => ['config', 'env', 'operation'].map(kind => 'verification/' + role + '.' + kind + '.json'));
-    if (!targetPaths.every(name => adminTargetPaths?.includes(name))) fail('admin lacks a private verification target document');
+    if ((adminSpec.volumes.find(v => v.name === 'secret-admin')?.secret.items || []).some(item => item.path.startsWith('verification/'))) fail('admin mounts retired verification documents');
     if (!adminSpec.containers[0].env.some(e => e.name === 'NODE_EXTRA_CA_CERTS') ||
         !adminSpec.containers[0].volumeMounts.some(v => v.name === 'ns-ca')) fail('admin requires the scoped Vault CA mount');
     const sqlPolicy = all.find(m => m.kind === 'NetworkPolicy' && m.metadata.name === 'postgres-from-app');
     const sqlPeers = sqlPolicy.spec.ingress.flatMap(rule => rule.from.map(peer => peer.podSelector?.matchLabels?.['app.kubernetes.io/component']));
     if (sqlPeers.includes('operator')) fail('operator network policy must not admit direct PostgreSQL traffic');
-    if (inventory.postgresIdentities.ui?.includes('ui_registry') && !sqlPeers.includes('ui'))
+    if (!sqlPeers.includes('ui'))
       fail('UI registry identity needs scoped PostgreSQL ingress');
     const installers=workloads.flatMap(w=>(podSpec(w).initContainers||[]).filter(c=>c.name==='install-config'));
     if(installers.some(c=>!JSON.stringify(c.command).includes("!n.startsWith('.')")))fail('installer must copy all source documents including extensionless token files');

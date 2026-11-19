@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 'use strict';
 
-// One-shot provisioning for a dedicated synthetic Compose database. Serving
-// processes never import this module and receive no provisioning credential.
-const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
+// One-shot provisioning for a dedicated synthetic Compose or Kubernetes database. It consumes the
+// credentials seeded before apply (credentials.js, mounted read-only) and creates the PostgreSQL
+// roles and Vault tokens from them. Role documents are rendered before apply (render.js); this step
+// writes only its own custody (Vault initialization, layout, completion) and never a role document.
+// Serving processes never import this module and receive no provisioning credential.
+const fs=require('node:fs'),path=require('node:path');
 const plan=require('./config');
-const random=()=>crypto.randomBytes(32).toString('hex');
 const fail=code=>Object.assign(new Error(code),{code});
 function input(env=process.env) {
   if(env.NS_COMPOSE_BOOTSTRAP!=='1'||!/^\/[\w/.-]+$/.test(env.NS_BOOTSTRAP_OUTPUT||'')||! /^[a-f0-9]{40}$/.test(env.NS_SOURCE_COMMIT||''))throw fail('EXPLICIT_COMPOSE_BOOTSTRAP_REQUIRED');
@@ -22,31 +24,22 @@ function input(env=process.env) {
   for (const endpoint of [vault, bootstrapVault]) {
     if (endpoint.protocol !== 'https:' || endpoint.username || endpoint.password || endpoint.pathname !== '/' || endpoint.search || endpoint.hash) throw fail('BOOTSTRAP_VAULT_HTTPS_REQUIRED');
   }
-  const uid=Number(env.NS_RUNTIME_UID||1000),gid=Number(env.NS_RUNTIME_GID||1000);
-  if(!Number.isSafeInteger(uid)||uid<1||!Number.isSafeInteger(gid)||gid<1)throw fail('BOOTSTRAP_RUNTIME_ID_REQUIRED');
-  // Off by default. For large tenant counts the generated role documents exceed core's default 1 MiB
-  // configuration bound. compose.yaml passes this value to every role container as
-  // MULTITENANT_CONFIG_MAX_BYTES (core lib/server/serve/config-file.js, range 65,536..67,108,864);
-  // the bootstrap applies it to its own validation of the files. It is never written to env.json.
-  const capRaw=env.NS_BOOTSTRAP_CONFIG_MAX_BYTES||'';
-  if(capRaw&&(!/^[1-9][0-9]{0,9}$/.test(capRaw)||Number(capRaw)<65536||Number(capRaw)>67108864))throw fail('BOOTSTRAP_CONFIG_MAX_BYTES_INVALID');
+  const credentials=env.NS_CREDENTIALS_DIR||'/run/ns-credentials';
+  if(!/^\/[\w/.-]+$/.test(credentials))throw fail('BOOTSTRAP_CREDENTIALS_REQUIRED');
   const deployCommit=env.NS_DEPLOY_COMMIT||env.NS_SOURCE_COMMIT;
   if(!/^[a-f0-9]{40}$/.test(deployCommit))throw fail('BOOTSTRAP_DEPLOY_IDENTITY_INVALID');
-  return {deployCommit,pg,vault,bootstrapVault,output:path.resolve(env.NS_BOOTSTRAP_OUTPUT),sourceCommit:env.NS_SOURCE_COMMIT,uid,gid,configMaxBytes:capRaw?Number(capRaw):undefined};
+  return {deployCommit,pg,vault,bootstrapVault,credentials:path.resolve(credentials),output:path.resolve(env.NS_BOOTSTRAP_OUTPUT),sourceCommit:env.NS_SOURCE_COMMIT};
 }
-// Generated machine documents (role config, env, admission) are written compact: about a third
-// smaller, which matters against the configuration byte cap at large tenant counts. Bootstrap
-// custody and operator files stay indented for the people who read them.
-function writePrivate(filename,value,{uid,gid}={},{compact=false}={}) {
+// Bootstrap custody files stay indented for the people who read them.
+function writePrivate(filename,value) {
   fs.mkdirSync(path.dirname(filename),{recursive:true,mode:0o700});
-  fs.writeFileSync(filename,(compact?JSON.stringify(value):JSON.stringify(value,null,2))+'\n',{mode:0o600,flag:'wx'});
-  if(uid!==undefined){fs.chownSync(path.dirname(filename),uid,gid);fs.chownSync(filename,uid,gid);}
+  fs.writeFileSync(filename,JSON.stringify(value,null,2)+'\n',{mode:0o600,flag:'wx'});
 }
-async function bootstrap(options, patchArgs) {
+async function bootstrap(options) {
   require('./pgstream').enabled();
   const workers=require('./evaluator-workers'),evaluatorWorkers=workers.selection();
   if(evaluatorWorkers)workers.assertSeed(evaluatorWorkers);
-  const {pg,bootstrapVault = options.vault,output,sourceCommit,deployCommit,uid,gid,configMaxBytes}=options;
+  const {pg,bootstrapVault = options.vault,output,sourceCommit,deployCommit}=options;
   const privateDirectory=path.join(output,'bootstrap');fs.mkdirSync(privateDirectory,{recursive:true,mode:0o700});
   const initFile=path.join(privateDirectory,'vault-init.json'),completeFile=path.join(privateDirectory,'complete.json'),startedFile=path.join(privateDirectory,'started.json');
   async function request(resource,body,token,method=body===undefined?'GET':'POST'){
@@ -55,8 +48,6 @@ async function bootstrap(options, patchArgs) {
     if(!response.ok){await response.body?.cancel();throw fail('BOOTSTRAP_VAULT_REFUSED');}
     return response.status===204?{}:response.json();
   }
-  if (patchArgs && (!['migrate','finish'].includes(patchArgs[0]) || patchArgs.length !== 3 ||
-      !patchArgs.slice(1).every(value => /^[a-f0-9]{40}$/.test(value)) || !fs.existsSync(completeFile) || !fs.existsSync(initFile))) throw fail('SEED_PATCH_COMPLETED_FIXTURE_REQUIRED');
   let initialization;
   // Only repeat the read. An ambiguous initialization or unseal must never be replayed.
   let status;
@@ -70,6 +61,8 @@ async function bootstrap(options, patchArgs) {
       await new Promise(resolve => setTimeout(resolve, 500));
     }
   }
+  // Vault's own unseal key and root token come from initialization and stay in this step's
+  // private state; the role tokens below carry seeded ids.
   if(!status.initialized){
     if(fs.existsSync(initFile))throw fail('BOOTSTRAP_VAULT_STATE_CHANGED');
     initialization=await request('sys/init',{secret_shares:1,secret_threshold:1});
@@ -82,17 +75,14 @@ async function bootstrap(options, patchArgs) {
   if(seal.sealed){const unsealed=await request('sys/unseal',{key:initialization.keys_base64[0]});if(unsealed.sealed)throw fail('BOOTSTRAP_VAULT_UNSEAL_REFUSED');}
   if(fs.existsSync(completeFile)){
     const complete=JSON.parse(fs.readFileSync(completeFile,'utf8'));
-    if (patchArgs) {
-      if (complete.evaluatorWorkers !== evaluatorWorkers?.workers) throw fail('BOOTSTRAP_EVALUATOR_ROSTER_CHANGED_RECREATE_DEMO');
-      return require('./patch-seed').patch(options, complete, patchArgs.slice(1), patchArgs[0] === 'finish');
-    }
     if(complete.version!==2||complete.sourceCommit!==sourceCommit||complete.deployCommit!==deployCommit)throw fail('BOOTSTRAP_SOURCE_CHANGED_RECREATE_DEMO');
     if(complete.evaluatorWorkers!==evaluatorWorkers?.workers)throw fail('BOOTSTRAP_EVALUATOR_ROSTER_CHANGED_RECREATE_DEMO');
     return {state:'existing-demo-unsealed',sourceCommit};
   }
   if(fs.existsSync(startedFile))throw fail('BOOTSTRAP_PARTIAL_RECREATE_DEMO');
+  const l=plan.layout(),q=plan.quote,allCatalogues=plan.catalogues();
+  const seeded=require('./credentials').read(options.credentials,Object.keys(l.roles));
   writePrivate(startedFile,{version:2,sourceCommit,deployCommit});
-  const l=plan.layout(),q=plan.quote,allCatalogues=plan.catalogues(),roleURLs={};
   const {Client}=require('pg'),admin=new Client({connectionString:pg.toString(),connectionTimeoutMillis:10000,statement_timeout:10000});
   await admin.connect();
   try{
@@ -105,10 +95,8 @@ async function bootstrap(options, patchArgs) {
     await admin.query('REVOKE CREATE ON DATABASE '+q(decodeURIComponent(pg.pathname.slice(1)))+' FROM PUBLIC');
     await admin.query('CREATE ROLE '+q(l.owner)+' NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION');
     await admin.query('CREATE ROLE '+q(l.managementAuthorityOwner)+' NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION');
-    for(const [kind,role]of Object.entries(l.roles)){
-      const password=random();await admin.query('CREATE ROLE '+q(role)+" LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD '"+password+"'");
-      const url=new URL(pg);url.username=role;url.password=password;roleURLs[kind]=url.toString();
-    }
+    // credentials.read admits hex only, so the literal cannot break out of its quotes.
+    for(const [kind,role]of Object.entries(l.roles))await admin.query('CREATE ROLE '+q(role)+" LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD '"+seeded.postgres[kind]+"'");
     // Clinical output producers/deliverers may use PostgreSQL's reserved_connections
     // slots; REST-serving roles may not (clinical-isolation.js).
     for(const sql of require('./clinical-isolation').grants(l))await admin.query(sql);
@@ -128,12 +116,13 @@ async function bootstrap(options, patchArgs) {
     for(const sql of plan.grants(l))await admin.query(sql);
     const managementGrants=require('../../lib/management-sessions/authority').grants({namespaces:{registry:l.namespaces.registry,authorization:l.namespaces.authorization,access:l.namespaces.access,control:l.namespaces.control},issuer:l.roles.management_issuer,authorityOwner:l.managementAuthorityOwner});
     for(const sql of [...managementGrants.authorityOwner,...managementGrants.issuer])await admin.query(sql);
-    await require('./platform-startup').install(admin,l);
     const streamDescriptor=require('./pgstream').descriptor(l,evaluatorWorkers);
     await require('./pgstream').init({admin,adminURL:pg.toString(),layout:l,config:streamDescriptor});
-    const nativeSource=await require('./native-lifecycle').source(admin,streamDescriptor.pgstream.slot);
-    // Registry completion still issues queries through this client.
-    return await require('./registry-bootstrap').finish({options,request,rootToken:initialization.root_token,layout:l,roleURLs,writePrivate,admin,adminURL:pg.toString(),nativeSource});
+    // Registry completion runs before the admin client closes.
+    const result=await require('./registry-bootstrap').finish({request,rootToken:initialization.root_token,layout:l,tokens:seeded.vault,admin});
+    writePrivate(path.join(privateDirectory,'layout.json'),l);
+    writePrivate(completeFile,{version:2,sourceCommit,deployCommit,registryMode:true,evaluatorWorkers:evaluatorWorkers?.workers});
+    return {...result,sourceCommit};
   }finally{await admin.end();}
 }
 // Failure report: the stable code first (unchanged contract), then the underlying message and the
@@ -158,5 +147,5 @@ function report(error){
   if(error?.cause)out.cause=redact(error.cause?.message??String(error.cause));
   return out;
 }
-if(require.main===module){Promise.resolve().then(()=>bootstrap(input(),process.argv.length>2?process.argv.slice(2):undefined)).then(result=>process.stdout.write(JSON.stringify(result)+'\n')).catch(error=>{process.stderr.write(JSON.stringify(report(error))+'\n');process.exitCode=1;});}
+if(require.main===module){Promise.resolve().then(()=>{if(process.argv.length>2)throw fail('BOOTSTRAP_USAGE');return bootstrap(input());}).then(result=>process.stdout.write(JSON.stringify(result)+'\n')).catch(error=>{process.stderr.write(JSON.stringify(report(error))+'\n');process.exitCode=1;});}
 module.exports={input,writePrivate,bootstrap,redact,report};
