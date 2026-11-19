@@ -207,6 +207,12 @@ existing request and warming timeouts. Hard process termination can interrupt
 that drain. A retained lock is never silently stolen: first confirm its process
 is absent and review pending outcomes before removing it.
 
+Set `NS_PRIMER_STALL_SECONDS` to the maximum interval between durable
+checkpoints (default 3600 seconds). Each saved provisioning batch or completed
+DATA tenant with a higher count renews this window. A stall aborts outstanding
+requests and reports `PRIMER_STALLED` with the saved tenant count. Retry on
+the same private state after resolving the cause.
+
 Before an entry POST, `entry-requests.json` records an `outcome-uncertain` phase.
 The record is cleared only after a definite client refusal or after the tenant's
 completed custody is flushed. Transport loss, server errors or failed local

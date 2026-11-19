@@ -95,3 +95,108 @@ test('custody flush failures fence both dispatch and uncertain completed-entry p
   else{assert.equal(x.entries.get(x.rows[0].id),1);assert.equal(read(x.dir,'entry-requests.json').tenants[x.rows[0].id].state,'outcome-uncertain');const before=x.calls.length;await assert.rejects(prime(x.config,x.dir),{code:'PRIMER_ENTRY_OUTCOME_UNCERTAIN'});assert.equal(x.calls.length,before);}
  });
 });
+
+function oneSecondStall(t) {
+  const previous = process.env.NS_PRIMER_STALL_SECONDS;
+  process.env.NS_PRIMER_STALL_SECONDS = '1';
+  t.after(() => {
+    if (previous === undefined) delete process.env.NS_PRIMER_STALL_SECONDS;
+    else process.env.NS_PRIMER_STALL_SECONDS = previous;
+  });
+}
+
+test('the DATA seed outlasts its stall window while each tenant saves custody', async t => {
+  oneSecondStall(t);
+  await fixture(4, async x => {
+    x.behavior(async call => {
+      if (call.path === '/api/v2/authorization/roles') await sleep(350);
+    });
+    const counts = [];
+    const started = performance.now();
+    const result = await prime(x.config, x.dir, {}, count => {
+      if (count) assert.equal(read(x.dir, 'tenants.json').tenants.length, count);
+      counts.push(count);
+    });
+    assert.equal(result.state, 'synthetic-data-primed');
+    assert.deepEqual(counts, [0, 1, 2, 3, 4]);
+    assert.ok(performance.now() - started > 1000);
+    assert.deepEqual([...x.entries.values()], [1, 1, 1, 1]);
+  });
+});
+
+test('repeated warming stalls with the last completed count; resume only sends pending tenants', async t => {
+  oneSecondStall(t);
+  await fixture(3, async x => {
+    let retries = 0;
+    x.behavior(async call => {
+      if (call.path === '/api/v2/authorization/roles' && call.row === x.rows[1] && ++retries < 9) {
+        return {status:503, body:{error:'TENANT_WARMING'}};
+      }
+    });
+    await assert.rejects(prime(x.config, x.dir), {code:'PRIMER_STALLED', tenants:1});
+    assert.ok(retries > 1);
+    assert.equal(fs.existsSync(path.join(x.dir, 'prime.lock')), false);
+    const completed = read(x.dir, 'tenants.json').tenants;
+    assert.equal(completed.length, 1);
+    x.behavior(async () => undefined);
+    const callCount = x.calls.length;
+    const counts = [];
+    assert.equal((await prime(x.config, x.dir, {concurrency:2}, count => counts.push(count))).tenants, 3);
+    assert.deepEqual(counts, [1, 2, 3]);
+    assert.deepEqual(read(x.dir, 'tenants.json').tenants[0], completed[0]);
+    assert.ok(x.calls.slice(callCount).every(call => call.row !== x.rows[0]));
+    assert.deepEqual([...x.entries.values()], [1, 1, 1]);
+  });
+});
+
+test('a stall after an entry POST retains the uncertainty fence on retry', async t => {
+  oneSecondStall(t);
+  await fixture(2, async x => {
+    x.behavior(async (call, {entries}) => {
+      if (call.path === '/api/v1/entries' && call.row === x.rows[1]) {
+        entries.set(call.row.id, 1);
+        await sleep(1500);
+        return {status:200, body:[]};
+      }
+    });
+    await assert.rejects(prime(x.config, x.dir), {code:'PRIMER_STALLED', tenants:1});
+    assert.equal(fs.existsSync(path.join(x.dir, 'prime.lock')), false);
+    assert.equal(read(x.dir, 'entry-requests.json').tenants[x.rows[1].id].state, 'outcome-uncertain');
+    const before = x.calls.length;
+    await assert.rejects(prime(x.config, x.dir), {code:'PRIMER_ENTRY_OUTCOME_UNCERTAIN'});
+    assert.equal(x.calls.length, before);
+    assert.deepEqual([...x.entries.values()], [1, 1]);
+  });
+});
+
+test('provision renews on saved batches and resumes past whole completed batches', async t => {
+  oneSecondStall(t);
+  await fixture(401, async x => {
+    write(x.dir, 'provisioned.json', []);
+    const seed = x.rows.map(({id, hosts}) => ({id, hosts, issueRootSecret:true}));
+    const registry = new Set();
+    let delayLastBatch = true;
+    x.behavior(async (call, {res}) => {
+      assert.equal(call.path, '/v1/tenants/batch');
+      const {tenants} = call.body;
+      await sleep(delayLastBatch && tenants[0].id === seed[300].id ? 1500 : 350);
+      if (res.destroyed) return;
+      const results = tenants.map(({id}) => {
+        if (registry.has(id)) return {id, outcome:'existing'};
+        registry.add(id);
+        return {id, outcome:'created', rootSecret:'synthetic-' + id};
+      });
+      return {status:200, body:{results}};
+    });
+    await assert.rejects(provision({...x.config, seed}, x.dir), {code:'PRIMER_STALLED', tenants:300});
+    const saved = read(x.dir, 'provisioned.json');
+    assert.equal(saved.length, 300);
+    assert.equal(fs.existsSync(path.join(x.dir, 'prime.lock')), false);
+    delayLastBatch = false;
+    const before = x.calls.length;
+    assert.equal((await provision({...x.config, seed}, x.dir)).tenants, 401);
+    assert.deepEqual(x.calls.slice(before).flatMap(call => call.body.tenants), seed.slice(300));
+    assert.deepEqual(read(x.dir, 'provisioned.json').slice(0, 300), saved);
+    assert.equal(registry.size, 401);
+  });
+});

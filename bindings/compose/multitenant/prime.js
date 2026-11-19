@@ -4,6 +4,7 @@
 // Lab client only: provisioning uses the private admin API, and subjects/data
 // use tenant DATA APIs. This process receives no database or Vault credential.
 const fs = require('node:fs'), path = require('node:path'), http = require('node:http'), crypto = require('node:crypto');
+const { isDeepStrictEqual } = require('node:util');
 const fail = code => Object.assign(new Error(code), { code });
 function load(file) {
   const config = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -20,15 +21,16 @@ function connectionFailure(error, classification, code = 'PRIMER_CONNECTION_FAIL
 }
 function diagnostic(error) {
   return { error: /^[A-Z0-9_]{1,100}$/.test(error?.code || '') ? error.code : 'PRIMER_FAILED',
+    ...(error?.code === 'PRIMER_STALLED' ? { tenants: error.tenants } : {}),
     ...(REQUEST_CLASSES.has(error?.requestClass) ? { requestClass: error.requestClass } : {}),
     ...(error?.responseError ? { responseError: error.responseError } : {}),
     ...(error?.connectionCause ? { connectionCause: CONNECTION_CAUSES.has(error.connectionCause) ? error.connectionCause : 'UNCLASSIFIED' } : {}) };
 }
-function request(origin, route, { method = 'GET', body, headers = {}, timeoutMs = 60000, classification = requestClass(route, method) } = {}) {
+function request(origin, route, { method = 'GET', body, headers = {}, timeoutMs = 60000, signal, classification = requestClass(route, method) } = {}) {
   if (!REQUEST_CLASSES.has(classification)) throw fail('PRIMER_REQUEST_CLASS_INVALID');
   const url = new URL(route, origin), bytes = body === undefined ? undefined : Buffer.from(JSON.stringify(body));
   return new Promise((resolve, reject) => {
-    const req = http.request(url, { method, headers: { accept: 'application/json', ...headers, ...(bytes ? { 'content-type': 'application/json', 'content-length': bytes.length } : {}) }, timeout: timeoutMs }, res => {
+    const req = http.request(url, { method, signal, headers: { accept: 'application/json', ...headers, ...(bytes ? { 'content-type': 'application/json', 'content-length': bytes.length } : {}) }, timeout: timeoutMs }, res => {
       const chunks = []; let size = 0;
       res.on('data', chunk => { size += chunk.length; if (size > 16777216) req.destroy(fail('PRIMER_RESPONSE_TOO_LARGE')); else chunks.push(chunk); });
       res.on('end', () => { try { resolve({ status: res.statusCode, body: JSON.parse(Buffer.concat(chunks).toString('utf8')) }); } catch { reject(fail('PRIMER_RESPONSE_INVALID')); } });
@@ -53,10 +55,10 @@ function requestClass(route, method = 'GET') {
   return (names[route] || 'other-data') + '-' + (method === 'POST' ? 'create' : method === 'GET' ? 'read' : 'other');
 }
 let firstUsefulResponse = false;
-async function waitForTenant(origin, headers, { timeoutMs = 60000, pollMs = 200, now = Date.now, delay = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
+async function waitForTenant(origin, headers, { timeoutMs = 60000, pollMs = 200, signal, now = Date.now, delay = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
   const deadline = now() + timeoutMs;
   while (now() < deadline) {
-    const response = await request(origin, '/api/v2/authorization/roles', { headers, timeoutMs: Math.min(5000, deadline - now()), classification: 'roles-ready' });
+    const response = await request(origin, '/api/v2/authorization/roles', { headers, signal, timeoutMs: Math.min(5000, deadline - now()), classification: 'roles-ready' });
     if (response.status === 200 && Array.isArray(response.body)) {
       if (!firstUsefulResponse) { firstUsefulResponse = true; console.error(JSON.stringify({ phase: 'primer', event: 'first-useful-response', requestClass: 'roles-ready', status: 200, atMs: Date.now() })); }
       return response.body;
@@ -74,7 +76,39 @@ function privateWrite(file, value) {
   const parent = fs.openSync(path.dirname(file), 'r');
   try { fs.fsyncSync(parent); } finally { fs.closeSync(parent); }
 }
-async function provision(config, directory, { tenantCount } = {}) {
+// Only call committed() after the checkpoint rename and its directory fsync.
+async function withProgress(completed, work, onCheckpoint) {
+  const seconds = process.env.NS_PRIMER_STALL_SECONDS ?? '3600';
+  if (!/^[1-9][0-9]*$/.test(seconds) || !Number.isSafeInteger(Number(seconds) * 1000)) throw fail('PRIMER_OPTIONS_INVALID');
+  const windowMs = Number(seconds) * 1000;
+  const controller = new AbortController();
+  let deadline = performance.now() + windowMs, timer;
+  function arm() {
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) {
+      controller.abort();
+      return;
+    }
+    timer = setTimeout(arm, Math.min(Math.ceil(remaining), 2147483647));
+  }
+  function committed(count) {
+    if (count <= completed) return;
+    completed = count;
+    if (!controller.signal.aborted && performance.now() < deadline) deadline = performance.now() + windowMs;
+    else controller.abort();
+    onCheckpoint?.(completed);
+  }
+  onCheckpoint?.(completed);
+  arm();
+  try {
+    return await work(committed, controller.signal);
+  } finally {
+    clearTimeout(timer);
+    if (controller.signal.aborted) throw Object.assign(fail('PRIMER_STALLED'), { tenants: completed });
+  }
+}
+
+async function provision(config, directory, { tenantCount, signal } = {}) {
   let seed = config.seed;
   if (seed && tenantCount !== undefined) throw fail('PRIMER_COUNT_CONFLICTS_WITH_SEED');
   if (!seed) {
@@ -82,30 +116,45 @@ async function provision(config, directory, { tenantCount } = {}) {
     const count = demo.tenantCount(tenantCount === undefined ? process.env : { NS_DEMO_TENANTS: tenantCount });
     seed = demo.tenantIds(count).map((id, index) => ({ id, hosts: [demo.tenantAlias(index)], issueRootSecret: true }));
   }
-  return withPrimerLock(directory, () => provisionOwned({ ...config, seed }, directory));
+  return withPrimerLock(directory, () => provisionOwned({ ...config, seed }, directory, signal));
 }
-async function provisionOwned(config, directory) {
+async function provisionOwned(config, directory, signal) {
   const file = path.join(directory, 'provisioned.json');
   let known = [];
   if (fs.existsSync(file)) known = JSON.parse(fs.readFileSync(file, 'utf8'));
   const saved = new Map(known.map(row => [row.id, row]));
-  for (let index = 0; index < config.seed.length; index += 100) {
-    const rows = config.seed.slice(index, index + 100);
-    const response = await request(config.adminOrigin, '/v1/tenants/batch', { method: 'POST', body: { tenants: rows }, classification: 'tenants-provision' });
-    if (response.status !== 200 || !Array.isArray(response.body.results) || response.body.results.length !== rows.length) throw fail('PRIMER_PROVISION_FAILED');
-    // Save every successfully issued root before reporting a refused peer.
-    let refused = false;
-    for (const row of response.body.results) {
-      const spec = rows.find(spec => spec.id === row.id);
-      if (!spec || !['created', 'existing'].includes(row.outcome)) { refused = true; continue; }
-      const previous = saved.get(row.id);
-      if (!row.rootSecret && !previous?.rootSecret) { refused = true; continue; }
-      saved.set(row.id, { id: row.id, hosts: spec.hosts, rootSecret: row.rootSecret || previous.rootSecret });
+  return withProgress(saved.size, async (committed, stallSignal) => {
+    for (let index = 0; index < config.seed.length; index += 100) {
+      if (signal?.aborted) throw fail('PRIMER_CANCELLED');
+      const rows = config.seed.slice(index, index + 100);
+      // A complete lab batch already has its roots. Other provisioning specs
+      // (including reference or internal host changes) still go through admin.
+      if (rows.every(spec => {
+        const prior = saved.get(spec.id);
+        return prior?.rootSecret && spec.issueRootSecret === true &&
+          Object.keys(spec).every(key => ['id', 'hosts', 'issueRootSecret'].includes(key)) &&
+          isDeepStrictEqual(prior.hosts, spec.hosts);
+      })) {
+        require('../../lib/tenant-registry/provision').checkBatch(rows);
+        continue;
+      }
+      const response = await request(config.adminOrigin, '/v1/tenants/batch', { method: 'POST', body: { tenants: rows }, signal: stallSignal, classification: 'tenants-provision' });
+      if (response.status !== 200 || !Array.isArray(response.body.results) || response.body.results.length !== rows.length) throw fail('PRIMER_PROVISION_FAILED');
+      // Save every successfully issued root before reporting a refused peer.
+      let refused = false;
+      for (const row of response.body.results) {
+        const spec = rows.find(spec => spec.id === row.id);
+        if (!spec || !['created', 'existing'].includes(row.outcome)) { refused = true; continue; }
+        const previous = saved.get(row.id);
+        if (!row.rootSecret && !previous?.rootSecret) { refused = true; continue; }
+        saved.set(row.id, { id: row.id, hosts: spec.hosts, rootSecret: row.rootSecret || previous.rootSecret });
+      }
+      privateWrite(file, [...saved.values()]);
+      committed(saved.size);
+      if (refused) throw fail('PRIMER_PROVISION_REFUSED_OR_CUSTODY_MISSING');
     }
-    privateWrite(file, [...saved.values()]);
-    if (refused) throw fail('PRIMER_PROVISION_REFUSED_OR_CUSTODY_MISSING');
-  }
-  return { state: 'synthetic-tenants-provisioned', tenants: saved.size };
+    return { state: 'synthetic-tenants-provisioned', tenants: saved.size };
+  });
 }
 function primeOptions(options = {}) {
   if (!options || typeof options !== 'object' || Array.isArray(options) || Object.keys(options).some(key => !['concurrency','maxTenants','signal'].includes(key))) throw fail('PRIMER_OPTIONS_INVALID');
@@ -128,11 +177,11 @@ async function withPrimerLock(directory, work) {
     fs.unlinkSync(lock);
   }
 }
-async function prime(config, directory, options) {
+async function prime(config, directory, options, onCheckpoint) {
   const settings = primeOptions(options);
-  return withPrimerLock(directory, () => primeOwned(config, directory, settings));
+  return withPrimerLock(directory, () => primeOwned(config, directory, settings, onCheckpoint));
 }
-async function primeOwned(config, directory, { concurrency, maxTenants, signal }) {
+async function primeOwned(config, directory, { concurrency, maxTenants, signal }, onCheckpoint) {
   const saved = JSON.parse(fs.readFileSync(path.join(directory, 'provisioned.json'), 'utf8'));
   const completed = path.join(directory, 'primed.json');
   const tenantsFile = path.join(directory, 'tenants.json');
@@ -155,17 +204,17 @@ async function primeOwned(config, directory, { concurrency, maxTenants, signal }
   const ownership = require('../../lib/server/internal-api/clients').ownershipOperations({ url: config.adminOrigin, trust: 'network', maxBytes: 1048576, timeoutMs: 60000 });
   const requestFile = path.join(directory, 'management-requests.json');
   const managementRequests = fs.existsSync(requestFile) ? JSON.parse(fs.readFileSync(requestFile, 'utf8')) : {};
-  const commission = async ({ row, index }) => {
+  const commission = async ({ row, index }, stallSignal, committed) => {
     // A global completion marker describes the previous seed, not future
     // additions. Preserve existing client custody and do not reissue or write
     // existing tenants while explicitly commissioning new ones.
     const headers = { host: row.hosts[0], 'api-secret': crypto.createHash('sha1').update(row.rootSecret).digest('hex') };
     const call = async (route, options = {}) => {
-      const response = await request(config.apiOrigin, route, { ...options, headers: { ...headers, ...options.headers } });
+      const response = await request(config.apiOrigin, route, { ...options, signal: stallSignal, headers: { ...headers, ...options.headers } });
       if (response.status < 200 || response.status >= 300) throw refusal(response, requestClass(route, options.method));
       return response.body;
     };
-    const roles = await waitForTenant(config.apiOrigin, headers);
+    const roles = await waitForTenant(config.apiOrigin, headers, { signal: stallSignal });
     if (!roles.some(role => role.name === 'demo')) await call('/api/v2/authorization/roles', { method: 'POST', body: { name: 'demo', permissions: ['api:*:read','api:*:create,update,delete','notifications:*:ack'] } });
     let subjects = await call('/api/v2/authorization/subjects');
     if (!subjects.some(subject => subject.name === 'Synthetic demo uploader')) await call('/api/v2/authorization/subjects', { method: 'POST', body: { name: 'Synthetic demo uploader', roles: ['demo'] } });
@@ -177,11 +226,11 @@ async function primeOwned(config, directory, { concurrency, maxTenants, signal }
     const ownerSubject = subjects.find(subject => subject.name === 'Synthetic demo owner');
     if (!ownerSubject?._id) throw fail('PRIMER_OWNER_SUBJECT_MISSING');
     const owner = { principal: ownerSubject._id, consumer: config.ownerConsumer };
-    const listed = await ownership.listOwners({ tenant: row.id });
+    const listed = await ownership.listOwners({ tenant: row.id }, stallSignal);
     if (listed.outcome !== 'listed') throw fail('PRIMER_OWNERSHIP_REFUSED');
     if (!listed.owners.some(value => value.principal === owner.principal && value.consumer === owner.consumer)) {
       if (listed.owners.length) throw fail('PRIMER_OWNERSHIP_ALREADY_ASSIGNED');
-      const assigned = await ownership.addOwner({ tenant: row.id, owner, delegable: ['*'], expectedOwners: [] });
+      const assigned = await ownership.addOwner({ tenant: row.id, owner, delegable: ['*'], expectedOwners: [] }, stallSignal);
       if (assigned.outcome !== 'applied') throw fail('PRIMER_OWNERSHIP_REFUSED');
     }
     // Persist the request identity before sending, so ambiguous responses retry
@@ -189,7 +238,7 @@ async function primeOwned(config, directory, { concurrency, maxTenants, signal }
     if (!managementRequests[row.id]) { managementRequests[row.id] = crypto.randomUUID(); privateWrite(requestFile, managementRequests); }
     const requestId = managementRequests[row.id];
     const management = await request(config.adminOrigin, '/v1/tenants/' + row.id + '/management-sessions', {
-      method: 'POST', classification: 'management-session-create', body: { subjectId: ownerSubject._id, requestId }, headers: { 'idempotency-key': requestId } });
+      method: 'POST', signal: stallSignal, classification: 'management-session-create', body: { subjectId: ownerSubject._id, requestId }, headers: { 'idempotency-key': requestId } });
     if (![200, 201].includes(management.status) || typeof management.body.token !== 'string' || !Number.isSafeInteger(management.body.expiresAt)) throw fail('PRIMER_MANAGEMENT_SESSION_REFUSED');
     const now = Date.now();
     entryState.tenants[row.id] = { state: 'outcome-uncertain' }; privateWrite(entryFile, entryState);
@@ -203,22 +252,25 @@ async function primeOwned(config, directory, { concurrency, maxTenants, signal }
     }
     results.set(row.id, { id: row.id, host: row.hosts[0], subject: subject._id, dataToken: subject.accessToken, ownerSubject: ownerSubject._id, managementToken: management.body.token, managementExpiresAt: management.body.expiresAt });
     privateWrite(tenantsFile, { version: 1, tenants: saved.filter(value => results.has(value.id)).map(value => results.get(value.id)) });
+    committed(results.size);
     delete entryState.tenants[row.id]; privateWrite(entryFile, entryState);
   };
-  let cursor = 0, failure;
-  const worker = async () => {
-    while (!failure && !signal?.aborted && cursor < pending.length) {
-      const item = pending[cursor++];
-      try { await commission(item); } catch (error) { failure ||= error; }
-    }
-  };
-  // Each tenant keeps its existing serial API sequence. Stop dispatching on
-  // failure/cancellation, then drain every already-started tenant and save it.
-  await Promise.all(Array.from({ length: Math.min(concurrency, pending.length) }, worker));
-  if (failure) throw failure;
-  if (results.size !== saved.length) return { state: 'synthetic-data-prime-partial', tenants: results.size, remaining: saved.length - results.size };
-  const state = { state: 'synthetic-data-primed', tenants: results.size };
-  privateWrite(completed, state); return state;
+  return withProgress(results.size, async (committed, stallSignal) => {
+    let cursor = 0, failure;
+    const worker = async () => {
+      while (!failure && !stallSignal.aborted && !signal?.aborted && cursor < pending.length) {
+        const item = pending[cursor++];
+        try { await commission(item, stallSignal, committed); } catch (error) { failure ||= error; }
+      }
+    };
+    // Each tenant keeps its existing serial API sequence. Stop dispatching on
+    // failure/cancellation, then drain every already-started tenant and save it.
+    await Promise.all(Array.from({ length: Math.min(concurrency, pending.length) }, worker));
+    if (failure) throw failure;
+    if (results.size !== saved.length) return { state: 'synthetic-data-prime-partial', tenants: results.size, remaining: saved.length - results.size };
+    const state = { state: 'synthetic-data-primed', tenants: results.size };
+    privateWrite(completed, state); return state;
+  }, onCheckpoint);
 }
 async function add(config, directory, options) {
   const settings = primeOptions(options);
@@ -229,7 +281,7 @@ async function addOwned(config, directory, options) {
   if (!value || Object.keys(value).sort().join(',') !== 'tenants,version' || value.version !== 1 ||
       !Array.isArray(value.tenants) || !value.tenants.length || value.tenants.length > 100) throw fail('PRIMER_ADDITION_INVALID');
   for (const spec of value.tenants) require('../../lib/tenant-registry/provision').parseSpec(spec);
-  await provisionOwned({ ...config, seed: value.tenants }, directory);
+  await provisionOwned({ ...config, seed: value.tenants }, directory, options.signal);
   return primeOwned(config, directory, options);
 }
 function parsePrimeOptions(values) {
@@ -255,6 +307,10 @@ async function main() {
     if (result.state === 'synthetic-data-primed') console.error(JSON.stringify({ phase: 'primer', event: 'completed', atMs: Date.now(), tenants: result.tenants }));
     console.log(JSON.stringify(result));
     if (stopped || result.state === 'synthetic-data-prime-partial') process.exitCode = stopped || 2;
+  } catch (error) {
+    if (!stopped) throw error;
+    process.exitCode = stopped;
+    console.error(JSON.stringify(diagnostic(error)));
   } finally { process.removeListener('SIGINT', interrupt); process.removeListener('SIGTERM', terminate); }
 }
 if (require.main === module) main().catch(error => { console.error(JSON.stringify(diagnostic(error))); process.exitCode = 1; });
