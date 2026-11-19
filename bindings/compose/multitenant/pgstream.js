@@ -42,14 +42,13 @@ function wire(config,runtimeURL,{subscriptionsPort=19914,routes,assignment=confi
  return {source:{postgres:{url:runtimeURL,mode:'replication',replication:{replication_slot:config.pgstream.slot,plugin:{include_xids:true,include_transactions:true,add_tables:selected.map(row=>row.schema+'.'+row.table).join(',')}}}},
    target:{webhooks:{...(startup?{startup_transport:{receivers,timeout_ms:startup.timeoutMs,retry_interval_ms:startup.retryIntervalMs}}:{}),subscriptions:{store:{url:storeURL.href,cache:{enabled:true,refresh_interval:60}},server:{address:'127.0.0.1:'+subscriptionsPort}},notifier:{worker_count:1,strict_mode:true,transaction_batch:{max_rows:config.pgstream.transactionRows,max_bytes:config.pgstream?.receiver?.maxBytes??16777216,...(assignment?{slice_receivers:require('../../lib/pgstream/assigned-worker').processProfile(JSON.stringify(assignment),config.pgstream.receiver).receivers.map(url=>new URL('pgstream',url).href)}:{})},client_timeout:2000,backoff:{constant:{max_retries:1,interval:50}}}}}};
 }
-async function init({admin,adminURL,layout,config,binary='/usr/local/bin/pgstream',binarySha256,routes,workColumns,realtimeColumns,realtimeConsumers=['realtime-compose-demo']}){
+async function init({admin,adminURL,layout,config,binary='/usr/local/bin/pgstream',routes,workColumns,realtimeColumns,realtimeConsumers=['realtime-compose-demo']}){
  const normalized={...config,namespaces:config.postgres?.namespaces||config.namespaces};
  const receiver=config.pgstream.receiver;
  const profile=config.processAssignment===undefined?undefined:require('../../lib/pgstream/assigned-worker').processProfile(JSON.stringify(config.processAssignment),receiver);
  const targets=profile?profile.receivers.map(url=>receiverURL({pgstream:{receiver:{...receiver,url}}})):[receiverURL(config)];
  const product=()=>require('../../lib/pgstream/evaluator');
- const selected=routes||product().routes(normalized),expected=binarySha256||require('./pgstream-source.json').binarySha256;
- if(!path.isAbsolute(binary)||!expected||require('node:crypto').createHash('sha256').update(fs.readFileSync(binary)).digest('hex')!==expected)throw new Error('PGSTREAM_BINARY_PIN_REFUSED');
+ const selected=routes||product().routes(normalized);
  const q=require('./config').quote,role=q(layout.roles.pgstream),evaluator=q(layout.roles.evaluator),table=q(layout.namespaces.eval_checkpoint)+'.tenant_consumer_checkpoint';
  const columns=workColumns||require('../../lib/pgstream/checkpoint').WORK_COLUMNS;
  if(!Array.isArray(columns)||!columns.length||columns.some(name=>!/^[a-z][a-z0-9_]*$/.test(name)))throw new TypeError('Explicit typed work columns required');

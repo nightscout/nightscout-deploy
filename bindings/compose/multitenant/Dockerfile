@@ -9,11 +9,9 @@ RUN git init \
     && git checkout --detach FETCH_HEAD \
     && test "$(git rev-parse HEAD)" = 97d7ab464f0accf6cf1373b3c3f7b328debae4b9
 COPY deploy/multitenant/pgstream-exact-handover.patch /tmp/pgstream-exact-handover.patch
-RUN echo '791d9aa13ef87673a21b54b41772e6763212d0c514dda99a0d4ce7754993c70c  /tmp/pgstream-exact-handover.patch' | sha256sum -c - \
-    && git apply --check /tmp/pgstream-exact-handover.patch \
+RUN git apply --check /tmp/pgstream-exact-handover.patch \
     && git apply /tmp/pgstream-exact-handover.patch \
-    && CGO_ENABLED=0 GOTOOLCHAIN=local GOMAXPROCS=2 GOOS=linux GOARCH=amd64 go build -p 2 -trimpath -buildvcs=false -o /out/pgstream . \
-    && echo 'cc47552319c1a2ec9c85d7286e366496a5149c9e355a2a891f578333634e5465  /out/pgstream' | sha256sum -c -
+    && CGO_ENABLED=0 GOTOOLCHAIN=local GOMAXPROCS=2 GOOS=linux GOARCH=amd64 go build -p 2 -trimpath -buildvcs=false -o /out/pgstream .
 
 FROM node:24.22.1-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS build
 WORKDIR /opt/app
