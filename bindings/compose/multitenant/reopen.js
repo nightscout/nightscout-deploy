@@ -38,6 +38,21 @@ function stoppedFixture(env) {
   if (rows.some(row => row.State.Restarting || row.State.Paused || row.State.Running && !Object.values(infra).includes(row))) refuse('SEED_PATCH_STOP_ROLES_FIRST');
   return infra;
 }
+// Compose resolves extends.file against the first -f file. Older prepare
+// versions wrote that file's absolute path into the fixed-worker overlays.
+function portableOverlays(state, previousDirectory) {
+  const previous = 'extends: {file: ' + JSON.stringify(path.join(previousDirectory, 'compose.yaml')) + ', service:';
+  for (const name of ['compose.replicas.yaml','compose.realtime.yaml','compose.evaluator.yaml']) {
+    const file = path.join(state, name);
+    if (!fs.existsSync(file)) continue;
+    const original = fs.readFileSync(file, 'utf8');
+    const portable = original.replaceAll(previous, 'extends: {file: "compose.yaml", service:');
+    if (portable === original) continue;
+    const temporary = file + '.patch-' + process.pid;
+    fs.writeFileSync(temporary, portable, { flag: 'wx', mode: 0o600 });
+    fs.renameSync(temporary, file);
+  }
+}
 function reopen(previousFile, image) {
   const env = prepared(previousFile);
   const state = env.NS_DEMO_STATE;
@@ -64,6 +79,7 @@ function reopen(previousFile, image) {
     }
     const next = { ...env, NS_SOURCE_COMMIT: source, NS_DEPLOY_COMMIT: deploy, NS_DEMO_IMAGE: selected.Id,
       NS_POSTGRES_IMAGE: infra.postgres.Image };
+    portableOverlays(state, path.dirname(previousFile));
     const temporary = targetFile + '.patch-' + process.pid;
     fs.writeFileSync(temporary, Object.entries(next).map(([k,v]) => k + '=' + v + '\n').join(''), { flag: 'wx', mode: 0o600 });
     fs.renameSync(temporary, targetFile);

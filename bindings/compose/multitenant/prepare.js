@@ -65,14 +65,14 @@ function prepare (args) {
   fs.chmodSync(path.join(state, 'vault/demo.hcl'), 0o644);
   if (selectedRealtime) {
     for (const service of realtime.services(selectedRealtime).filter(name => name.startsWith('realtime-'))) fs.mkdirSync(path.join(state, service), {mode: 0o700});
-    write(path.join(state, 'compose.realtime.yaml'), realtime.compose(selectedRealtime, path.join(base, 'compose.yaml'), replicas.instances(apiReplicas).map(node => node.service)));
+    write(path.join(state, 'compose.realtime.yaml'), realtime.compose(selectedRealtime, 'compose.yaml', replicas.instances(apiReplicas).map(node => node.service)));
   }
   if (selectedEvaluator) {
     for (const service of evaluator.services(selectedEvaluator).slice(1)) fs.mkdirSync(path.join(state, service), {mode: 0o700});
-    write(path.join(state, 'compose.evaluator.yaml'), evaluator.compose(selectedEvaluator, path.join(base, 'compose.yaml')));
+    write(path.join(state, 'compose.evaluator.yaml'), evaluator.compose(selectedEvaluator, 'compose.yaml'));
   }
   write(path.join(state, 'edge/nginx.conf'), require('./edge').render(fs.readFileSync(path.join(base, 'nginx.compose.conf'), 'utf8'), { replicas: apiReplicas, realtime: !!selectedRealtime }));
-  write(path.join(state, 'compose.replicas.yaml'), replicas.compose(apiReplicas, path.join(base, 'compose.yaml'))+require('./networks').render(selectedNetworks));
+  write(path.join(state, 'compose.replicas.yaml'), replicas.compose(apiReplicas, 'compose.yaml')+require('./networks').render(selectedNetworks));
   write(path.join(base, '.env'), 'NS_PGSTREAM='+(require('./pgstream').enabled()?'1':'0')+'\nNS_DEPLOY_COMMIT=' + deployCommit + '\nNS_DEMO_PROJECT=' + options.project + '\nNS_API_REPLICAS=' + apiReplicas + '\n' +
     (selectedRealtime ? 'NS_REALTIME_WORKERS=' + selectedRealtime.workers + '\n' : '') +
     (selectedEvaluator ? 'NS_EVALUATOR_WORKERS=' + selectedEvaluator.workers + '\nNS_PGSTREAM_WAL_SENDERS=' + Math.max(4, selectedEvaluator.workers + 2) + '\n' : '') +
