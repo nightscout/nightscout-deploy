@@ -64,6 +64,38 @@ test('realtime K=1,2,3: one Pod per ordinal, disjoint slices covering every tena
   }
 });
 
+// Every core caller of realtime's private contracts is the evaluator: the completed-output wake
+// (evaluator-preview.js, outputPeers.hint) and alarm delivery (evaluator-consumers.js,
+// createSliceAdapter). Resolve the rendered evaluator environment as evaluator-config.js does
+// and check that, for each tenant, both calls address the owning Pod's DNS name.
+test('realtime K=2: every internal caller addresses the tenant owner Pod', { skip: !core && 'NS_TEST_CORE unset' }, async () => {
+  const { bucket } = require(path.join(core, 'lib/pool-membership/slice'));
+  const ownership = require(path.join(core, 'lib/realtime-ownership'));
+  const listener = require(path.join(core, 'lib/server/internal-api/listener-config'));
+  const { createSliceAdapter } = require(path.join(core, 'lib/server/realtime/alarm-transport'));
+  const { environment } = require(path.join(root, 'ops/network-documents.cjs'));
+  const k = 2, r = render({ slices: { realtime: k } });
+  assert.equal(r.status, 0, r.error);
+  const container = r.value.components.evaluator.statefulset.spec.template.spec.containers[0];
+  const source = environment(Object.fromEntries(container.env.filter(row => 'value' in row).map(row => [row.name, row.value])), 'evaluator');
+  const peers = ownership.peers(source, listener.resolve(['evaluator'], source), { maxBytes: 4096, timeoutMs: 1000 });
+  assert.equal(peers.count, k);
+  const pod = url => Number(/^http:\/\/realtime-(\d+)\.realtime-peers\./.exec(url)?.[1]);
+  const hinted = [], alarmed = [], sample = tenants.slice(0, 256);
+  for (let i = 0; i < sample.length; i += 64) {
+    await peers.hint({ tenants: sample.slice(i, i + 64) }, endpoint => ({ hintCompletedOutput: async body => { for (const tenant of body.tenants) hinted.push([tenant, pod(endpoint.url)]); } }));
+  }
+  const adapter = createSliceAdapter({ peers, clientFor: endpoint => ({ deliverAlarm: async body => { alarmed.push([body.tenant, pod(endpoint.url), body.slice]); return { accepted: true }; } }) });
+  await Promise.all(sample.map(tenant => new Promise((resolve, reject) => adapter.send({ tenant, id: 'synthetic', attempt: 1, notification: {} }, error => error ? reject(error) : resolve()))));
+  assert.equal(hinted.length, sample.length); assert.equal(alarmed.length, sample.length);
+  for (const [tenant, ordinal] of hinted) assert.equal(ordinal, bucket(tenant, k), 'completed-output wake reaches the owner');
+  for (const [tenant, ordinal, slice] of alarmed) {
+    assert.equal(ordinal, bucket(tenant, k), 'alarm delivery reaches the owner');
+    assert.deepEqual(slice, { count: k, ordinal });
+  }
+  assert.deepEqual([...new Set(hinted.map(row => row[1]))].sort(), [0, 1], 'both Pods are addressed');
+});
+
 test('evaluator K>1 refuses to render', () => {
   const r = render({ slices: { evaluator: 2 } });
   assert.notEqual(r.status, 0); assert.match(r.error, /evaluator K>1 is not supported/);
