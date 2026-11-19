@@ -17,7 +17,6 @@
       "name": "synthetic-registry-reference"
     }
   ],
-  "applicationTopology": "separate-k1",
   "tenantCount": 2,
   "resourceAccounting": "requests-v1",
   "resources": {

@@ -35,6 +35,4 @@ function read () {
   return values;
 }
 function apply () {try{const values=read();Object.assign(process.env,values);return values;}catch{process.stderr.write('Private service environment is missing or invalid\n');process.exit(78);}}
-const HEALTH_KEYS=['ADMIN_HOSTNAME','ADMIN_PORT','NS_SERVE_INTERNAL_HOST','NS_SERVE_INTERNAL_PORT','NS_SERVE_INTERNAL_SOCKET','NS_SERVE_INTERNAL_SHUTDOWN_TIMEOUT_MS','XDG_RUNTIME_DIR','MULTITENANT_OPERATION_CONFIG'];
-function applyHealth () {try{const values=read();for(const key of HEALTH_KEYS)if(Object.hasOwn(values,key))process.env[key]=values[key];return Object.fromEntries(HEALTH_KEYS.filter(key=>Object.hasOwn(values,key)).map(key=>[key,values[key]]));}catch{process.stderr.write('Private service environment is missing or invalid\n');process.exit(78);}}
-module.exports={read,apply,applyHealth};
+module.exports={read,apply};

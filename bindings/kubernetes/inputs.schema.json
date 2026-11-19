@@ -243,45 +243,37 @@
         }
       }
     },
-    "cohort": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "replicas": {
-          "const": 1
-        },
-        "terminationGraceSeconds": {
-          "type": "integer",
-          "minimum": 30
-        }
-      }
-    },
-    "evaluatorPool": {
-      "type": "object",
-      "properties": {
-        "partition": {
-          "const": "off"
-        }
-      },
-      "additionalProperties": false
-    },
     "vaultAgent": {
       "type": "object"
     },
     "edge": {
       "type": "object"
     },
-    "applicationTopology": {
-      "enum": [
-        "cohort",
-        "separate-k1"
-      ]
-    },
     "resourceAccounting": {
       "enum": [
         "limits-v1",
         "requests-v1"
       ]
+    },
+    "terminationGraceSeconds": {
+      "type": "integer",
+      "minimum": 30
+    },
+    "slices": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "realtime": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8,
+          "description": "Realtime K: StatefulSet replicas and NS_SLICE_COUNT."
+        },
+        "evaluator": {
+          "const": 1,
+          "description": "Evaluator K>1 is not supported (one pgstream receiver)."
+        }
+      }
     }
   }
 }

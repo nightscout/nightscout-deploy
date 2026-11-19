@@ -3,9 +3,10 @@
 // Same image, same commands, same per-role private documents, same in-container paths. What
 // changes is only the binding: Compose services become ordinary Kubernetes resources.
 //
-//   cohort (StatefulSet, one Pod)  api, realtime, evaluator, tenant-admin containers sharing one
-//                                  pod-private emptyDir for serve.internal sockets (/run/ns-ipc),
-//                                  plus the Vault Agent as a native sidecar (Kubernetes auth)
+//   api, tenant-admin (Deployments) one replica each, Recreate; the api Pod carries the Vault
+//                                  Agent as a native sidecar (Kubernetes auth)
+//   evaluator, realtime (StatefulSets) slice = Pod ordinal, K = NS_SLICE_COUNT from `slices`
+//                                  (components.libsonnet); evaluator K is 1
 //   admin (Deployment)             the ownership-operations plane on its own Pod address and port;
 //                                  ClusterIP only, NetworkPolicy admits operator Pods only
 //   ui, edge (Deployments)         the shipped pages and the reference nginx (consumer entry)
@@ -33,28 +34,12 @@
       vault: 'hashicorp/vault@sha256:962a92876e168d68eaaa24b0b8b49bbce1cb63024060a67bba95cd158a366fc2',
       nginx: 'nginx@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10',
     },
-    cohort: {
-      // Decision cohort-pod-not-scaled: the one-Pod cohort is a monolith and scales vertically
-      // only (resources), never horizontally; this binding (not core) holds it to one replica.
-      // Core does not refuse a second cohort (kind smoke, 2026-11-10). For horizontal scale or
-      // high availability, deploy the roles as separate components (per-role placement).
-      replicas: 1,
-      // Above the serve.internal drain deadline (NS_SERVE_INTERNAL_SHUTDOWN_TIMEOUT_MS, default
-      // 5000 ms, at most 60000 ms; decision internal-listener-graceful-shutdown).
-      terminationGraceSeconds: 30,
-    },
-    // decisions evaluator-static-partition and pool-primitive-shared, core MT-POOL-PRIMITIVE
-    // (lib/pool-membership/config.js): MULTITENANT_POOL_EVALUATOR_{PARTITION,MEMBERS,ORDINAL,
-    // LEASE_MS,DATABASE_URL,NAMESPACE}. The StatefulSet pod-index is the ordinal. The desired
-    // member count lives in the pool table, set by an operator command (maintainer, 2026-11-10),
-    // so no MEMBERS variable is rendered. With the partition off core refuses any partitioned key
-    // ("partition is off but ... set"), so off renders no pool variable at all. Readiness never
-    // depends on pool eligibility: an OrderedReady StatefulSet would otherwise wait forever.
-    evaluatorPool: {
-      partition: 'off',
-      partitionEnv: 'MULTITENANT_POOL_EVALUATOR_PARTITION',
-      ordinalEnv: 'MULTITENANT_POOL_EVALUATOR_ORDINAL',
-    },
+    // Decision statefulset-ordinal-scaling: K per sliced role. The same value sets the
+    // StatefulSet replicas and NS_SLICE_COUNT. Evaluator K>1 is not supported (one pgstream receiver).
+    slices: { realtime: 1, evaluator: 1 },
+    // Above the serve.internal drain deadline (NS_SERVE_INTERNAL_SHUTDOWN_TIMEOUT_MS, default
+    // 5000 ms, at most 60000 ms; decision internal-listener-graceful-shutdown).
+    terminationGraceSeconds: 30,
     vaultAgent: {
       serviceAccount: 'ns-cohort',
       audience: 'vault',
@@ -71,7 +56,6 @@
     bindingIdentity: 'UNSET',
     runId: 'synthetic-preview',
     profile: 'standard',
-    applicationTopology: 'cohort',
     resourceAccounting: 'requests-v1',
     tenantCount: 2,
     provisionDeadlineSeconds: 900,
@@ -109,8 +93,6 @@
     assert std.isString(c.images.app) && std.length(std.split(c.images.app, '@')) == 2 && std.startsWith(std.split(c.images.app, '@')[1], 'sha256:') && std.length(std.split(c.images.app, '@')[1]) == 71 : 'images.app requires an immutable manifest digest',
     assert std.isString(c.images.postgres) && std.length(std.split(c.images.postgres, '@')) == 2 && std.startsWith(std.split(c.images.postgres, '@')[1], 'sha256:') && std.length(std.split(c.images.postgres, '@')[1]) == 71 : 'images.postgres requires an explicit maintained PostgreSQL/wal2json image digest',
     assert c.prefix == 'nsdemo' : 'source bootstrap supports only prefix nsdemo',
-    assert c.cohort.replicas == 1 : 'the preview renders exactly one cohort Pod',
-    assert c.evaluatorPool.partition == 'off' : 'C3 requires the native K=1 evaluator without pool placement',
 
     local uid = 1000,
     local part = 'nightscout-multitenant',
@@ -191,13 +173,7 @@
       command: ['node', 'deploy/multitenant/entrypoint.js', role],
       env: [{ name: 'NODE_EXTRA_CA_CERTS', value: '/run/ns-ca/ca.crt' }] + extraEnv,
       ports: ports,
-      // Compose healthcheck: the same script. Readiness only; liveness restarts are a separate
-      // decision (shared-process liveness is distinct from tenant admission).
-      readinessProbe: { exec: { command: ['node', 'deploy/multitenant/health.js', role] }, periodSeconds: 2, timeoutSeconds: 3, failureThreshold: 30 },
-      // Startup budget (Compose start_period 900s): readiness is not probed until this passes, so
-      // a long tenant warm under NS_TENANT_READINESS=all is not cut short. Under the default
-      // `serve` it passes once the role's own dependencies are up. 5 s x 180 = 900 s.
-      [if std.member(['api', 'realtime', 'evaluator'], role) then 'startupProbe']: { exec: { command: ['node', 'deploy/multitenant/health.js', role] }, periodSeconds: 5, timeoutSeconds: 3, failureThreshold: 180 },
+      // Probes: components.libsonnet (httpGet on the role's private listener, /healthz/*).
       securityContext: hardened,
       volumeMounts: [
         configMount(role),
@@ -250,7 +226,7 @@
       }
     |||,
 
-    local cohortRoles = ['api', 'realtime', 'evaluator', 'tenant-admin'],
+    local roleNames = ['api', 'realtime', 'evaluator', 'tenant-admin'],
 
     namespace: { apiVersion: 'v1', kind: 'Namespace', metadata: { name: ns, labels: { 'app.kubernetes.io/part-of': part } } },
 
@@ -368,111 +344,66 @@
       },
     },
 
-    // ---------------------------------------------------------------- the application cohort
-    cohort: {
-      serviceAccount: { apiVersion: 'v1', kind: 'ServiceAccount', metadata: meta(c.vaultAgent.serviceAccount, 'cohort'), automountServiceAccountToken: false },
-      agentConfig: { apiVersion: 'v1', kind: 'ConfigMap', metadata: meta('vault-agent-config', 'cohort'), data: { 'agent.hcl': agentHcl } },
-      // Governing Service for the StatefulSet: headless, no ports. Nothing internal is published.
-      governing: {
-        apiVersion: 'v1',
-        kind: 'Service',
-        metadata: meta('cohort', 'cohort'),
-        spec: { clusterIP: 'None', selector: labels('cohort') },
-      },
-      // Consumer Services: the names nginx.conf's upstreams use (api:1337, realtime:1339).
-      apiService: {
-        apiVersion: 'v1',
-        kind: 'Service',
-        metadata: meta('api', 'cohort'),
-        spec: { selector: labels('cohort'), ports: [{ name: 'http', port: 1337, targetPort: 'http-api' }] },
-      },
-      realtimeService: {
-        apiVersion: 'v1',
-        kind: 'Service',
-        metadata: meta('realtime', 'cohort'),
-        spec: { selector: labels('cohort'), ports: [{ name: 'http', port: 1339, targetPort: 'http-realtime' }] },
-      },
-      intakeService: {
-        apiVersion: 'v1',
-        kind: 'Service',
-        metadata: meta('evaluator', 'cohort'),
-        spec: { type: 'ClusterIP', publishNotReadyAddresses: true, selector: labels('cohort') + { 'statefulset.kubernetes.io/pod-name': 'cohort-0' }, ports: [{ name: 'stream-intake', port: 19913, targetPort: 'stream-intake' }] },
-      },
-      statefulset: {
-        apiVersion: 'apps/v1',
-        kind: 'StatefulSet',
-        metadata: meta('cohort', 'cohort'),
-        spec: {
-          serviceName: 'cohort',
-          replicas: c.cohort.replicas,
-          // With one replica the controller deletes the old Pod and waits for it to terminate
-          // before creating the new one: no overlap of two cohort Pods during an update.
-          podManagementPolicy: 'OrderedReady',
-          updateStrategy: { type: 'RollingUpdate', rollingUpdate: { partition: 0 } },
-          selector: { matchLabels: labels('cohort') },
-          template: {
-            metadata: { labels: labels('cohort') },
-            spec: {
-              serviceAccountName: c.vaultAgent.serviceAccount,
-              automountServiceAccountToken: false,
-              // Service links would inject API_PORT=tcp://... into every container and collide
-              // with the roles' own <ROLE>_PORT settings.
-              enableServiceLinks: false,
-              securityContext: podSecurity,
-              terminationGracePeriodSeconds: c.cohort.terminationGraceSeconds,
-              initContainers: [
-                installConfig(cohortRoles, ipc=true),
-                // Native sidecar (restartPolicy Always): starts before the roles and the startup
-                // probe holds them until the sink has a token (Compose: depends_on healthy).
-                {
-                  name: 'vault-agent',
-                  image: c.images.vault,
-                  restartPolicy: 'Always',
-                  args: ['vault', 'agent', '-config=/vault/config/agent.hcl'],
-                  env: [
-                    { name: 'VAULT_ADDR', value: 'https://vault:8200' },
-                    { name: 'VAULT_CACERT', value: '/run/ns-ca/ca.crt' },
-                    { name: 'SKIP_SETCAP', value: '1' },
-                  ],
-                  startupProbe: { exec: { command: ['test', '-s', '/run/ns-vault/token'] }, periodSeconds: 2, failureThreshold: 45 },
-                  securityContext: hardened,
-                  volumeMounts: [
-                    { name: 'vault-agent-config', mountPath: '/vault/config', readOnly: true },
-                    { name: 'ns-vault', mountPath: '/run/ns-vault' },
-                    { name: 'vault-token', mountPath: '/var/run/secrets/vault', readOnly: true },
-                    caMount,
-                    tmpMount,
-                  ],
-                },
-              ],
-              containers: [
-                roleContainer('api', [{ name: 'http-api', containerPort: 1337 }]),
-                roleContainer('realtime', [{ name: 'http-realtime', containerPort: 1339 }]),
-                roleContainer('evaluator', [{ name: 'stream-intake', containerPort: 19913 }], if c.evaluatorPool.partition == 'on' then [
-                  { name: c.evaluatorPool.partitionEnv, value: 'on' },
-                  { name: c.evaluatorPool.ordinalEnv, valueFrom: { fieldRef: { fieldPath: "metadata.labels['apps.kubernetes.io/pod-index']" } } },
-                  // The member count: the pool table, via the coming operator command; not here.
-                ] else []),
-                // The owner plane (1341): a container port only; no Service, and the
-                // NetworkPolicy admits nothing to it.
-                roleContainer('tenant-admin', [{ name: 'int-owner', containerPort: 1341 }]),
-              ],
-              volumes: std.flattenArrays([configVolumes(r) for r in cohortRoles]) + [
-                // serve.internal sockets: pod-private, never shared with another Pod.
-                { name: 'ns-ipc', emptyDir: { medium: 'Memory', sizeLimit: '1Mi' } },
-                { name: 'ns-vault', emptyDir: { medium: 'Memory', sizeLimit: '1Mi' } },
-                {
-                  name: 'vault-token',
-                  projected: { defaultMode: 256, sources: [{ serviceAccountToken: { audience: c.vaultAgent.audience, expirationSeconds: 3600, path: 'token' } }] },
-                },
-                { name: 'vault-agent-config', configMap: { name: 'vault-agent-config' } },
-                ca,
-                tmp,
-              ],
-            },
-          },
+    // ---------------------------------------------------------------- role Pod template
+    // The shared source of every role workload; components.libsonnet renders one workload per
+    // role from it. Not rendered itself.
+    roleTemplate:: {
+      serviceAccount: { apiVersion: 'v1', kind: 'ServiceAccount', metadata: meta(c.vaultAgent.serviceAccount, 'api'), automountServiceAccountToken: false },
+      agentConfig: { apiVersion: 'v1', kind: 'ConfigMap', metadata: meta('vault-agent-config', 'api'), data: { 'agent.hcl': agentHcl } },
+      spec: {
+      serviceAccountName: c.vaultAgent.serviceAccount,
+      automountServiceAccountToken: false,
+      // Service links would inject API_PORT=tcp://... into every container and collide
+      // with the roles' own <ROLE>_PORT settings.
+      enableServiceLinks: false,
+      securityContext: podSecurity,
+      terminationGracePeriodSeconds: c.terminationGraceSeconds,
+      initContainers: [
+        installConfig(roleNames, ipc=true),
+        // Native sidecar (restartPolicy Always): starts before the roles and the startup
+        // probe holds them until the sink has a token (Compose: depends_on healthy).
+        {
+          name: 'vault-agent',
+          image: c.images.vault,
+          restartPolicy: 'Always',
+          args: ['vault', 'agent', '-config=/vault/config/agent.hcl'],
+          env: [
+            { name: 'VAULT_ADDR', value: 'https://vault:8200' },
+            { name: 'VAULT_CACERT', value: '/run/ns-ca/ca.crt' },
+            { name: 'SKIP_SETCAP', value: '1' },
+          ],
+          startupProbe: { exec: { command: ['test', '-s', '/run/ns-vault/token'] }, periodSeconds: 2, failureThreshold: 45 },
+          securityContext: hardened,
+          volumeMounts: [
+            { name: 'vault-agent-config', mountPath: '/vault/config', readOnly: true },
+            { name: 'ns-vault', mountPath: '/run/ns-vault' },
+            { name: 'vault-token', mountPath: '/var/run/secrets/vault', readOnly: true },
+            caMount,
+            tmpMount,
+          ],
         },
-      },
+      ],
+      containers: [
+        roleContainer('api', [{ name: 'http-api', containerPort: 1337 }]),
+        roleContainer('realtime', [{ name: 'http-realtime', containerPort: 1339 }]),
+        roleContainer('evaluator', [{ name: 'stream-intake', containerPort: 19913 }]),
+        // The owner plane (1341): a container port only; no Service, and the
+        // NetworkPolicy admits nothing to it.
+        roleContainer('tenant-admin', [{ name: 'int-owner', containerPort: 1341 }]),
+      ],
+      volumes: std.flattenArrays([configVolumes(r) for r in roleNames]) + [
+        // serve.internal sockets: pod-private, never shared with another Pod.
+        { name: 'ns-ipc', emptyDir: { medium: 'Memory', sizeLimit: '1Mi' } },
+        { name: 'ns-vault', emptyDir: { medium: 'Memory', sizeLimit: '1Mi' } },
+        {
+          name: 'vault-token',
+          projected: { defaultMode: 256, sources: [{ serviceAccountToken: { audience: c.vaultAgent.audience, expirationSeconds: 3600, path: 'token' } }] },
+        },
+        { name: 'vault-agent-config', configMap: { name: 'vault-agent-config' } },
+        ca,
+        tmp,
+      ],
+    },
     },
 
     // One independently managed consumer of the precreated database slot.
@@ -491,7 +422,7 @@
               enableServiceLinks: false,
               automountServiceAccountToken: false,
               securityContext: podSecurity,
-              terminationGracePeriodSeconds: c.cohort.terminationGraceSeconds,
+              terminationGracePeriodSeconds: c.terminationGraceSeconds,
               containers: [{
                 name: 'pgstream', image: c.images.app, imagePullPolicy: 'IfNotPresent',
                 command: ['/usr/local/bin/pgstream', 'run', '-c', '/run/ns-stream/pgstream.yaml', '--log-level', 'info'],
@@ -533,7 +464,7 @@
 
                 ports: [{ name: 'int-admin', containerPort: 1342 }],
                 env: [{ name: 'NODE_EXTRA_CA_CERTS', value: '/run/ns-ca/ca.crt' }],
-                readinessProbe: { exec: { command: ['node', 'deploy/multitenant/health.js', 'admin'] }, periodSeconds: 2, timeoutSeconds: 3, failureThreshold: 30 },
+                readinessProbe: { httpGet: { path: '/v1/openapi.json', port: 'int-admin' }, periodSeconds: 2, timeoutSeconds: 3, failureThreshold: 30 },
                 securityContext: hardened,
                 volumeMounts: [configMount('admin'), caMount, tmpMount],
               }],
@@ -579,7 +510,7 @@
                   { name: 'UI_PUBLIC_CONFIG', value: '/run/ns-config/config.json' },
                 ],
                 ports: [{ name: 'http-ui', containerPort: 1340 }],
-                readinessProbe: { exec: { command: ['node', 'deploy/multitenant/health.js', 'ui'] }, periodSeconds: 2, timeoutSeconds: 2, failureThreshold: 30 },
+                readinessProbe: { httpGet: { path: '/healthz', port: 'http-ui' }, periodSeconds: 2, timeoutSeconds: 2, failureThreshold: 30 },
                 securityContext: hardened,
                 volumeMounts: [configMount('ui'), tmpMount],
               }],
@@ -732,7 +663,7 @@
                 // Keep this container alive for private tar export, including disposable state.
                 // Publisher acknowledges only after every Secret has been created. No private log.
                 step('done', ['node', '/run/ns-overlay/candidate-documents.cjs', 'hold'], [
-                  { name: 'NS_APPLICATION_TOPOLOGY', value: c.applicationTopology },
+                  { name: 'NS_APPLICATION_TOPOLOGY', value: 'separate-k1' },  // per-role documents (the only placement)
                   { name: 'NS_FIXTURE_NAMESPACE', valueFrom: { fieldRef: { fieldPath: 'metadata.namespace' } } },
                   { name: 'NS_FIXTURE_RUN_ID', valueFrom: { fieldRef: { fieldPath: "metadata.labels['nightscout.org/run-id']" } } },
                 ]),
@@ -811,13 +742,9 @@
         spec: { podSelector: {}, policyTypes: ['Ingress'] },
       },
       edgeIn: np('edge-ingress', { matchLabels: labels('edge') }, [{ ipBlock: { cidr: '0.0.0.0/0' } }], [{ port: 8080, protocol: 'TCP' }]),
-      cohortFromEdge: np('cohort-from-edge', { matchLabels: labels('cohort') }, [sel('edge')], [{ port: 1337, protocol: 'TCP' }, { port: 1339, protocol: 'TCP' }]),
       uiFromEdge: np('ui-from-edge', { matchLabels: labels('ui') }, [sel('edge')], [{ port: 1340, protocol: 'TCP' }]),
       adminFromOperator: np('admin-from-operator', { matchLabels: labels('admin') }, [sel('operator')], [{ port: 1342, protocol: 'TCP' }]),
-      cohortFromOperator: np('cohort-from-operator', { matchLabels: labels('cohort') }, [sel('operator')], [{ port: 1337, protocol: 'TCP' }, { port: 1339, protocol: 'TCP' }]),
-      cohortFromPgstream: np('cohort-from-pgstream', { matchLabels: labels('cohort') }, [sel('pgstream')], [{ port: 19913, protocol: 'TCP' }]),
-      postgresFromApp: np('postgres-from-app', { matchLabels: labels('postgres') }, [sel('cohort'), sel('pgstream'), sel('admin'), sel('ui'), sel('provision')], [{ port: 5432, protocol: 'TCP' }]),
-      vaultFromApp: np('vault-from-app', { matchLabels: labels('vault') }, [sel('cohort'), sel('admin'), sel('provision'), sel('vault')], [{ port: 8200, protocol: 'TCP' }]),
+      // postgresFromApp and vaultFromApp: per role, in components.libsonnet.
     },
 
     // ---------------------------------------------------------------- inventory (not applied)
@@ -827,7 +754,7 @@
     inventory:: {
       prefix: c.prefix,
       sourceCommit: c.sourceCommit,
-      evaluatorPool: c.evaluatorPool,
+      slices: c.slices,
       postgresIdentities: source.postgresIdentities,
 
     },
@@ -838,11 +765,10 @@
     local c = std.mergePatch($.defaults, overrides);
     local original = $.raw(overrides);
     local typical = import 'typical-requests.json';
-    assert std.member(['cohort', 'separate-k1'], c.applicationTopology) : 'unknown applicationTopology';
     local source = import '../../assets/source-contract.json';
     local helper = if std.objectHas(source, 'runtimeBootstrapHelper') then source.runtimeBootstrapHelper else null;
     assert std.member(['limits-v1', 'requests-v1'], c.resourceAccounting) : 'unknown resource accounting';
-    local raw = if c.applicationTopology == 'separate-k1' then (import 'components.libsonnet').render(original, c) else original;
+    local raw = (import 'components.libsonnet').render(original, c);
     local collect(v) = if std.isArray(v) then std.flattenArrays([collect(x) for x in v]) else if !std.isObject(v) then [] else if std.objectHas(v, 'apiVersion') && std.objectHas(v, 'kind') then [v] else std.flattenArrays([collect(v[k]) for k in std.objectFields(v)]);
     assert std.member(['standard', 'existing-capacity'], c.profile) : 'unknown profile';
     assert std.member(['dynamic', 'disposable', 'existing-claim'], c.storage.mode) : 'unknown storage mode';
@@ -894,7 +820,6 @@
     local rendered = resources + { budget: (import 'namespace-budget.libsonnet')(workloads, c.namespace, c.runId) };
     rendered + {
       inventory:: original.inventory + {
-        applicationTopology: c.applicationTopology,
         schemaVersion: 1,
         namespace: c.namespace,
         runId: c.runId,

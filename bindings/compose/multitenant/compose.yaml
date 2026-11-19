@@ -9,6 +9,9 @@ x-app: &app
       NS_SOURCE_COMMIT: ${NS_SOURCE_COMMIT:?Run prepare.js first}
       NS_DEPLOY_COMMIT: ${NS_DEPLOY_COMMIT:-}
   init: true
+  # One-shot steps (bootstrap, primer, demo) never restart. Serving roles set
+  # restart: ${NS_COMPOSE_RESTART:-on-failure} (decision compose-restart-on-failure);
+  # tests that inject failures or hold a role down set NS_COMPOSE_RESTART=no.
   restart: "no"
   environment:
     NODE_EXTRA_CA_CERTS: /run/ns-ca/ca.crt
@@ -110,11 +113,12 @@ services:
   admin:
     <<: *app
     command: [node, deploy/multitenant/entrypoint.js, admin]
+    restart: ${NS_COMPOSE_RESTART:-on-failure}
     depends_on:
       postgres: {condition: service_healthy}
       vault: {condition: service_healthy}
     healthcheck:
-      test: [CMD, node, deploy/multitenant/health.js, admin]
+      test: [CMD, node, -e, "fetch('http://admin:1342/v1/openapi.json',{signal:AbortSignal.timeout(1500)}).then(r=>{if(!r.ok)process.exitCode=1}).catch(()=>{process.exitCode=1})"]
       interval: 2s
       timeout: 2s
       retries: 30
@@ -143,11 +147,12 @@ services:
   api:
     <<: *app
     command: [node, deploy/multitenant/entrypoint.js, api]
+    restart: ${NS_COMPOSE_RESTART:-on-failure}
     depends_on:
       postgres: {condition: service_healthy}
       vault: {condition: service_healthy}
     healthcheck:
-      test: [CMD, node, deploy/multitenant/health.js, api]
+      test: [CMD, node, bin/nightscout.js, healthcheck, --endpoint, ready, --socket, /run/ns-ipc/api.sock]
       interval: 2s
       timeout: 2s
       retries: 30
@@ -163,10 +168,11 @@ services:
   realtime:
     <<: *app
     command: [node, deploy/multitenant/entrypoint.js, realtime]
+    restart: ${NS_COMPOSE_RESTART:-on-failure}
     depends_on:
       postgres: {condition: service_healthy}
     healthcheck:
-      test: [CMD, node, deploy/multitenant/health.js, realtime]
+      test: [CMD, node, bin/nightscout.js, healthcheck, --endpoint, ready, --socket, /run/ns-ipc/realtime.sock]
       interval: 2s
       timeout: 2s
       retries: 30
@@ -194,11 +200,11 @@ services:
   evaluator:
     <<: *app
     command: [node, deploy/multitenant/entrypoint.js, evaluator]
-    restart: "on-failure:3"
+    restart: ${NS_COMPOSE_RESTART:-on-failure}
     depends_on:
       postgres: {condition: service_healthy}
     healthcheck:
-      test: [CMD, node, deploy/multitenant/health.js, evaluator]
+      test: [CMD, node, bin/nightscout.js, healthcheck, --endpoint, ready, --socket, /run/ns-ipc/evaluator.sock]
       interval: 2s
       timeout: 3s
       retries: 30
@@ -214,11 +220,12 @@ services:
   tenant-admin:
     <<: *app
     command: [node, deploy/multitenant/entrypoint.js, tenant-admin]
+    restart: ${NS_COMPOSE_RESTART:-on-failure}
     depends_on:
       postgres: {condition: service_healthy}
       vault: {condition: service_healthy}
     healthcheck:
-      test: [CMD, node, deploy/multitenant/health.js, tenant-admin]
+      test: [CMD, node, bin/nightscout.js, healthcheck, --endpoint, ready, --socket, /run/ns-ipc/tenant-admin.sock]
       interval: 2s
       timeout: 3s
       retries: 30
@@ -230,13 +237,14 @@ services:
   ui:
     <<: *app
     command: [node, -r, ./deploy/multitenant/load-env.js, deploy/multitenant/ui.js]
+    restart: ${NS_COMPOSE_RESTART:-on-failure}
     environment:
       UI_HOSTNAME: 0.0.0.0
       UI_PORT: "1340"
       UI_PUBLIC_CONFIG: /run/ns-config/config.json
       MULTITENANT_CONFIG_MAX_BYTES: ${NS_BOOTSTRAP_CONFIG_MAX_BYTES:-}
     healthcheck:
-      test: [CMD, node, deploy/multitenant/health.js, ui]
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:1340/healthz',{signal:AbortSignal.timeout(1500)}).then(async r=>{if(!r.ok||await r.text()!=='ok\\n')process.exitCode=1}).catch(()=>{process.exitCode=1})"]
       interval: 2s
       timeout: 2s
       retries: 30

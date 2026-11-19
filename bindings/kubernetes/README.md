@@ -1,9 +1,10 @@
 # Kubernetes binding
 
 This package binds the current core and deployment source to ordinary Kubernetes resources.
-`applicationTopology: "separate-k1"` places API, evaluator, realtime and tenant-admin in separate
-one-replica Deployments. The default `cohort` profile retains the shared StatefulSet. Both profiles
-use the same source-owned roles and startup sequence. Live correctness and repeatability remain
+Each role runs in its own workload (decisions `k1-per-role-deployments`,
+`statefulset-ordinal-scaling`): api and tenant-admin are one-replica Recreate Deployments;
+evaluator and realtime are StatefulSets whose Pod ordinal is the slice. The shared `cohort`
+StatefulSet is retired. Live correctness and repeatability remain
 **UNMEASURED** until the selected tuple completes its synthetic network baseline.
 
 `lib/ns/nightscout.libsonnet` exposes `new(overrides)` with package-local imports.
@@ -28,7 +29,7 @@ existing image only while its complete Compose runtime tree still matches `image
 
 | Source capability | Kubernetes binding |
 |---|---|
-| API, realtime, evaluator, tenant-admin | `separate-k1`: one Deployment per role, Recreate, one replica; private HTTP. `cohort`: one StatefulSet with private Unix sockets |
+| API, realtime, evaluator, tenant-admin | api, tenant-admin: one Deployment per role, Recreate, one replica. evaluator, realtime: StatefulSets (slice = pod index). Private HTTP between roles |
 | Maintained pgstream producer | Independent one-replica Recreate Deployment, same binary command and private wire Secret; private evaluator intake Service selects the evaluator workload for the chosen profile |
 | PostgreSQL/wal2json | Explicit supplied image digest and the source streaming/connection settings; image entrypoint retained for initdb |
 | Source bootstrap | Explicit no-retry Job with a finite deadline; source creates registry/admin/management documents and slot/publication configuration |
@@ -38,25 +39,41 @@ existing image only while its complete Compose runtime tree still matches `image
 | Tenant provisioning | A database verification Job admits serving. An independent lab Job provisions synthetic tenants through the private admin API. |
 
 Core constructs the tenant documents, credentials, application lifecycle state and authority.
-The separate profile projects only deployment addresses before the admin screens those documents.
-Both profiles use one native evaluator intake owner. Evaluator partition
-selection remains unqualified and the focused source gate refuses it. StatefulSet replacement is
-sequential, Deployments use Recreate, and no HPA is generated. Separate experiment namespaces have
-separate databases/Vault state. Never duplicate cohort replicas against one database.
+The binding projects only deployment addresses before the admin screens those documents.
+Deployments use Recreate, StatefulSets the ordinary rolling update, and no HPA is generated.
+Separate experiment namespaces have separate databases/Vault state.
+
+## Slices (realtime K)
+
+`slices.realtime` (default 1, at most 8) is the one value that sets both the realtime
+StatefulSet's `replicas` and the `NS_SLICE_COUNT` it renders into the Pod template. Each Pod reads
+its ordinal from the `apps.kubernetes.io/pod-index` label through the downward API
+(`NS_SLICE_ORDINAL`) and owns the tenants with `sha256(tenant) mod K == ordinal` (core
+`lib/pool-membership/slice.js`). Change K only through `slices.realtime`; a bare `kubectl scale`
+leaves the env at the old K, and a Pod whose ordinal is at or above K owns nothing. A K change
+changes the Pod template, so `tk apply` performs an ordinary StatefulSet rolling update.
+
+At K>1 the binding adds a `socket-edge` Deployment (the Compose `socket-edge.js`, conformance-tested
+against `slice.js`) that routes each tenant's realtime connections to its owning Pod by its stable
+DNS name `realtime-<n>.realtime-peers`; the edge nginx `realtime` upstream points at it, and the
+evaluator receives `NS_REALTIME_SLICE_PEERS` in ordinal order. At K=1 none of this is rendered.
+
+The evaluator is a StatefulSet held at K=1 (`slices.evaluator` must be 1): pgstream delivers to
+one receiver, and evaluator K>1 is not supported by this binding.
 
 Role Secret files are copied from Kubernetes symlinks into regular 0400 files inside private 0700
 directories. This includes extensionless source token files. The installer test passes the copied
 admin environment through the actual source environment reader and confirms it refuses group-readable
 input. No Secret or literal credential is rendered.
 
-## Separate K=1 contracts
+## Per-role contracts
 
-`lib/ns/components.libsonnet` reuses the existing role Pod templates and drops the shared socket
-volume. Each role owns a private ClusterIP Service at
+`lib/ns/components.libsonnet` renders one workload per role from the shared role Pod template
+(`roleTemplate`, not rendered itself). Each role owns a private ClusterIP Service at
 `<role>-internal`, on ports 19001–19004 for API, evaluator, realtime and tenant-admin respectively.
 The evaluator intake remains `evaluator:19913`. Private Services publish addresses before clinical
 readiness so lifecycle and intake readiness cannot deadlock startup. Core still checks its own
-storage admission and actual participant incarnation on each contract.
+storage admission on each contract.
 
 `ops/network-documents.cjs` removes socket selections and sets the existing core HTTP listener and
 peer URL keys. It updates the admin's private verification environments and the operator participant
@@ -80,8 +97,7 @@ commit and binary identity come from the image digest and Job ordering
 
 Recreate and one replica express rollout intent. They do not prove old-backend termination for a
 manual Pod delete, partition or restore. Qualification must observe the actual old process/backend
-termination or fencing and changed participant incarnation. Baseline Pod UID guards keep refusing
-unplanned replacements. This profile supplies K=1 placement; K>1 and HA need their own contracts.
+termination or fencing.
 
 ## Inputs and storage
 
@@ -121,8 +137,7 @@ tk eval environments/synthetic > /tmp/synthetic-resources.json
 tk eval environments/synthetic -e inventory > /tmp/synthetic-inventory.json
 tk show --dangerous-allow-redirect environments/synthetic > /tmp/synthetic.yaml
 node check/invariants.js
-node check/controls.js
-node --test check/separate-k1.test.js
+NS_TEST_CORE=/path/to/core node --test check/slices.test.js check/profiles.test.js
 node check/invariants.js --env environments/separate-k1
 node --test check/vault-kubernetes-auth.test.js check/installer.test.js
 bash check/golden.sh
@@ -194,7 +209,7 @@ performed by the offline checks above.
    resources. Retain private evidence before removing disposable storage. Namespace deletion does
    not delete existing external claims; their retention/cleanup remains with their owner.
 
-Do not force-delete a cohort Pod to bypass sequential replacement. Missing durable ownership,
+Missing durable ownership,
 source/image mismatch, incomplete provisioning, or failed application admission remains a refusal.
 Run the focused C3 document controls in its network-isolated local app image:
 

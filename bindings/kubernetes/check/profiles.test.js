@@ -27,10 +27,10 @@ test('request defaults and authored overrides reach the rendered container', () 
 });
 
 test('separated roles start without a tenant Job gate and have independent probes', () => {
-  const result = render({ applicationTopology: 'separate-k1' });
+  const result = render({});
   assert.equal(result.status, 0, result.error);
   for (const [role, component] of Object.entries(result.value.components)) {
-    const pod = component.deployment.spec.template.spec;
+    const pod = (component.deployment || component.statefulset).spec.template.spec;
     const actor = pod.containers.find(c => c.name === role);
     assert.deepEqual(actor.startupProbe.exec, actor.readinessProbe.exec);
     assert.deepEqual(actor.livenessProbe.tcpSocket, { port: 'int-role' });
@@ -45,11 +45,11 @@ test('separated roles start without a tenant Job gate and have independent probe
 });
 
 test('existing claims and placement remain explicit without new provider resources',()=>{
-  const r=render({storage:{mode:'existing-claim',claims:{postgres:'synthetic-existing-pg',vault:'synthetic-existing-vault',provisionState:'synthetic-existing-state'}},placement:{nodeName:'synthetic-existing-node'},placementByWorkload:{cohort:{nodeSelector:{'synthetic.example/purpose':'commissioning'}}}});
+  const r=render({storage:{mode:'existing-claim',claims:{postgres:'synthetic-existing-pg',vault:'synthetic-existing-vault',provisionState:'synthetic-existing-state'}},placement:{nodeName:'synthetic-existing-node'},placementByWorkload:{realtime:{nodeSelector:{'synthetic.example/purpose':'commissioning'}}}});
   assert.equal(r.status,0,r.error);const x=r.value;
   for(const name of ['postgres','vault']){assert.ok(!x[name].statefulset.spec.volumeClaimTemplates);assert.equal(x[name].statefulset.spec.template.spec.volumes.find(v=>v.name==='data').persistentVolumeClaim.claimName,name==='postgres'?'synthetic-existing-pg':'synthetic-existing-vault');}
   assert.ok(!x.provision.state);assert.equal(x.provision.job.spec.template.spec.volumes.find(v=>v.name==='state').persistentVolumeClaim.claimName,'synthetic-existing-state');
-  assert.equal(x.cohort.statefulset.spec.template.spec.nodeName,'synthetic-existing-node');assert.equal(x.cohort.statefulset.spec.template.spec.nodeSelector['synthetic.example/purpose'],'commissioning');
+  assert.equal(x.components.realtime.statefulset.spec.template.spec.nodeName,'synthetic-existing-node');assert.equal(x.components.realtime.statefulset.spec.template.spec.nodeSelector['synthetic.example/purpose'],'commissioning');
   assert.deepEqual(x.primer.job.spec.template.spec.imagePullSecrets,[{name:'synthetic-registry-reference'}]);
 });
 test('legacy standard dynamic storage still renders its claims',()=>{

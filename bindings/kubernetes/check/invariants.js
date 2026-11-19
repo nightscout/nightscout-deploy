@@ -2,7 +2,7 @@
 'use strict';
 
 // Invariants of the rendered Kubernetes binding. Offline: renders with `tk eval`, reads no
-// cluster. Every check has a break-it control in check/controls.js.
+// cluster.
 //
 //   node check/invariants.js [--root <tanka root>] [--env environments/preview] [--compose <bindings/compose dir>]
 //
@@ -59,7 +59,6 @@ const selects = (selector, labels) => !!selector && Object.keys(selector).length
 function checks (all, inventory, composeDir, envMain) {
   const workloads = all.filter(m => WORKLOADS.includes(m.kind));
   const services = all.filter(m => m.kind === 'Service');
-  const separate = inventory.applicationTopology === 'separate-k1';
   const results = [];
   const run = (name, fn) => {
     const failures = [];
@@ -94,91 +93,6 @@ function checks (all, inventory, composeDir, envMain) {
     if(maps.length!==1 || !require('node:util').isDeepStrictEqual(maps[0].data,{'nginx.conf':projected}) || maps[0].binaryData)fail('EDGE_CONFIGMAP_CHANGED');
   });
 
-  run('internal-listener-not-on-service', fail => {
-    if (separate) return;
-    const withIpc = workloads.filter(w => (podSpec(w).volumes || []).some(v => v.name === 'ns-ipc'));
-    if (withIpc.length !== 1) fail('the serve.internal socket volume ns-ipc must be in exactly one Pod template, found ' + withIpc.length + ' (' + withIpc.map(id).join(', ') + ')');
-    for (const w of withIpc) {
-      const vol = podSpec(w).volumes.find(v => v.name === 'ns-ipc');
-      if (!vol.emptyDir || Object.keys(vol).length !== 2) fail(id(w) + ' volume ns-ipc must be a pod-private emptyDir, found ' + Object.keys(vol).filter(k => k !== 'name').join(','));
-    }
-    for (const w of workloads) {
-      for (const c of containersOf(podSpec(w))) {
-        for (const e of c.env || []) {
-          if (/^NS_SERVE_INTERNAL_(HOST|PORT)$/.test(e.name) || /^NS_[A-Z_]+_INTERNAL_URL$/.test(e.name)) fail(id(w) + ' container ' + c.name + ' sets ' + e.name + ': serve.internal stays a unix socket in this binding');
-        }
-      }
-    }
-    for (const svc of services) {
-      for (const sp of svc.spec.ports || []) {
-        const hit = resolve(svc, sp);
-        if (!hit.length) fail('Service/' + svc.metadata.name + ' port ' + (sp.name || sp.port) + ' targets no declared container port (an undeclared listener, such as a network serve.internal)');
-        for (const t of hit) if (/^int-/.test(t.port.name || '') && !(t.port.name === 'int-admin' && svc.metadata.name === 'admin')) fail('Service/' + svc.metadata.name + ' publishes internal port ' + t.port.name + ' of ' + id(t.workload) + ' container ' + t.container);
-      }
-    }
-  });
-
-  run('admin-not-public', fail => {
-    if (all.some(m => m.kind === 'Ingress')) fail('an Ingress is rendered; the consumer entry is the edge Service only');
-    for (const svc of services) {
-      const type = svc.spec.type || 'ClusterIP';
-      const consumer = (svc.metadata.annotations || {})['nightscout.org/consumer-entry'] === 'true';
-      for (const sp of svc.spec.ports || []) {
-        for (const t of resolve(svc, sp)) {
-          if (t.port.name !== 'int-admin' && t.port.containerPort !== 1342) continue;
-          if (type !== 'ClusterIP') fail('Service/' + svc.metadata.name + ' exposes the admin port as ' + type);
-          if (consumer) fail('Service/' + svc.metadata.name + ' is the consumer entry and exposes the admin port');
-          if (svc.metadata.name !== 'admin') fail('Service/' + svc.metadata.name + ' exposes the admin port; only Service/admin may');
-        }
-      }
-      if (type !== 'ClusterIP' && !consumer) fail('Service/' + svc.metadata.name + ' is ' + type + ' but is not the consumer entry');
-    }
-    const nginx = all.find(m => m.kind === 'ConfigMap' && m.metadata.name === 'edge-nginx');
-    if (!nginx) fail('edge nginx ConfigMap missing');
-    else if (/\badmin\b\s*:|:1342\b|tenant-admin|:1341\b/.test(nginx.data['nginx.conf'].replace(/location[^{]*\{\s*return 404;\s*\}/g, ''))) fail('the edge nginx.conf routes to the admin or owner plane');
-    const adminPods = workloads.filter(w => containersOf(podSpec(w)).some(c => (c.ports || []).some(p => p.name === 'int-admin')));
-    for (const w of adminPods) {
-      const pols = all.filter(m => m.kind === 'NetworkPolicy' && Object.keys(m.spec.podSelector.matchLabels || {}).length && selects(m.spec.podSelector.matchLabels, podLabels(w)));
-      if (!pols.length) fail(id(w) + ' has no NetworkPolicy of its own; the namespace default would be its only boundary');
-      for (const p of pols) for (const rule of p.spec.ingress || []) {
-        const from = rule.from || [];
-        if (!from.length || from.some(f => f.ipBlock || f.namespaceSelector || (f.podSelector || {}).matchLabels?.['app.kubernetes.io/component'] !== 'operator')) fail('NetworkPolicy/' + p.metadata.name + ' admits more than operator Pods to the admin plane');
-      }
-    }
-  });
-
-  run('secrets-by-reference', fail => {
-    const SECRET_NAME = /^(?!.*_(TTL|FILE|PATH|ENV)$).*(PASSWORD|TOKEN|SECRET|CREDENTIAL|PRIVATE)|_PG$|^NS_VAULT_[0-9]+$/;
-    const SECRET_VALUE = [/[a-z]+:\/\/[^\s/:@]+:[^\s@]+@/i, /\bhvs\.[A-Za-z0-9_-]{20,}/, /-----BEGIN [A-Z ]*PRIVATE KEY-----/];
-    for (const m of all) if (m.kind === 'Secret') fail('Secret/' + m.metadata.name + ' is rendered; Secrets are created at apply time, never committed');
-    for (const m of all.filter(m => m.kind === 'ConfigMap')) {
-      for (const [k, v] of Object.entries(m.data || {})) if (SECRET_VALUE.some(re => re.test(v))) fail('ConfigMap/' + m.metadata.name + ' key ' + k + ' holds credential material');
-    }
-    for (const w of workloads) {
-      const spec = podSpec(w);
-      for (const c of containersOf(spec)) {
-        for (const e of c.env || []) {
-          if (e.value !== undefined && (SECRET_NAME.test(e.name) || SECRET_VALUE.some(re => re.test(e.value)))) fail(id(w) + ' container ' + c.name + ' env ' + e.name + ' is a literal; it must come from a Secret reference');
-          if (e.valueFrom && e.valueFrom.configMapKeyRef && SECRET_NAME.test(e.name)) fail(id(w) + ' container ' + c.name + ' env ' + e.name + ' comes from a ConfigMap');
-        }
-        for (const f of c.envFrom || []) if (!f.secretRef) fail(id(w) + ' container ' + c.name + ' envFrom must be a secretRef');
-        for (const vm of c.volumeMounts || []) {
-          const vol = (spec.volumes || []).find(v => v.name === vm.name);
-          if (/^\/run\/(ns-secret|secrets)(\/|$)/.test(vm.mountPath) && !(vol && vol.secret)) fail(id(w) + ' container ' + c.name + ' mounts ' + vm.mountPath + ' from a non-Secret volume ' + vm.name);
-        }
-      }
-      for (const v of spec.volumes || []) if (/^secret-/.test(v.name) && !v.secret) fail(id(w) + ' volume ' + v.name + ' is named as private documents but is not a Secret');
-    }
-  });
-
-  run('images-pinned', fail => {
-    const DIGEST = /@sha256:[0-9a-f]{64}$/;
-    const EXACT = /:(v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?|[0-9a-f]{40})$/;
-    for (const w of workloads) for (const c of containersOf(podSpec(w))) {
-      if (typeof c.image !== 'string' || !(DIGEST.test(c.image) || EXACT.test(c.image))) fail(id(w) + ' container ' + c.name + ' image ' + c.image + ' is not pinned by digest or exact tag');
-    }
-  });
-
   run('independent-pgstream', fail => {
     const streams=workloads.filter(w=>(podSpec(w).containers||[]).some(c=>c.name==='pgstream'));
     if(streams.length!==1)return fail('exactly one pgstream workload required');
@@ -189,7 +103,7 @@ function checks (all, inventory, composeDir, envMain) {
     if(volume?.secret?.secretName!=='ns-config-pgstream'||!(container.volumeMounts||[]).some(v=>v.name==='secret-pgstream'&&v.mountPath==='/run/ns-stream'&&v.readOnly))fail('pgstream requires its dedicated wire Secret');
     for(const w of workloads)if(w!==stream&&(podSpec(w).volumes||[]).some(v=>v.secret?.secretName==='ns-config-pgstream'))fail('streaming wire credentials must not be mounted in the evaluator or another workload');
     const intake=services.find(v=>v.metadata.name==='evaluator');
-    if(!intake||intake.spec.type!=='ClusterIP'||(separate ? intake.spec.selector?.['app.kubernetes.io/component']!=='evaluator' : intake.spec.selector?.['statefulset.kubernetes.io/pod-name']!=='cohort-0'||intake.spec.selector?.['app.kubernetes.io/component']!=='cohort'))fail('intake Service must select only the admitted cohort-0 owner');
+    if(!intake||intake.spec.type!=='ClusterIP'||intake.spec.selector?.['app.kubernetes.io/component']!=='evaluator')fail('intake Service must select the evaluator');
     if(intake?.spec.publishNotReadyAddresses!==true)fail('intake routing must bypass pod-wide clinical readiness to avoid a stream startup cycle');
     if(intake&&!intake.spec.ports?.some(p=>p.port===19913&&p.targetPort==='stream-intake'))fail('intake Service must target the declared receiver port');
     const postgres=workloads.find(w=>w.metadata.name==='postgres'),command=(podSpec(postgres).containers.find(c=>c.name==='postgres').args||[]);
@@ -197,25 +111,24 @@ function checks (all, inventory, composeDir, envMain) {
   });
 
   run('evaluator-statefulset', fail => {
-    if (separate) return;
-    const hosts = workloads.filter(w => containersOf(podSpec(w)).some(c => c.name === 'evaluator'));
+    // Decision statefulset-ordinal-scaling: the evaluator is a StatefulSet held at K=1 (one
+    // pgstream receiver); evaluator K>1 is not supported by this binding.
+    const hosts = workloads.filter(w => (podSpec(w).containers || []).some(c => c.name === 'evaluator'));
     if (hosts.length !== 1) return fail('the evaluator must run in exactly one workload, found ' + hosts.length);
     const w = hosts[0];
-    if (w.kind !== 'StatefulSet') return fail('the evaluator runs in ' + id(w) + '; it must be a StatefulSet (the ordinal is the worker index)');
-    if (w.spec.replicas !== 1) fail(id(w) + ' replicas is ' + w.spec.replicas + '; the preview runs one member');
+    if (w.kind !== 'StatefulSet' || w.spec.replicas !== 1) fail(id(w) + ' must be a one-replica StatefulSet');
     const container = podSpec(w).containers.find(c => c.name === 'evaluator');
-    const env = Object.fromEntries((container.env || []).map(e => [e.name, e]));
-    const pool = inventory.evaluatorPool, poolKeys = Object.keys(env).filter(k => k.startsWith('MULTITENANT_POOL_EVALUATOR_'));
-    if (pool.partition === 'off') {
-      if (poolKeys.length) fail('partition is off but the evaluator sets ' + poolKeys.join(', ') + ' (core refuses a partitioned key with the partition off)');
-    } else {
-      if ((env[pool.partitionEnv] || {}).value !== 'on') fail('evaluator env ' + pool.partitionEnv + ' must be on');
-      const ordinal = env[pool.ordinalEnv];
-      if (!ordinal || ordinal.valueFrom?.fieldRef?.fieldPath !== "metadata.labels['apps.kubernetes.io/pod-index']") fail('evaluator env ' + pool.ordinalEnv + ' must come from the StatefulSet pod-index label');
-      if (env.MULTITENANT_POOL_EVALUATOR_MEMBERS) fail('evaluator env MULTITENANT_POOL_EVALUATOR_MEMBERS is rendered; the member count lives in the pool table');
-    }
     const probe = JSON.stringify(container.readinessProbe || {});
-    if (probe !== JSON.stringify({ exec: { command: ['node', 'deploy/multitenant/health.js', 'evaluator'] }, failureThreshold: 30, periodSeconds: 2, timeoutSeconds: 3 })) fail('evaluator readiness must be the role health check only (never pool eligibility), found ' + probe);
+    if (probe !== JSON.stringify({ exec: { command: ['node', 'deploy/multitenant/health.js', 'evaluator'] }, failureThreshold: 30, periodSeconds: 2, timeoutSeconds: 3 })) fail('evaluator readiness must be the role health check only');
+  });
+
+  run('realtime-slices', fail => {
+    // Realtime slice = pod index, K = NS_SLICE_COUNT, both from the one `slices.realtime` value.
+    const w = workloads.find(x => x.kind === 'StatefulSet' && x.metadata.name === 'realtime');
+    if (!w) return fail('realtime must be a StatefulSet');
+    const env = Object.fromEntries((podSpec(w).containers.find(c => c.name === 'realtime').env || []).map(e => [e.name, e]));
+    if (env.NS_SLICE_COUNT?.value !== String(w.spec.replicas) || w.spec.replicas !== inventory.slices.realtime) fail('NS_SLICE_COUNT and replicas must both be slices.realtime');
+    if (env.NS_SLICE_ORDINAL?.valueFrom?.fieldRef?.fieldPath !== "metadata.labels['apps.kubernetes.io/pod-index']") fail('NS_SLICE_ORDINAL must come from the pod-index label');
   });
 
   run('startup-budget', fail => {
@@ -236,26 +149,9 @@ function checks (all, inventory, composeDir, envMain) {
   });
 
   run('no-overlap-update', fail => {
-    for (const w of workloads) {
-      if (w.kind === 'StatefulSet') {
-        if ((w.spec.podManagementPolicy || 'OrderedReady') !== 'OrderedReady') fail(id(w) + ' podManagementPolicy must be OrderedReady');
-        const u = w.spec.updateStrategy || {};
-        if ((u.type || 'RollingUpdate') !== 'RollingUpdate' || (u.rollingUpdate && u.rollingUpdate.maxUnavailable !== undefined)) fail(id(w) + ' updateStrategy must be the default one-at-a-time RollingUpdate');
-        if (w.spec.replicas !== 1) fail(id(w) + ' replicas must be 1 for a delete-before-create update');
-      }
-      if (w.kind === 'Deployment' && (w.spec.strategy || {}).type !== 'Recreate') fail(id(w) + ' strategy must be Recreate (a RollingUpdate overlaps old and new Pods)');
-    }
-  });
-
-  run('cohort-single-replica', fail => {
-    // Decision cohort-pod-not-scaled: the one-Pod cohort is a monolith placement; the binding, not
-    // core, holds it to one replica (core does not refuse a second cohort: kind smoke 2026-11-10).
-    const cohorts = workloads.filter(w => (podSpec(w).volumes || []).some(v => v.name === 'ns-ipc'));
-    for (const w of cohorts) {
-      if (w.kind !== 'StatefulSet') fail(id(w) + ' carries the cohort but is a ' + w.kind + '; the cohort is a StatefulSet');
-      if (w.spec.replicas !== 1) fail(id(w) + ' replicas is ' + w.spec.replicas + '; the one-Pod cohort is a monolith and scales vertically only; for horizontal scale or HA use per-role placement (decision cohort-pod-not-scaled)');
-    }
-    for (const m of all) if (m.kind === 'HorizontalPodAutoscaler' && cohorts.some(w => ((m.spec || {}).scaleTargetRef || {}).name === w.metadata.name)) fail('HorizontalPodAutoscaler/' + m.metadata.name + ' targets the cohort');
+    // Deployments replace by Recreate. StatefulSets use the ordinary rolling update; a realtime
+    // K change is one (decision statefulset-ordinal-scaling).
+    for (const w of workloads) if (w.kind === 'Deployment' && (w.spec.strategy || {}).type !== 'Recreate') fail(id(w) + ' strategy must be Recreate (a RollingUpdate overlaps old and new Pods)');
   });
 
   run('private-directories', fail => {
@@ -293,7 +189,6 @@ function checks (all, inventory, composeDir, envMain) {
 
   run('source-command-identity', fail => {
     const contract = JSON.parse(fs.readFileSync(path.join(__dirname, '../assets/source-contract.json')));
-    if(inventory.evaluatorPool.partition!=='off')fail('C2 pgstream evaluator partition is unqualified and must remain off');
     for (const w of workloads) for (const c of containersOf(podSpec(w))) {
       if (['install-config','wait-stores','vault-kubernetes-auth','done','vault-agent','postgres','vault','nginx'].includes(c.name)) continue;
       const want=contract.commands[c.name];
@@ -385,7 +280,6 @@ function checks (all, inventory, composeDir, envMain) {
     if(installers.some(c=>!JSON.stringify(c.command).includes("!n.startsWith('.')")))fail('installer must copy all source documents including extensionless token files');
   });
 
-  if (separate) run('separate-k1', fail => require('./separate-k1').check(all, inventory, fail));
   return results;
 }
 

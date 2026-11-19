@@ -1,4 +1,4 @@
-// Preview environment: one cohort, one evaluator pool member, synthetic tenants only.
+// Preview environment: per-role workloads at K=1, synthetic tenants only.
 // Exact artifact inputs come from the chosen coherent core/deploy image pair.
 local nightscout = import 'ns/nightscout.libsonnet';
 
