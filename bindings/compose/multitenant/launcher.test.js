@@ -12,7 +12,7 @@ test('selected launcher applies the same two fixed-roster overlays and starts ev
     for(const file of ['compose.replicas.yaml','compose.realtime.yaml','compose.evaluator.yaml'])fs.writeFileSync(path.join(state,file),'');
     const record=path.join(dir,'argv.jsonl');
     fs.writeFileSync(path.join(bin,'docker'),'#!/bin/sh\nexec '+process.execPath+' '+JSON.stringify(path.join(dir,'record.js'))+' "$@"\n',{mode:0o700});
-    fs.writeFileSync(path.join(dir,'record.js'),'const args=process.argv.slice(2);require("node:fs").appendFileSync('+JSON.stringify(record)+',JSON.stringify(args)+"\\n");if(process.env.NS_CONTROL_REFUSE_PLATFORM==="1"&&args.includes("deploy/multitenant/platform-verify.js"))process.exit(23);');
+    fs.writeFileSync(path.join(dir,'record.js'),'const args=process.argv.slice(2);require("node:fs").appendFileSync('+JSON.stringify(record)+',JSON.stringify(args)+"\\n");if(process.env.NS_CONTROL_SEALED==="1"&&args.includes("sealedcode=200"))console.log("true");if(process.env.NS_CONTROL_REFUSE_PLATFORM==="1"&&args.includes("deploy/multitenant/platform-verify.js"))process.exit(23);');
     fs.writeFileSync(path.join(bin,'node'),'#!/bin/sh\ncase "$1" in build.js|publish-primer.js) exit 0;; esac\nexec '+process.execPath+' "$@"\n',{mode:0o700});
     const options={cwd:dir,env:{...process.env,PATH:bin+':'+process.env.PATH},stdio:'pipe'};
     options.env.COMPOSE_PROJECT_NAME='foreign';options.env.NS_DEMO_PROJECT='foreign';
@@ -35,6 +35,11 @@ test('selected launcher applies the same two fixed-roster overlays and starts ev
     delete options.env.NS_CONTROL_REFUSE_PLATFORM;
     execFileSync('bash',['demo.sh','up'],options);
     assert(JSON.parse(fs.readFileSync(record,'utf8').trim().split('\n').at(-1)).includes('nginx'));
+    options.env.NS_CONTROL_SEALED='1';
+    fs.writeFileSync(record,'');
+    assert.throws(()=>execFileSync('bash',['demo.sh','prime'],options),error=>error.status===1 && error.stderr.toString().includes('VAULT_SEALED'));
+    assert(!fs.readFileSync(record,'utf8').includes('prime.js'));
+    delete options.env.NS_CONTROL_SEALED;
     execFileSync('bash',['demo.sh','prime'],options);
     assert(JSON.parse(fs.readFileSync(record,'utf8').trim().split('\n').at(-1)).includes('prime'));
     fs.appendFileSync(path.join(dir,'.env'),'NS_DEMO_PROJECT=ns-admission-0123456789abcdef\n');

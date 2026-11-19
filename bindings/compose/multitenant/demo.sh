@@ -69,6 +69,14 @@ case "${1:-}" in
     ;;
   prime|demo)
     node build.js --check-image
+    # Report a sealed fixture before the first tenant write. Ask Vault directly
+    # so this decision does not depend on the timing of the last healthcheck.
+    sealed=$("${compose[@]}" exec -T -e VAULT_MAX_RETRIES=0 vault vault read \
+      -address=https://vault:8200 -ca-cert=/run/ns-ca/ca.crt -field=sealed sys/health sealedcode=200)
+    if [[ "$sealed" == true ]]; then
+      echo '{"error":"VAULT_SEALED"}' >&2
+      exit 1
+    fi
     "${compose[@]}" --profile ops run --rm --no-deps primer node deploy/multitenant/prime.js provision
     "${compose[@]}" --profile ops run --rm --no-deps -e NS_DEMO_TENANTS="${NS_DEMO_TENANTS:-2}" bootstrap node deploy/multitenant/commission-restore.js
     "${compose[@]}" --profile ops run --rm --no-deps primer node deploy/multitenant/prime.js prime
