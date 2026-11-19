@@ -12,7 +12,7 @@ test('actual tiny native generated provisioning, export, logical restore and pri
  const previous=scope.getTenancyMode();scope.setTenancyMode('multi');
  const id=crypto.randomBytes(4).toString('hex'),owner='native_bind_'+id,containers=[],directory=fs.mkdtempSync(path.join(os.tmpdir(),'ns-native-bind-'));
  const l=plan.layout(),q=plan.quote,ns=l.namespaces,table=(kind,name)=>q(ns[kind])+'.'+q(name),password=crypto.randomBytes(24).toString('hex'),vaultToken=crypto.randomBytes(24).toString('hex');
- let admin,provisioning,adminURI,selection,raw,config,env,docs;
+ let admin,provisioning,adminURI,selection,raw,config,env,docs,floorServer,floorService;
  const urls={};
  try{
   for(const [name,image,args,extra]of [[owner+'_pg',PG,['-e','POSTGRES_USER=bootstrap','-e','POSTGRES_PASSWORD','-e','POSTGRES_DB=nightscout_compose_test'],{POSTGRES_PASSWORD:password}],[owner+'_vault',VAULT,['-e','VAULT_DEV_ROOT_TOKEN_ID'],{VAULT_DEV_ROOT_TOKEN_ID:vaultToken}]]){
@@ -62,7 +62,21 @@ test('actual tiny native generated provisioning, export, logical restore and pri
   const verifier=require('../../../lib/server/serve/platform-verification').create({namespace:evaluator.platformVerification.namespace,connectionString:urls.platform_verifier,targets:[{
     role:'evaluator',config:evaluator,operationProfileDigest:selected.nativeSelection.digest,check:()=>require('../../../lib/server/serve/platform-verification-admin').checkTarget({role:'evaluator',config:evaluator,operationConfig:selected})
   }]});
+  const platformAdmin=require('../../../lib/server/serve/platform-verification-admin');
+  const rolePath=file=>path.join(output,'api',file);
+  const target={role:'api',configFile:rolePath('config.json'),environmentFile:rolePath('env.json'),operationConfigFile:rolePath('operation.json')};
+  floorService=platformAdmin.create({namespace:raw.floorVerification.namespace,connectionString:urls.platform_verifier,targets:[target]},{});
+  let admitFloor=true;
+  floorServer=require('node:http').createServer(platformAdmin.api({service:floorService,admitted:()=>admitFloor,
+    fallback:(_req,res)=>{res.writeHead(404);res.end();}}));
+  await new Promise((resolve,reject)=>{floorServer.once('error',reject);floorServer.listen(0,'127.0.0.1',resolve);});
+  assert.equal(raw.floorVerification.adminOrigin,'http://admin:1342');
+  raw.floorVerification.adminOrigin='http://127.0.0.1:'+floorServer.address().port;
   config=bridge.validateConfig(raw,env);
+  async function verifyFloorGeneration(){
+   const result=await admin.query('SELECT f.status,f.generation=w.generation AS current FROM '+q(raw.floorVerification.namespace)+'.verified_tenant_floor f JOIN '+table('control','tenant_lifecycle_windows')+' w USING(tenant_id) WHERE f.tenant_id=$1',[plan.A]);
+   assert.deepEqual(result.rows,[{status:'verified',current:true}]);
+  }
   await assert.rejects(bridge.capture(config,plan.A,env),{code:'COMPOSE_OPERATOR_SELECTION_UNVERIFIED'});
   await verifier.verify().catch(error=>{console.error('NATIVE_BIND_VERIFY_REFUSAL',error.verificationDiagnostic);throw error;});
   const withAdmin=async fn=>fn(admin);
@@ -77,7 +91,7 @@ test('actual tiny native generated provisioning, export, logical restore and pri
   await allowA(true);
   const artifact=await bridge.capture(config,plan.A,env);
   const mutate=async()=>withAdmin(async client=>{await client.query('BEGIN');try{await client.query("SELECT set_config('app.current_tenant_id',$1,true)",[plan.A]);await client.query('UPDATE '+table('entries','entries')+" SET doc=jsonb_set(doc,'{value}','99'::jsonb) WHERE tenant_id=$1",[plan.A]);await client.query('COMMIT');}catch(e){await client.query('ROLLBACK');throw e;}});
-  await mutate();const restored=await bridge.restore(config,artifact,env);assert.equal(restored.result.tables,7);assert.deepEqual(await queues(),queueBefore);assert.deepEqual(await rows(plan.B),beforeB);
+  await mutate();const restored=await bridge.restore(config,artifact,env);assert.equal(restored.result.tables,7);await verifyFloorGeneration();assert.deepEqual(await queues(),queueBefore);assert.deepEqual(await rows(plan.B),beforeB);
   const beforeA=await rows(plan.A);
   for(const change of [v=>{v.nativeSelection.generation='foreign-generation';},v=>{v.nativeSelection.source.system_id+='1';}]){const bad=structuredClone(raw);change(bad);const parsed=bridge.validateConfig(bad,env);await assert.rejects(bridge.capture(parsed,plan.A,env),{code:'COMPOSE_OPERATOR_SELECTION_UNVERIFIED'});assert.deepEqual(await rows(plan.A),beforeA);}
   await verifier.invalidate();
@@ -87,8 +101,15 @@ test('actual tiny native generated provisioning, export, logical restore and pri
   // The operator's own private pool (max 1) reads the held claim and resumes under it.
   async function recover(){
    const state=(await admin.query('SELECT claim_id FROM '+table('control','tenant_lifecycle_windows')+' WHERE tenant_id=$1',[plan.A])).rows[0];
-   const result=await bridge.recover(config,'resume',plan.A,state.claim_id,env);assert.equal(result.state,'active');return result;
+   const result=await bridge.recover(config,'resume',plan.A,state.claim_id,env);assert.equal(result.state,'active');await verifyFloorGeneration();return result;
   }
+  admitFloor=false;
+  await assert.rejects(bridge.restore(config,artifact,env),{code:'COMPOSE_OPERATOR_FLOOR_VERIFICATION_REFUSED'});
+  await assert.rejects(recover(),{code:'COMPOSE_OPERATOR_FLOOR_VERIFICATION_REFUSED'});
+  assert.equal((await admin.query('SELECT phase FROM '+table('control','tenant_lifecycle_windows')+' WHERE tenant_id=$1',[plan.A])).rows[0].phase,'suspended');
+  assert.deepEqual(await rows(plan.B),beforeB);
+  admitFloor=true;
+  assert.equal((await recover()).interrupted,'data-replaced');
   await mutate();await assert.rejects(bridge.restore(config,artifact,env,{onRow(){throw Error('NATIVE_BIND_BEFORE_DATA');}}),/NATIVE_BIND_BEFORE_DATA/);assert.equal((await recover()).interrupted,'before-data');
   // A verified selection may be withdrawn after the data commit. It must
   // remain suspended until the operator's next pre-start verification.
@@ -98,6 +119,8 @@ test('actual tiny native generated provisioning, export, logical restore and pri
   assert.equal((await recover()).interrupted,'data-replaced');
   assert.deepEqual(await rows(plan.B),beforeB);assert.deepEqual(await queues(),queueBefore);await bridge.capture(config,plan.A,env);
  }finally{
+  if(floorServer)await new Promise(resolve=>floorServer.close(resolve));
+  if(floorService)await floorService.close();
   if(provisioning)await provisioning.close();if(admin)await admin.end();scope.setTenancyMode(previous);
   for(const cid of containers.reverse()){const actual=JSON.parse(docker(['inspect',cid]))[0];assert.equal(actual.Config.Labels['org.nightscout.test.owner'],owner);docker(['rm','-f','-v',cid]);}
   fs.rmSync(directory,{recursive:true,force:true});
