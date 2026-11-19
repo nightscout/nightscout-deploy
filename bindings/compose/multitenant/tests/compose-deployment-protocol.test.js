@@ -335,33 +335,11 @@ describe('Compose demo private node:http transport', function () {
   });
 });
 
-describe('Compose role health uses the private role-health contract', function () {
-  async function check (mutateReply = reply => reply) {
-    const file = require.resolve('../health'), calls = [], facade = { argv: ['node', file, 'api'], exitCode: 0, env: { NS_SERVE_INTERNAL_SOCKET: '/run/ns-ipc/api.sock' } };
-    const source = fs.readFileSync(file, 'utf8');
-    const nativeRequire = createRequire(file);
-    const localRequire = name => {
-      // The deployment loads its private environment before resolving the listener.
-      // This fixture supplies the same explicit endpoint.
-      if (name === './service-environment') return { applyHealth: () => {} };
-      if (name === 'node:fs') return { lstatSync: () => ({ isSocket: () => true }) };
-      if (name === 'node:net') return { connect: () => {
-        const socket = new EventEmitter(); socket.setTimeout = () => {}; socket.end = () => {}; socket.destroy = () => {};
-        queueMicrotask(() => socket.emit('connect')); return socket;
-      } };
-      if (name === '../../lib/server/internal-api/clients') return { roleHealth: options => {
-        calls.push(options);
-        return { getStatus: async body => { calls.push(body); return mutateReply({ request: body.request, participant: 'api', roles: ['api'], ready: true }); } };
-      } };
-      return nativeRequire(name);
-    };
-    vm.compileFunction(source, ['require', 'process'], { filename: file })(localRequire, facade);
-    await new Promise(resolve => setImmediate(resolve));
-    return { calls, code: facade.exitCode };
-  }
-  it('is healthy exactly when the role reports ready', async function () {
-    const valid = await check(); assert.equal(valid.code, 0);
-    assert.deepEqual(valid.calls[0], { socketPath: '/run/ns-ipc/api.sock', maxBytes: 1048576, timeoutMs: 1500 });
-    assert.equal((await check(health => ({...health,ready:false}))).code, 1);
+describe('Compose role health', function () {
+  it('invokes the core readiness command for each private role socket', function () {
+    const source=require('node:fs').readFileSync(require('node:path').join(__dirname,'../compose.yaml'),'utf8');
+    for(const role of ['api','realtime','evaluator','tenant-admin']){
+      assert(source.includes('healthcheck, --endpoint, ready, --socket, /run/ns-ipc/'+role+'.sock'));
+    }
   });
 });

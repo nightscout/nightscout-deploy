@@ -9,14 +9,6 @@ pgstream service also refuses a missing slot during ordinary startup; its restar
 policy does not recreate the slot. This host command is the explicit recovery
 operation.
 
-A separate `replace-revision` action supports the one qualified populated revision pair in the
-[ordinary revision procedure](../../../operator/runbooks/interrupted-upgrade.md#explicit-ordinary-revision-transition).
-It requires that procedure's sealed upgrade record, paired cold-backup custody and current full
-identities. It reconstructs pre-transition WAL coverage from the stopped current physical source;
-it is not missing/lost-slot recovery. A durable single-use marker prevents retry with a new receipt.
-The existing `create-missing` and `replace-lost` actions still refuse a valid slot. The linked
-procedure owns this action's rehearsal, independent completion/client checks and limitations.
-
 Source controls reproduce command-level refusal and success on a synthetic
 platform. An isolated single-host PostgreSQL/Vault/evaluator/pgstream project
 also reproduces the canonical-image CLI, followed by overdue clinical work and
@@ -42,14 +34,14 @@ outside version control. Its fields are:
 
 | Field | Required current binding |
 |---|---|
-| `version`, `action` | `1`; `create-missing`, `replace-lost`, or the separately admitted `replace-revision` above |
+| `version`, `action` | `1`; `create-missing` or `replace-lost` |
 | `project`, `deploymentDirectory`, `stateDirectory`, `composeFiles`, `environmentFile` | Existing prepared project, absolute paths, exact current ordered Compose file list and explicit active environment file (default `.env` in deployment directory) |
 | `approvedHistoricalComposeFiles` | Explicit ordered approved historical/current file set, each with absolute `path` and current `sha256`; includes every selected or recorded lineage file |
 | `source` | `coreCommit` and `deployCommit` from prepared bootstrap and immutable application image labels |
 | `imageId`, `postgresImageId` | Actual immutable Docker image IDs, never floating tags |
 | `database` | Exact `name`, `oid`, `systemIdentifier`, `postmasterStartedAt` from the current physical PostgreSQL instance |
 | `slot`, `operatorRole` | Existing configured selected slot and explicit DBA principal used through local `psql` in that PostgreSQL container |
-| `evaluatorConfig`, `evaluatorConfigSha256`, `wireConfigSha256` | Existing evaluator private `config.json` and independently recorded SHA256 of it and the separate `pgstream/pgstream.yaml` |
+| `generationFile`, `generationFileSha256`, `wireConfigSha256` | Existing evaluator private `ns_pgstream_generation` and independently recorded SHA256 of it and the separate `pgstream/pgstream.yaml` |
 | `containers` | Every existing project container: exact `cid`, `service`, `imageId`, `startedAt`, `configHash` from actual Docker inspection; optional exact per-container ordered `composeFiles` lineage and `originalRestartPolicy` |
 | `receiptFile` | New absolute private output path; existing files are refused |
 

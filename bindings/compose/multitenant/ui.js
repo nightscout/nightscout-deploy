@@ -25,15 +25,6 @@ function hostname(value) {
   return value;
 }
 
-// nightscout-deploy: a core that predates a module keeps that module's former
-// behaviour (this tree's recorded core 0392acf9 has neither) and says so once.
-const coreModule = (name, former) => {
-  const file = path.join(ROOT, 'lib/server/serve', name + '.js');
-  if (fs.existsSync(file)) return require(file);
-  process.stderr.write('UI: core has no ' + name + ' module; ' + former.note + '\n');
-  return former;
-};
-
 function parseConfig(value) {
   if (value?.version === 2) return require('./ui-registry').parse(value);
   if (!exact(value, ['version', 'tenants']) || value.version !== 1 ||
@@ -129,21 +120,19 @@ function createApp({ config, root = ROOT, presentation } = {}) {
   return app;
 }
 
-// nightscout-deploy: the former fixed 1 MiB read when core has no bounded reader.
-let reader;
-const configFile = () => reader || (reader = coreModule('config-file', {
-  note: 'using the former fixed 1 MiB configuration bound',
-  isRefusal: () => false,
-  readJson (file) {
-    const bytes = fs.readFileSync(file);
+function readUiConfig (file) {
+  const fd = fs.openSync(file, 'r');
+  try {
+    if (fs.fstatSync(fd).size > 1048576) throw new Error('UI_PUBLIC_CONFIG_TOO_LARGE');
+    const bytes = fs.readFileSync(fd);
     if (bytes.length > 1048576) throw new Error('UI_PUBLIC_CONFIG_TOO_LARGE');
-    return JSON.parse(bytes.toString('utf8'));
-  }
-}));
+    try { return JSON.parse(bytes.toString('utf8')); } catch { throw new Error('UI_PUBLIC_CONFIG_INVALID_JSON'); }
+  } finally { fs.closeSync(fd); }
+}
 
 function main(env = process.env) {
   if (!env.UI_PUBLIC_CONFIG) throw new Error('UI_PUBLIC_CONFIG_REQUIRED');
-  const config = configFile().readJson(env.UI_PUBLIC_CONFIG, { source: env, label: 'UI_PUBLIC_CONFIG' });
+  const config = readUiConfig(env.UI_PUBLIC_CONFIG);
   parseConfig(config);
   const port = env.UI_PORT === undefined ? 1340 : Number(env.UI_PORT);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('UI_PORT_INVALID');
@@ -169,8 +158,7 @@ function main(env = process.env) {
 function refusal(error) {
   const code = typeof error?.code === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(error.code) ? error.code
     : typeof error?.message === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(error.message) ? error.message : 'UI_STARTUP_FAILED';
-  const detail = configFile().isRefusal(error) ? ': ' + error.message : '';
-  return 'UI_STARTUP_REFUSED: ' + code + detail + '\n';
+  return 'UI_STARTUP_REFUSED: ' + code + '\n';
 }
 if (require.main === module) {
   Promise.resolve().then(() => main()).catch(error => { process.stderr.write(refusal(error)); process.exitCode = 78; });

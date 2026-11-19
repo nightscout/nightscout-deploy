@@ -85,7 +85,7 @@ function lifecycleFor (config) {
   if (!isDeepStrictEqual(Object.keys(expected).sort(), config.catalogues.map(row => row.kind).sort()) ||
       config.catalogues.some(row => !isDeepStrictEqual(row.candidate, expected[row.kind]))) throw fail('COMPOSE_OPERATOR_CATALOGUE_REFUSED');
   require('../../lib/storage/tenant-scope').setTenancyMode('multi');
-  return require('../../lib/tenant-lifecycle').createLifecycle({ catalogues: config.catalogues,...(config.nativeSelection?{nativeSelection:config.nativeSelection}:{}),...(config.nativeSelection?{currentConfiguration:async()=>({})}:{}) });
+  return require('../../lib/tenant-lifecycle').createLifecycle({ catalogues: config.catalogues,...(config.nativeSelection?{nativeSelection:config.nativeSelection}:{}) });
 }
 
 function tenantFor (config, tenant) {

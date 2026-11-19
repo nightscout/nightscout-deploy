@@ -48,7 +48,6 @@ case "$command" in
     check_image
     "${compose[@]}" --profile ops run --rm bootstrap
     "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 90 admin
-    "${compose[@]}" --profile ops run --rm --no-deps primer node deploy/multitenant/platform-verify.js
     "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 300 api realtime evaluator pgstream tenant-admin ui nginx
     "${compose[@]}" --profile ops run --rm --no-deps primer node deploy/multitenant/prime.js provision
     "${compose[@]}" --profile ops run --rm --no-deps bootstrap node deploy/multitenant/commission-restore.js

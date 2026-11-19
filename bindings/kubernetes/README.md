@@ -26,14 +26,14 @@ operator-supplied, verified registry references or another explicitly qualified 
 | API, realtime, evaluator, tenant-admin | api, tenant-admin: one Deployment per role, Recreate, one replica. evaluator, realtime: StatefulSets (slice = pod index). Private HTTP between roles |
 | Maintained pgstream producer | Independent one-replica Recreate Deployment, same binary command and private wire Secret; private evaluator intake Service selects the evaluator workload for the chosen profile |
 | PostgreSQL/wal2json | Explicit supplied image digest and the source streaming/connection settings; image entrypoint retained for initdb |
-| Source bootstrap | Explicit no-retry Job with a finite deadline; consumes seeded credentials and creates roles, schemas, Vault tokens and slot/publication configuration; role documents are rendered before apply |
+| Source bootstrap | Explicit no-retry Job with a finite deadline; consumes seeded credentials and creates roles, schemas, Vault tokens and slot/publication configuration; each role mounts its scoped credential Secret |
 | API Vault policy | Kubernetes-auth helper imports the source-created policy and adapts the supported tokenFile; projected audience-bound token feeds the native Vault Agent sidecar |
-| Admin | Source entrypoint and complete private source documents; only its copied ADMIN_HOSTNAME changes to the actual Pod IP; ClusterIP and operator-only NetworkPolicy |
+| Admin | Core admin entrypoint with mounted credentials and its Pod IP from the downward API, behind a ClusterIP and operator-only NetworkPolicy |
 | UI and edge | Source UI preload/command and byte-identical nginx asset; ClusterIP consumer entry |
 | Tenant provisioning | An independent lab Job provisions synthetic tenants through the private admin API. |
 
-Core constructs the tenant documents, credentials, application lifecycle state and authority.
-The binding projects only deployment addresses before the admin screens those documents.
+Core derives role configuration and authority from declared settings and installed catalogue grants.
+The binding supplies deployment addresses and scoped credential files.
 Deployments use Recreate, StatefulSets the ordinary rolling update, and no HPA is generated.
 Separate experiment namespaces have separate databases/Vault state.
 
@@ -69,11 +69,9 @@ The evaluator intake remains `evaluator:19913`. Private Services publish address
 readiness so lifecycle and intake readiness cannot deadlock startup. Core still checks its own
 storage admission on each contract.
 
-`ops/network-documents.cjs` removes socket selections and sets the existing core HTTP listener and
-peer URL keys. It updates the admin's private verification environments and the operator participant
-endpoints from the same addresses. It preserves role configurations, credentials, participant IDs,
-native generation and the producer wire. Only API receives the existing API Vault Agent and token
-sink. Other roles retain their source-specific token files; they receive no API Agent token.
+Each role receives its private HTTP listener and peer Service addresses in the Pod environment.
+The API receives the Vault Agent token sink at `/run/ns-vault/token`. Tenant-admin and admin
+read their own scoped token files directly from projected Secrets.
 
 Default deny ingress and directed policies admit the four roles and the operator to private role
 ports, edge/operator to consumer API/realtime ports, and only pgstream to stream intake. Public
@@ -81,8 +79,8 @@ Services and edge routes do not expose private listeners. Actual NetworkPolicy e
 a live negative connectivity check.
 
 Secrets flow into Jobs and roles, never out (decision `provisioning-secrets-in`).
-`scripts/secrets.sh seed` creates every credential before apply and renders every role document
-from them in the application image (`ops/render-documents.cjs`, which runs the deployment's
+`scripts/secrets.sh seed` creates the role credentials before apply
+in the application image (`ops/seed.cjs`, which runs the deployment's
 `credentials.js` and `render.js`). The provision Job only reads its mounted
 `ns-credentials-postgres` and `ns-credentials-vault` Secrets to create the PostgreSQL roles and the
 Vault tokens with the seeded ids. Vault's own unseal key and root token come from its

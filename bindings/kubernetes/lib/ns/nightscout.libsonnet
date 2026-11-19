@@ -1,6 +1,6 @@
 // Kubernetes binding of the multitenant Compose tree (../../compose/multitenant).
 //
-// Same image, same commands, same per-role private documents, same in-container paths. What
+// Same image, same commands, same scoped credentials, same in-container paths. What
 // changes is only the binding: Compose services become ordinary Kubernetes resources.
 //
 //   api, tenant-admin (Deployments) one replica each, Recreate; the api Pod carries the Vault
@@ -106,10 +106,8 @@
     local ca = { name: 'ns-ca', secret: { secretName: 'ns-ca', defaultMode: 292 } },
     local caMount = { name: 'ns-ca', mountPath: '/run/ns-ca', readOnly: true },
 
-    // Each role's private documents (Compose: ${NS_DEMO_STATE}/<role> mounted read-only at
-    // /run/ns-config). Secret volumes are symlinked and group-readable under fsGroup, and
-    // load-env.js refuses both, so an init step copies them into a memory-backed emptyDir as
-    // regular 0400 files owned by the runtime uid. Kubernetes waits for the Secret to exist.
+    // Serving roles mount Secrets directly. Only the standalone UI preloader
+    // needs its JSON files copied into a private memory-backed directory.
     local configVolumes(role) = [
       { name: 'secret-' + role, secret: { secretName: 'ns-config-' + role, defaultMode: 288 } },
       { name: 'config-' + role, emptyDir: { medium: 'Memory', sizeLimit: '1Mi' } },

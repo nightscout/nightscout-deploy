@@ -102,7 +102,7 @@ test('ordinary up and restart include the independent stream and omit the retire
       const stages = calls.trim().split('\n').map(line => line.split(' '));
       const index = name => stages.findIndex(args => args.includes(name));
       const serving = index('pgstream');
-      assert.ok(index('deploy/multitenant/platform-verify.js') >= 0 && index('deploy/multitenant/platform-verify.js') < serving);
+      assert.equal(index('deploy/multitenant/platform-verify.js'), -1);
       assert.ok(serving < index('provision') && index('provision') < index('prime'));
     }
     if(action==='roles-restart')assert.match(calls,/stop nginx ui tenant-admin pgstream evaluator realtime api admin/,'old stream stopped before restart');

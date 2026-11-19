@@ -94,7 +94,7 @@
     local routed = k > 1;
     { [key]: raw[key] for key in std.objectFields(raw) if key != 'networkPolicies' } + {
       // One API agent retains its existing policy/sink. Other roles use their
-      // existing role-specific private documents and receive no API Vault token.
+      // own role-specific credential Secrets.
       roleAuth: { serviceAccount: raw.roleTemplate.serviceAccount, agentConfig: raw.roleTemplate.agentConfig },
       components: {
         [role]: {

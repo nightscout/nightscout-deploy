@@ -101,9 +101,9 @@ describe('Compose ui startup refusal names its cause', function () {
     const marker = 'SYNTHETIC_UI_MARKER';
     const big = start(JSON.stringify({ version: 1, pad: marker + 'x'.repeat(1048576) }));
     assert.equal(big.status, 78);
-    assert.match(big.stderr, /^UI_STARTUP_REFUSED: CONFIG_FILE_TOO_LARGE: UI_PUBLIC_CONFIG is too large: \d+ bytes, over the limit of 1048576 bytes \(MULTITENANT_CONFIG_MAX_BYTES\)\n$/, 'UI_CAUSE_CODE_PRINTED');
+    assert.equal(big.stderr,'UI_STARTUP_REFUSED: UI_PUBLIC_CONFIG_TOO_LARGE\n');
     const bad = start('{"' + marker + '": ');
-    assert.equal(bad.stderr, 'UI_STARTUP_REFUSED: CONFIG_FILE_INVALID_JSON: UI_PUBLIC_CONFIG is not valid JSON\n');
+    assert.equal(bad.stderr,'UI_STARTUP_REFUSED: UI_PUBLIC_CONFIG_INVALID_JSON\n');
     for (const result of [big, bad]) assert.ok(!result.stderr.includes(marker));
   });
 
