@@ -47,7 +47,7 @@
         + (if std.member(['api', 'tenant-admin'], role) then [{ name: 'NS_VAULT_ADDR', value: 'https://vault:8200' }] else [])
         + (if agent then [{ name: 'NS_VAULT_TOKEN_FILE', value: '/run/ns-vault/token' }] else []);
       source + {
-        initContainers: if agent then [source.initContainers[1]] else [],
+        initContainers: if agent then [source.initContainers[0]] else [],
         containers: [x + {
           env: x.env + env + sliceEnv(role),
           ports: x.ports + [{ name: 'int-role', containerPort: $.ports[role] }],

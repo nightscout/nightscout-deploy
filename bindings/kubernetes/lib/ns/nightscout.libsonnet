@@ -114,38 +114,19 @@
       { name: 'secret-' + role, secret: { secretName: 'ns-config-' + role, defaultMode: 288 } },
       { name: 'config-' + role, emptyDir: { medium: 'Memory', sizeLimit: '1Mi' } },
     ],
-    // An emptyDir root is root-owned 3777 under fsGroup (measured 2026-11-10). Core refuses
-    // such a directory for the socket directory (lib/server/internal-api/transport.js: owner must
-    // be the process uid, no group or other bits), as Compose's prepare.js 0700 directories
-    // satisfy. So the init step creates a 0700 subdirectory `d` owned by uid 1000 in each volume
-    // and the role containers mount that subdirectory (subPath), never the volume root.
-    local installConfig(roles, ipc=false) = {
-      name: 'install-config',
-      image: c.images.app,
-      imagePullPolicy: 'IfNotPresent',
-      env: [{ name: 'NS_BIND_ADMIN_ADDRESS', valueFrom: { fieldRef: { fieldPath: 'status.podIP' } } }],
+    // The standalone UI reads a strict private env.json. The primer only
+    // reads its public origin settings and mounts its Secret directly.
+    local installUi = {
+      name: 'install-config', image: c.images.app, imagePullPolicy: 'IfNotPresent',
       command: ['node', '-e', |||
-        const fs=require('node:fs');process.umask(0o077);
-        if(fs.existsSync('/run/ns-ipc-volume'))fs.mkdirSync('/run/ns-ipc-volume/d',{recursive:true,mode:0o700});
-        for(const role of process.argv.slice(1)){
-          const dir='/run/ns-config/'+role+'/d';fs.mkdirSync(dir,{recursive:true,mode:0o700});
-          const input='/run/ns-secret/'+role;
-          const copy=(from,to)=>{
-            for(const name of fs.readdirSync(from).filter(n=>!n.startsWith('.'))){
-              const source=from+'/'+name,destination=to+'/'+name;
-              let bytes=fs.readFileSync(source);
-              if(role==='admin'&&from===input&&name==='env.json'){const env=JSON.parse(bytes);env.ADMIN_HOSTNAME=process.env.NS_BIND_ADMIN_ADDRESS;bytes=Buffer.from(JSON.stringify(env));}
-              fs.writeFileSync(destination,bytes,{mode:0o400,flag:'wx'});
-            }
-          };
-          copy(input,dir);
+        const fs=require('node:fs'),dir='/run/ns-config/ui/d';
+        fs.mkdirSync(dir,{recursive:true,mode:0o700});
+        for(const file of ['config.json','env.json']){
+          fs.writeFileSync(dir+'/'+file,fs.readFileSync('/run/ns-secret/ui/'+file),{mode:0o400});
         }
-      |||] + roles,
+      |||],
       securityContext: hardened,
-      volumeMounts: std.flattenArrays([
-        [{ name: 'secret-' + r, mountPath: '/run/ns-secret/' + r, readOnly: true }, { name: 'config-' + r, mountPath: '/run/ns-config/' + r }]
-        for r in roles
-      ]) + (if ipc then [{ name: 'ns-ipc', mountPath: '/run/ns-ipc-volume' }] else []),
+      volumeMounts: [{ name: 'secret-ui', mountPath: '/run/ns-secret/ui', readOnly: true }, { name: 'config-ui', mountPath: '/run/ns-config/ui' }],
     },
     local secretMount(role) = { name: 'secret-' + role, mountPath: '/run/ns-config', readOnly: true },
     local configMount(role) = { name: 'config-' + role, mountPath: '/run/ns-config', subPath: 'd', readOnly: true },
@@ -161,7 +142,6 @@
       securityContext: hardened,
       volumeMounts: [
         secretMount(role),
-        { name: 'ns-ipc', mountPath: '/run/ns-ipc', subPath: 'd' },
         caMount,
         tmpMount,
         { name: 'ns-vault', mountPath: '/run/ns-vault', readOnly: true },
@@ -343,7 +323,6 @@
       securityContext: podSecurity,
       terminationGracePeriodSeconds: c.terminationGraceSeconds,
       initContainers: [
-        installConfig(roleNames, ipc=true),
         // Native sidecar (restartPolicy Always): starts before the roles and the startup
         // probe holds them until the sink has a token (Compose: depends_on healthy).
         {
@@ -375,9 +354,8 @@
         // NetworkPolicy admits nothing to it.
         roleContainer('tenant-admin', [{ name: 'int-owner', containerPort: 1341 }]),
       ],
-      volumes: std.flattenArrays([configVolumes(r) for r in roleNames]) + [
+      volumes: [configVolumes(r)[0] for r in roleNames] + [
         // serve.internal sockets: pod-private, never shared with another Pod.
-        { name: 'ns-ipc', emptyDir: { medium: 'Memory', sizeLimit: '1Mi' } },
         { name: 'ns-vault', emptyDir: { medium: 'Memory', sizeLimit: '1Mi' } },
         {
           name: 'vault-token',
@@ -486,7 +464,7 @@
               automountServiceAccountToken: false,
               enableServiceLinks: false,
               securityContext: podSecurity,
-              initContainers: [installConfig(['ui'])],
+              initContainers: [installUi],
               containers: [{
                 name: 'ui',
                 image: c.images.app,
@@ -669,13 +647,13 @@
           template: { metadata: { labels: labels('operator') }, spec: {
             restartPolicy: 'Never', automountServiceAccountToken: false, enableServiceLinks: false,
             securityContext: podSecurity,
-            initContainers: [installConfig(['primer'])],
+
             containers: [{
               name: jobName, image: c.images.app, imagePullPolicy: 'IfNotPresent', securityContext: hardened,
               command: command,
-              volumeMounts: [{ name: 'config-primer', mountPath: '/run/ns-primer', subPath: 'd' }, tmpMount] + std.get(extra, 'mounts', []),
+              volumeMounts: [{ name: 'secret-primer', mountPath: '/run/ns-primer', readOnly: true }, tmpMount] + std.get(extra, 'mounts', []),
             } + std.get(extra, 'container', {})],
-            volumes: configVolumes('primer') + [tmp] + std.get(extra, 'volumes', []),
+            volumes: [configVolumes('primer')[0]] + [tmp] + std.get(extra, 'volumes', []),
           } },
         },
       },
@@ -817,7 +795,7 @@
         placement: c.placement,
         placementByWorkload: c.placementByWorkload,
         seed: { script: 'scripts/secrets.sh seed', credentials: ['ns-credentials-postgres', 'ns-credentials-vault'], mountedBy: ['provision'] },
-        results: { primer: { claim: if c.storage.mode == 'existing-claim' then c.storage.claims.primerResults else if c.storage.mode == 'dynamic' then 'primer-results' else null, file: 'tenants.json' } },
+        results: { primer: { claim: if c.storage.mode == 'existing-claim' then std.get(c.storage.claims, 'primerResults', null) else if c.storage.mode == 'dynamic' then 'primer-results' else null, file: 'tenants.json' } },
         order: ['seed role Secrets', 'apply', 'run optional lab client; its private results stay on its claim', 'observe correctness', 'delete only owned namespace and tokenreview binding'],
         workloads: {
           [v.metadata.name]: {

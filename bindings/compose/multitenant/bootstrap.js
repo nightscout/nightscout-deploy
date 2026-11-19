@@ -137,7 +137,7 @@ async function migrate(admin,pg,l,catalogues,fresh){
     for(const row of functions.rows)await admin.query('ALTER FUNCTION '+row.signature+' OWNER TO '+q(l.owner));
     if(fresh)await admin.query('ALTER SCHEMA '+q(namespace)+' OWNER TO '+q(l.owner));
   }
-  for(const sql of plan.grants(l))await admin.query(sql);
+  for(const sql of plan.grants(l,{nativeSelection:plan.nativeSelection(l.prefix)}))await admin.query(sql);
 }
 // Failure report: the stable code first (unchanged contract), then the underlying message and the
 // top stack frames so an uncoded refusal (for example a core config loader's size limit) is

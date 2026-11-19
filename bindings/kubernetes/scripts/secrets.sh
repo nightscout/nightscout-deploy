@@ -11,9 +11,7 @@
 # Creates ns-postgres-password, ns-vault-tls, ns-ca (CA signing key discarded),
 # ns-credentials-postgres and ns-credentials-vault (one PostgreSQL password per deployment role
 # and the Vault token ids; mounted only by the provision Job), and ns-config-<role> (each role's
-# documents, rendered in the application image with the network disabled from the same
-# credentials). Requires docker and the application image locally. NS_APPLICATION_TOPOLOGY must
-# match the rendered binding; the same NS_API_REPLICAS/NS_*_WORKERS settings as the binding apply.
+# credentials, scoped by role). Requires Docker and the application image locally.
 #
 # It refuses to replace existing Secrets. To reseed, delete the owned namespace and start again.
 set -euo pipefail
@@ -44,7 +42,7 @@ head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$work/postgres-password"
   rm -f ca.key ca.srl server.csr server.ext
 )
 
-# Role credentials and documents: rendered offline in the application image.
+# Prepare per-role credentials offline in the application image.
 mkdir -m 700 "$work/seed"
 docker run --rm --network none --read-only --tmpfs /tmp --user "$(id -u):$(id -g)" -w /opt/app \
   -v "$work/seed:/seed" -v "$here/ops:/run/ns-overlay:ro" \

@@ -91,13 +91,9 @@ async function execute(command, plan, env = process.env) {
   if (!['preflight', 'upgrade', 'rollback', 'activate'].includes(command)) throw fail('REVISION_USAGE');
   sourceIdentity(plan.source); sourceIdentity(plan.target);
   const library = plan.target.root;
-  const { createDeploymentOperations } = require(path.join(library, 'lib/tenant-operations/deployment'));
-  const source = admission(plan.source.root, library), target = admission(library);
-  const operations = createDeploymentOperations({ ...target, directory: plan.directory });
-  // Both source and target must pass the current reviewed source census before
-  // touching Docker, PostgreSQL, the backup directory or a progress marker.
-  operations.admission();
-  require(path.join(library, 'lib/tenant-operations/catalogues')).deploymentAdmission(source);
+  const upgrades = require(path.join(library, 'lib/tenant-operations/upgrade'));
+  const census = root => require(path.join(root, 'lib/tenant-operations/catalogues')).deploymentAdmission(admission(root)).catalogues;
+  const sourceCatalogues = census(plan.source.root), catalogues = census(library);
   if (command === 'preflight') return { state: 'source-and-target-admitted', serving: false };
   stopped(plan);
   const custody = coldBackup(plan);
@@ -116,10 +112,10 @@ async function execute(command, plan, env = process.env) {
     // restore with uncertain commit. Keep the original artifact and namespaces.
     beginOperation(plan.directory, command, plan, custody);
     let result;
-    if (command === 'upgrade') result = await operations.upgrade(connection, { migrate, source: { ...source, sourceCommit: plan.source.sourceCommit }, sourceCommit: plan.target.sourceCommit });
+    if (command === 'upgrade') result = await upgrades.upgrade(connection, { migrate, sourceCatalogues, catalogues, sourceCommit: plan.target.sourceCommit });
     else {
       const record = privateJson(path.join(plan.directory, 'upgrade-record.json'));
-      operations.checkRecord(record);
+      upgrades.assertUpgradeCompatible(record,catalogues);
       for (const catalogue of operations.admission().catalogues) await migrate('check', { namespace: catalogue.namespace, catalogue: catalogue.catalogue });
       const completeFile = path.join(plan.state, 'bootstrap/complete.json'), complete = privateJson(completeFile);
       if (complete.sourceCommit !== plan.source.sourceCommit || complete.deployCommit !== plan.source.deployCommit) throw fail('REVISION_BOOTSTRAP_BINDING_CHANGED');

@@ -94,7 +94,7 @@ function render ({ output, credentials, postgres, useAgent, sourceCommit }) {
   const apiOrigin = apis.length > 1 ? 'http://api-internal:1337' : 'http://api:1337';
   json(path.join(output, 'primer', 'config.json'), { version: 1, adminOrigin: 'http://admin:1342', apiOrigin, ownerConsumer: 'compose-owner' }, false);
   json(path.join(output, 'ops', 'config.json'), { version: 3, drainTimeoutMs: 10000,
-    apiOrigin, control: { namespace: l.namespaces.control, registry: { namespace: l.namespaces.registry } }, ...plan.lifecycle(l) }, false);
+    apiOrigin, nativeSelection: plan.nativeSelection(l.prefix).binding, control: { namespace: l.namespaces.control, registry: { namespace: l.namespaces.registry } }, ...plan.lifecycle(l) }, false);
   json(path.join(output, 'ops', 'env.json'), { NS_OPERATOR_PG: roleURLs.operator, NS_AUTH_AUDIT_PG: roleURLs.api, ...(sourceCommit ? { NS_SOURCE_COMMIT: sourceCommit } : {}) }, false);
   token(path.join(output, 'ops', 'vault-token'), tokens.api);
   return { state: 'credentials-rendered', roles: Object.values(services).flat().length };

@@ -77,10 +77,13 @@ function ordinaryAdmission(root,libraryRoot=root){
  const aliases={control:'lifecycle',rt_checkpoint:'checkpoint',eval_checkpoint:'evaluator_checkpoint',alarm:'alarm_suppression',outbox:'notification_outbox',display_settings:'tenant_settings'};
  for(const [key,candidate]of Object.entries(config.catalogues())){
   need(key!=='pool','PGSTREAM_REBOOTSTRAP_REVISION_PROFILE');if(key==='registry')continue;
-  const kind=aliases[key]||key,matches=found.filter(row=>common.canonical(row.candidate)===common.canonical(candidate));need(matches.length===1,'PGSTREAM_REBOOTSTRAP_REVISION_CATALOGUE');namespaces[kind]=layout.namespaces[key];
+  const kind=aliases[key]||key;
+  if(key==='control'){namespaces[kind]=layout.namespaces[key];continue;}
+  const matches=found.filter(row=>common.canonical(row.candidate)===common.canonical(candidate));need(matches.length===1,'PGSTREAM_REBOOTSTRAP_REVISION_CATALOGUE');namespaces[kind]=layout.namespaces[key];
   if(['alarm','outbox'].includes(key))extensions.push({kind,candidatePath:matches[0].file,candidateDigest:common.sha256(common.canonical(candidate)),tables:ops.createdTables(candidate)});else if(key!=='control')selection[kind]=matches[0].file;
  }
- return {root,namespaces,selection,extensions,instances:[{kind:'evaluator_checkpoint',of:'checkpoint'}]};
+ const native=config.nativeSelection?.(layout.prefix);
+ return {root,namespaces,selection,extensions,...(native?{nativeSelection:native,notificationBindings:[{namespace:layout.namespaces.outbox,consumer:require(path.join(root,'lib/server/serve/deployment-settings')).IDENTITY.realtimeConsumer}]}:{}),instances:[{kind:'evaluator_checkpoint',of:'checkpoint'}]};
 }
 async function run(p,{docker=platform(),routes}={}){
  plan(p);const envFile=p.environmentFile||path.join(p.deploymentDirectory,'.env'),env=Object.fromEntries(read(envFile).trim().split('\n').map(line=>{const at=line.indexOf('=');return [line.slice(0,at),line.slice(at+1)];}));

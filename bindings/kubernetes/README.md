@@ -187,3 +187,34 @@ Missing durable ownership,
 incomplete provisioning, or failed application admission remains a refusal. Kubernetes application
 and capacity evidence requires an admitted run and the existing write, storage, clinical, frame and
 authority oracles.
+
+### Restore a cold synthetic fixture
+
+For a storage-backed run, keep the four PVCs used by PostgreSQL, Vault, the provision Job
+and the primer Job together with the matching `ns-config-*`, `ns-credentials-*`,
+`ns-postgres-password`, `ns-ca` and `ns-vault-tls` Secrets. The primer Job runs both
+provision and DATA priming. Its claim contains private client credentials in `tenants.json`.
+The optional top-level `primerConcurrency` input defaults to 1.
+
+Quiesce every workload that can write these claims, terminate its Pods, then render
+`fixture.snapshots(namespace, snapshotClass, sourceClaims, snapshotNames)` from
+[`fixture.libsonnet`](lib/ns/fixture.libsonnet). Each map has the keys `postgres`, `vault`,
+`provisionState` and `primerResults`. Wait for all four VolumeSnapshots to report
+`status.readyToUse: true` before resuming the source. Keep the matching Secrets under the
+same access controls for the lifetime of the fixture.
+
+In the same namespace, render
+`fixture.claims(namespace, 'VolumeSnapshot', snapshotNames, targetNames, sizes, storageClass)`
+with fresh PVC names and the source capacities. A driver that supports direct PVC clones
+can instead use `'PersistentVolumeClaim'` with the cold source PVC names. Wait for binding
+according to the StorageClass, then run the ordinary provision Job and role startup with
+`storage: {mode: 'existing-claim', claims: targetNames}` and the original Secrets. Start
+with the same PostgreSQL major version, wal2json plugin and Vault storage configuration.
+Recreate a completed provision Job for this run. Keep the completed primer results
+as the workload driver's inputs. A fresh namespace requires its own securely supplied
+matching Secrets and accessible PVCs. The in-cluster Vault Kubernetes auth role must
+permit the target service account and namespace.
+
+Only use this path with operator-approved storage allocation. Existing-capacity disposable
+runs seed and prime through the run controller on each run. The binding never installs a CSI
+controller or creates snapshots during ordinary startup.

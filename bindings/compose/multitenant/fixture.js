@@ -41,12 +41,12 @@ function newDirectory (dir) {
   fs.mkdirSync(dir, { mode: 0o700 });
   return dir;
 }
-const image = env => env.NS_DEMO_IMAGE || process.env.NS_DEMO_IMAGE || 'nightscout-multitenant-demo:local';
+const image = env => process.env.NS_DEMO_IMAGE || env.NS_DEMO_IMAGE || 'nightscout-multitenant-demo:local';
 // One root helper container per copy: PostgreSQL and Vault data belong to their service users.
 // The archive is handed back to the invoking user; extraction keeps the recorded owners.
 function tar (helper, mounts, command) {
   const owner = process.getuid() + ':' + process.getgid();
-  docker(['run', '--rm', '--network', 'none', '--user', '0', '--entrypoint', 'sh', ...mounts.flatMap(m => ['-v', m]), helper, '-c', command.replaceAll('@OWNER@', owner)]);
+  docker(['run', '--rm', '--network', 'none', '--user', '0', '--entrypoint', 'sh', ...mounts.flatMap(m => ['-v', m]), helper, '-c', 'umask 077; ' + command.replaceAll('@OWNER@', owner)]);
 }
 
 function snapshot (dir, env = parseEnv(fs.readFileSync(path.join(base, '.env'), 'utf8'))) {
@@ -93,6 +93,8 @@ function restore (dir, args) {
   const root = path.resolve(base, '../..'), build = require('./build');
   const source = build.assertCleanSource(root), deploy = build.overlay(root)?.deployCommit || source;
   const next = retarget(env, selected, { source, deploy }), project = next.NS_DEMO_PROJECT;
+  if (docker(['ps','-aq','--filter','label=com.docker.compose.project='+project]) ||
+      docker(['volume','ls','-q','--filter','label=com.docker.compose.project='+project])) fail('FIXTURE_PROJECT_NOT_FRESH');
   for (const volume of VOLUMES) {
     let exists = true;
     try { docker(['volume', 'inspect', project + '_' + volume]); } catch { exists = false; }

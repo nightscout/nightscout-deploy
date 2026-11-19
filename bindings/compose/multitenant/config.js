@@ -10,7 +10,12 @@ function quote(name) {
   if (typeof name !== 'string' || !/^[a-z][a-z0-9_]{0,62}$/.test(name) || name.startsWith('pg_')) throw new TypeError('Explicit deployment SQL identifier required');
   return '"' + name + '"';
 }
-function catalogues({nativeSelection}={}) {
+// Ordinary streaming and its lifetime roles use the same lifecycle catalogue.
+function nativeSelection(prefix = 'nsdemo') {
+  const settings = require('../../lib/server/serve/deployment-settings');
+  return settings.nativeSelection(settings.layout({ NS_PG_PREFIX: prefix }));
+}
+function catalogues() {
   require('./pgstream').enabled();
   const domains = require('../../lib/server/serve/postgres-domains');
   const successors = require('../../lib/server/tenant-socket-order-port').catalogues;
@@ -19,7 +24,7 @@ function catalogues({nativeSelection}={}) {
     legacy:require('../../lib/secrets/legacy-credentials-candidate.json'), access:require('../../lib/tenant-authorization/access-candidate.json'),
     clock:require('../../migrations/candidates/postgres-write-clock-v1.json'), rt_checkpoint:require('../../migrations/candidates/postgres-realtime-output-v2.json'),
     eval_checkpoint:require('../../migrations/candidates/postgres-evaluator-work-v2.json'), alarm:require('../../migrations/candidates/postgres-alarm-suppression-v1.json'),
-    outbox:require('../../lib/tenant-notifications/postgres-candidate.json'),control:nativeSelection?require('../../lib/tenant-lifecycle/native-selection').catalogue(nativeSelection):require('../../lib/tenant-lifecycle/postgres-candidate.json'),
+    outbox:require('../../lib/tenant-notifications/postgres-candidate.json'),control:require('../../lib/tenant-lifecycle/native-selection').catalogue(nativeSelection()),
     registry:require('../../lib/tenant-registry/postgres-candidate.json'),
     display_settings:require('../../lib/tenant-settings/postgres-candidate.json'),
     operator_policy:require('../../lib/operator-policy/postgres-candidate.json'),
@@ -50,4 +55,4 @@ function lifecycle(l) {
   return {namespaces:Object.fromEntries(Object.entries(l.namespaces).filter(([name])=>!['control','registry','pool'].includes(name)).map(([name,namespace])=>[aliases[name]||name,namespace])),
     catalogues:Object.entries(tables).map(([name,tables])=>({kind:aliases[name]||name,candidate:selected[name],tables,secrets:name==='secrets'?['secret_records']:[]}))};
 }
-module.exports={A,B,subject,tenantCount,tenantIds,tenantAlias,clinical,ordered,serviceRoles,quote,catalogues,layout,insertionGrants,grants,lifecycle};
+module.exports={A,B,subject,tenantCount,tenantIds,tenantAlias,clinical,ordered,serviceRoles,quote,nativeSelection,catalogues,layout,insertionGrants,grants,lifecycle};

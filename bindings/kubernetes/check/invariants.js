@@ -195,7 +195,7 @@ function checks (all, inventory, composeDir, envMain) {
       const hosts = workloads.flatMap(w => (podSpec(w).containers || []).filter(c => c.name === role).map(c => [w, c]));
       if (!hosts.length) fail('no container named ' + role);
       for (const [w, c] of hosts) {
-        if (c.readinessProbe?.httpGet?.path !== '/healthz/ready' || c.startupProbe?.httpGet?.path !== '/healthz/ready' || c.livenessProbe?.httpGet?.path !== '/healthz/live') fail(id(w) + ' container ' + role + ' must probe /healthz/ready (startup, readiness) and /healthz/live (liveness)');
+        if (c.readinessProbe?.httpGet?.path !== '/healthz/ready' || c.startupProbe?.httpGet?.path !== '/healthz/isolation' || c.livenessProbe?.httpGet?.path !== '/healthz/live') fail(id(w) + ' container ' + role + ' must probe /healthz/isolation (startup), /healthz/ready (readiness) and /healthz/live (liveness)');
         const p = c.startupProbe || {};
         if ((p.periodSeconds || 10) * (p.failureThreshold || 3) < 900) fail(id(w) + ' container ' + role + ' startupProbe must allow at least 900 s (Compose start_period)');
       }
@@ -312,8 +312,11 @@ function checks (all, inventory, composeDir, envMain) {
     if (sqlPeers.includes('operator')) fail('operator network policy must not admit direct PostgreSQL traffic');
     if (!sqlPeers.includes('ui'))
       fail('UI registry identity needs scoped PostgreSQL ingress');
-    const installers=workloads.flatMap(w=>(podSpec(w).initContainers||[]).filter(c=>c.name==='install-config'));
-    if(installers.some(c=>!JSON.stringify(c.command).includes("!n.startsWith('.')")))fail('installer must copy all source documents including extensionless token files');
+    for(const role of ['api','realtime','evaluator','tenant-admin','admin']){
+      const spec=podSpec(workloads.find(w=>w.metadata.name===role));
+      const container=spec.containers.find(c=>c.name===role);
+      if(!container.volumeMounts.some(v=>v.name==='secret-'+role&&v.mountPath==='/run/ns-config'&&v.readOnly))fail(role+' needs its projected Secret');
+    }
   });
 
   return results;

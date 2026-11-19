@@ -41,116 +41,16 @@ node check-compose.js
 
 ### Patch a seeded fixture
 
-The stopped-seed patch path (`./demo.sh patch`, `reopen.js`) pinned the database's stream identity
-and is retired with that pin (decision `stream-source-identity-in-data`). `./demo.sh up --stopped-seed`
-now refuses its arguments. A replacement uses the ordinary one-up flow on the retained volumes.
-
-Overlaid on a core checkout by nightscout-deploy's `tools/compose-overlay.sh`,
-this directory carries a marker (`.overlay.json`) naming the nightscout-deploy
-commit it came from. Preparation and build then check core HEAD for every other
-build input and that commit for this directory, byte for byte (only `.env`,
-`.state` and the marker are left out); any other difference is still refused as
-`BUILD_INPUTS_DIRTY`. The image is built from the two commits and labelled with
-both (`org.opencontainers.image.revision`, `org.nightscout.deploy.revision`).
-
-`prepare` seeds every credential before the first start (`credentials.js`: one PostgreSQL password
-per role and the Vault token ids, under the private state's `credentials/`). `up` is one apply: the
-one-shot `bootstrap` service renders every role document from those credentials (`render.js`), then
-creates the schemas, roles, grants, Vault tokens and pgstream capture metadata from the same
-credentials, and every role waits for it to complete (decision `provisioning-secrets-in`). A
-repeat `up` renders again and finds the database already provisioned. `./demo.sh bootstrap` runs
-the one-shot step alone. Run `./demo.sh prime` to populate the lab.
-The `demo` command also runs this step before the two-tenant demonstration. The lab client provisions synthetic
-tenants through admin. A separate commissioning step grants restore access, then the client creates
-synthetic DATA subjects and samples.
-The primer has no PostgreSQL or Vault credential. `commission-restore.js` is a
-separate private DDL-operator step: it provisions current role-OID restore authority
-only for active synthetic seed tenants, refuses existing revocations, and grants
-no serving identity authority to modify that relation. The admin service composes
-ownership operations and durable connector-source configuration on separate
-database identities. Connector definitions contain secret references, never
-plaintext endpoint credentials. The private operator resolves a requested tenant’s current lock key from PostgreSQL. The registry-backed operator format requires an active grant for that tenant and role for export, restore, and recovery. The two-tenant lab demonstration selects its synthetic clients independently.
-The separate pgstream service owns capture through its registered stream login.
-The platform restarts that worker independently; its wire credentials are mounted
-only in the pgstream container. Evaluators accept the private stream at their
-admitted endpoints, commit durable evaluation work and hand completed output to realtime
-over the private service boundary. Clinical reads stay on the evaluator's
-registered storage connection; realtime reads typed completed output and current
-presentation/control metadata. Partial setup is refused; source
-and deployment revision changes require fresh synthetic state.
-
-Each native `run` invocation can wait for its explicitly configured receiver
-transport before opening a health source pool, initializing or consuming WAL.
-The generated configuration selects `pgstream.startupTransport` with
-`timeoutMs: 300000` and `retryIntervalMs: 50`. These positive integer settings are
-overridable in a newly prepared configuration. They produce the separate
-`target.webhooks.startup_transport` wire document with the canonical ordered
-receiver roster. An absent option preserves the previous native startup path.
-
-The wait requires every selected receiver to answer GET `/pgstream/ready` with
-204. This checks HTTP listener and checkpoint-store ownership; source admission,
-schema verification, clinical completion and whole-role health follow their
-existing checks. Only typed dial connection refusal retries within the selected
-startup budget. Other HTTP/network refusals and cancellation stop startup. After
-success, the startup wait ends; delivery retains its existing strict retry and
-checkpoint behavior. Startup, notifier acknowledgment, clinical and controller
-convergence clocks remain separate. A future controller must allow the selected
-startup and schema/acknowledgment work plus its stability observation within the
-remaining outer work and cleanup windows. Existing prepared runs remain frozen.
-
-Serving roles report readiness on their private listener (`/healthz/ready`; Compose runs
-`nightscout healthcheck --endpoint ready --socket /run/ns-ipc/<role>.sock`). Serving roles restart
-on failure (`NS_COMPOSE_RESTART`, default `on-failure`; tests set `no` to hold a role down).
-Realtime instances receive their slice as `NS_SLICE_ORDINAL` and `NS_SLICE_COUNT`. Evaluator
-K>1 is not supported.
-
-nginx waits only for the services it routes to, including each API instance.
-An unhealthy evaluator or tenant-admin does not keep ingress down. Preparation
-renders its read-only configuration from `nginx.compose.conf`, retaining Docker
-DNS re-resolution and the selected per-client-IP budgets. `check-compose.js`
-checks the template, private listener exposure and readiness dependencies.
-
-A failed bootstrap prints one JSON line on stderr: the stable `error` code, the
-underlying `detail` message and the top stack frames (`at`). Connection-string
-credentials, password clauses, Vault tokens, JWT-shaped strings and long hex
-runs are redacted from both. Generated role configurations and environments use compact JSON. The optional
-`NS_BOOTSTRAP_CONFIG_MAX_BYTES` (off when empty; 65,536 to 67,108,864) is passed
-by Compose to every role container, and to the ownership overlay's admin, as
-core's `MULTITENANT_CONFIG_MAX_BYTES`, and `render.js` validates the files it
-writes against the same value. It never enters `env.json`. `load-env.js` takes its
-bound on `env.json` from core's reader (`lib/server/serve/config-file.js`), and
-keeps the fixed 1 MiB bound with a core that has no such module.
-
-The synthetic seed count (`NS_DEMO_TENANTS`) is any positive integer; there is no
-fixed tenant ceiling (limits come from measurement). It is provisioning input. Runtime roles read tenant membership
-and keys from the registry, not a copied tenant list. Realtime has no process-wide
-socket cap; the edge budgets described below govern new handshakes and per-IP
-connection/request concurrency.
-
-The default public binding is `127.0.0.1:18080`. Add local name resolution for
-the synthetic aliases declared in the generated public UI config, then use that
-hostname in the browser. The two aliases select separate tenants at the same
-origin port. Read the generated private operator environment only when you need
-the synthetic browser token; keep it out of shell history, screenshots and logs.
-This is a legacy subject credential. The stock browser and the restore-demo
-client exchange it through `GET /api/v2/authorization/request/:accessToken`,
-then send the returned JWT as the API3 Bearer credential. A raw legacy token
-sent directly as API3 Bearer is refused. The exchange path contains a credential;
-keep request URLs and transport errors out of logs.
-
-To use an **already configured** dummy interface instead:
-
-```bash
-./demo.sh prepare --bind 169.254.1.1 --port 18080
-```
-
-Preparation verifies that the address exists; it never changes interfaces or
-routes. Choose this before initial preparation. The directory and `.env` must
-not already exist. nginx is the only published service. It joins an ordinary
-edge bridge for host publication and the internal backend for its upstreams.
-Every other service joins only the backend. Container loopback is
-private to that container; other services communicate over the internal Docker
-network or the fixed private Unix socket paths.
+Seed a physical fixture once. After `./demo.sh up` and `NS_DEMO_TENANTS=8 ./demo.sh prime`,
+`./demo.sh snapshot /absolute/new-fixture` stops the prepared project and copies the PostgreSQL
+and Vault volumes, private state, TLS and primer credentials together. Keep the directory private.
+From a clean overlay for the target commits, run
+`./demo.sh restore-fixture /absolute/new-fixture --project new-lab --state /absolute/new-state --port 18081`.
+Select the target image with `NS_DEMO_IMAGE` and run `./demo.sh up`. Bootstrap unseals Vault,
+applies ordinary outstanding migrations and role grants; health checks govern startup. Use the
+same compatible PostgreSQL and Vault storage versions. The restored DATA credentials are in
+`primer/tenants.json` inside the new state directory. Commission restore authority only for
+the explicit recovery drill or `./demo.sh demo`.
 
 ## Bounded lab priming
 
