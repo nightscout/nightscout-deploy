@@ -192,10 +192,11 @@ function checks (all, inventory, composeDir, envMain) {
   run('role-probes', fail => {
     // Core health endpoints on the role's private listener; startup allows the 900 s warm budget.
     for (const role of ['api', 'realtime', 'evaluator', 'tenant-admin']) {
+      const startupPath = role === 'tenant-admin' ? '/healthz/ready' : '/healthz/isolation';
       const hosts = workloads.flatMap(w => (podSpec(w).containers || []).filter(c => c.name === role).map(c => [w, c]));
       if (!hosts.length) fail('no container named ' + role);
       for (const [w, c] of hosts) {
-        if (c.readinessProbe?.httpGet?.path !== '/healthz/ready' || c.startupProbe?.httpGet?.path !== '/healthz/isolation' || c.livenessProbe?.httpGet?.path !== '/healthz/live') fail(id(w) + ' container ' + role + ' must probe /healthz/isolation (startup), /healthz/ready (readiness) and /healthz/live (liveness)');
+        if (c.readinessProbe?.httpGet?.path !== '/healthz/ready' || c.startupProbe?.httpGet?.path !== startupPath || c.livenessProbe?.httpGet?.path !== '/healthz/live') fail(id(w) + ' container ' + role + ' must probe ' + startupPath + ' (startup), /healthz/ready (readiness) and /healthz/live (liveness)');
         const p = c.startupProbe || {};
         if ((p.periodSeconds || 10) * (p.failureThreshold || 3) < 900) fail(id(w) + ' container ' + role + ' startupProbe must allow at least 900 s (Compose start_period)');
       }

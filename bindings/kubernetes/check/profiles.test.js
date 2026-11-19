@@ -32,7 +32,8 @@ test('separated roles start without a tenant Job gate and have independent probe
   for (const [role, component] of Object.entries(result.value.components)) {
     const pod = (component.deployment || component.statefulset).spec.template.spec;
     const actor = pod.containers.find(c => c.name === role);
-    assert.deepEqual(actor.startupProbe.httpGet, { path: '/healthz/isolation', port: 'int-role' });
+    const startupPath = role === 'tenant-admin' ? '/healthz/ready' : '/healthz/isolation';
+    assert.deepEqual(actor.startupProbe.httpGet, { path: startupPath, port: 'int-role' }, role);
     assert.deepEqual(actor.readinessProbe.httpGet, { path: '/healthz/ready', port: 'int-role' });
     assert.deepEqual(actor.livenessProbe.httpGet, { path: '/healthz/live', port: 'int-role' });
     assert.ok(!pod.initContainers.some(c => c.name === 'wait-for-jobs'));

@@ -53,7 +53,8 @@
           ports: x.ports + [{ name: 'int-role', containerPort: $.ports[role] }],
           // Core health endpoints on the role's private listener (lib/server/serve/role-health.js).
           // Startup budget 5 s x 180 = 900 s (Compose start_period) for a long tenant warm.
-          startupProbe: { httpGet: { path: '/healthz/isolation', port: 'int-role' }, periodSeconds: 5, timeoutSeconds: 3, failureThreshold: 180 },
+          // tenant-admin has its own boot checks and no serving-role isolation catalogue.
+          startupProbe: { httpGet: { path: if role == 'tenant-admin' then '/healthz/ready' else '/healthz/isolation', port: 'int-role' }, periodSeconds: 5, timeoutSeconds: 3, failureThreshold: 180 },
           readinessProbe: { httpGet: { path: '/healthz/ready', port: 'int-role' }, periodSeconds: 2, timeoutSeconds: 3, failureThreshold: 30 },
           // Process liveness only: /healthz/live answers while the datastore is down; a role that
           // cannot recover the datastore within its bound exits on its own (datastore-loss-recover-in-place).
