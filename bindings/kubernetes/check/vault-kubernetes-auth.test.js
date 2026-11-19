@@ -49,6 +49,22 @@ test('binds the deployment role to the cohort service account with the api polic
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('a restored copy from another namespace rebinds the role to this namespace', async () => {
+  const dir = state();
+  fakeVault();
+  await provision(options(dir));
+  const calls = fakeVault();
+  const moved = input({ NS_VAULT_K8S_AUTH: '1', NS_BOOTSTRAP_OUTPUT: dir, NS_VAULT_K8S_NAMESPACE: 'nightscout-restored',
+    NS_VAULT_K8S_SERVICE_ACCOUNT: 'ns-cohort', NS_VAULT_K8S_AUDIENCE: 'vault', VAULT_ADDR: 'https://vault:8200' });
+  assert.strictEqual((await provision(moved)).state, 'vault-agent-rebound');
+  const role = calls.find(c => c.resource === 'auth/kubernetes/role/nsdemo_vault_agent').body;
+  assert.deepStrictEqual(role.bound_service_account_namespaces, ['nightscout-restored']);
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(dir, 'vault-agent/complete.json'), 'utf8')).namespace, 'nightscout-restored');
+  assert.strictEqual(fs.statSync(path.join(dir, 'vault-agent/complete.json')).mode & 0o777, 0o600);
+  assert.deepStrictEqual(await provision(moved), { state: 'existing-vault-agent-provisioned' });
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('a missing api policy refuses before any auth change', async () => {
   const dir = state(), calls = fakeVault({ missingPolicy: true });
   await assert.rejects(provision(options(dir)), { code: 'VAULT_K8S_AUTH_VAULT_REFUSED' });

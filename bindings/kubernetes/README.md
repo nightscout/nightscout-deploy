@@ -211,9 +211,19 @@ according to the StorageClass, then run the ordinary provision Job and role star
 `storage: {mode: 'existing-claim', claims: targetNames}` and the original Secrets. Start
 with the same PostgreSQL major version, wal2json plugin and Vault storage configuration.
 Recreate a completed provision Job for this run. Keep the completed primer results
-as the workload driver's inputs. A fresh namespace requires its own securely supplied
-matching Secrets and accessible PVCs. The in-cluster Vault Kubernetes auth role must
-permit the target service account and namespace.
+as the workload driver's inputs.
+
+A VolumeSnapshot and a claim's `dataSource` are namespaced. To restore into a fresh
+namespace, record each ready snapshot's `status.snapshotHandle` from its
+VolumeSnapshotContent and set that content's `deletionPolicy` to `Retain` before the source
+namespace is deleted. In the new namespace, create the original Secrets, then render
+`fixture.imported(namespace, driver, snapshotClass, handles, snapshotNames, labels)`: one
+cluster-scoped VolumeSnapshotContent (`Retain`) and one VolumeSnapshot per part. Then render
+`fixture.claims(...)` from those snapshot names. Delete the run's contents by label with the
+namespace; the provider snapshots remain until the fixture owner deletes them. The provision
+Job's `vault-kubernetes-auth` step rebinds the Vault Kubernetes auth role when the copied
+record names another namespace. `fixture.volumes(...)` renders the empty claims for the run
+that seeds a fixture.
 
 Only use this path with operator-approved storage allocation. Existing-capacity disposable
 runs seed and prime through the run controller on each run. The binding never installs a CSI

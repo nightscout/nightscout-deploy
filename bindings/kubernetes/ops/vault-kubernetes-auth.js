@@ -44,7 +44,10 @@ async function provision ({ vault, output, ttl, maxTtl, namespace, serviceAccoun
   const bootstrapDir = path.join(output, 'bootstrap'), agentDir = path.join(output, 'vault-agent');
   if (!fs.existsSync(path.join(bootstrapDir, 'complete.json'))) throw fail('IMPORTED_BOOTSTRAP_INCOMPLETE');
   const completeFile = path.join(agentDir, 'complete.json');
-  if (fs.existsSync(completeFile)) return { state: 'existing-vault-agent-provisioned' };
+  // A restored fixture copy carries the source namespace's binding; rebind it to this one.
+  const prior = fs.existsSync(completeFile) ? readPrivateJson(completeFile) : null;
+  if (prior && prior.namespace === namespace && prior.serviceAccount === serviceAccount && prior.audience === audience &&
+      prior.tokenTtl === ttl && prior.tokenMaxTtl === maxTtl) return { state: 'existing-vault-agent-provisioned' };
   const rootToken = readPrivateJson(path.join(bootstrapDir, 'vault-init.json')).root_token;
   const layout = readPrivateJson(path.join(bootstrapDir, 'layout.json'));
   if (typeof rootToken !== 'string' || !rootToken || typeof layout.prefix !== 'string') throw fail('IMPORTED_BOOTSTRAP_STATE_INVALID');
@@ -72,8 +75,8 @@ async function provision ({ vault, output, ttl, maxTtl, namespace, serviceAccoun
     audience, token_policies: [policyName], token_no_default_policy: true, token_type: 'service', token_ttl: ttl, token_max_ttl: maxTtl });
   fs.mkdirSync(agentDir, { recursive: true, mode: 0o700 });
   writePrivate(completeFile, JSON.stringify({ version: 1, method: 'kubernetes', role: roleName, policy: policyName, serviceAccount, namespace, audience,
-    tokenTtl: ttl, tokenMaxTtl: maxTtl, sink: SINK, mode: 'registry' }, null, 2) + '\n');
-  return { state: 'vault-agent-provisioned', method: 'kubernetes', role: roleName, policy: policyName, sink: SINK };
+    tokenTtl: ttl, tokenMaxTtl: maxTtl, sink: SINK, mode: 'registry' }, null, 2) + '\n', { flag: prior ? 'w' : 'wx' });
+  return { state: prior ? 'vault-agent-rebound' : 'vault-agent-provisioned', method: 'kubernetes', role: roleName, policy: policyName, sink: SINK };
 }
 
 if (require.main === module) {

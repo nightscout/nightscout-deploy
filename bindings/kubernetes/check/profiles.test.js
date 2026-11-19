@@ -121,3 +121,35 @@ test('bootstrap resolves the sealed Vault separately from the serving address', 
   assert.equal(new URL(env.NS_BOOTSTRAP_VAULT_ADDR).hostname, vault.bootstrapService.metadata.name);
   assert.equal(new URL(env.VAULT_ADDR).hostname, vault.service.metadata.name);
 });
+
+test('fixture copies restore into a fresh namespace through statically bound snapshot handles', () => {
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ns-k8s-fixture-'));
+  try{
+    const parts=['postgres','vault','provisionState','primerResults'];
+    const names=Object.fromEntries(parts.map(p=>[p,'fixture-'+p.toLowerCase()]));
+    const handles=Object.fromEntries(parts.map(p=>[p,'synthetic-handle-'+p]));
+    const sizes=Object.fromEntries(parts.map(p=>[p,'1Gi']));
+    const labels={'nightscout.org/run-id':'synthetic-run'};
+    fs.writeFileSync(path.join(dir,'jsonnetfile.json'),'{"version":1,"dependencies":[],"legacyImports":true}');
+    const file=path.join(dir,'f.jsonnet');
+    fs.writeFileSync(file,`local f=import ${JSON.stringify(path.join(root,'lib/ns/fixture.libsonnet'))};
+{imported:f.imported('ns-synth-b','dobs.csi.digitalocean.com','do-block-storage',${JSON.stringify(handles)},${JSON.stringify(names)},${JSON.stringify(labels)}),
+ claims:f.claims('ns-synth-b','VolumeSnapshot',${JSON.stringify(names)},${JSON.stringify(names)},${JSON.stringify(sizes)},'do-block-storage',${JSON.stringify(labels)}),
+ seed:f.volumes('ns-synth-a',${JSON.stringify(names)},${JSON.stringify(sizes)},'do-block-storage',${JSON.stringify(labels)})}`);
+    const r=spawnSync('tk',['eval',file],{encoding:'utf8'});
+    assert.equal(r.status,0,r.stderr);
+    const v=JSON.parse(r.stdout);
+    for(const p of parts){
+      const [content,snapshot]=v.imported[p];
+      assert.equal(content.kind,'VolumeSnapshotContent');assert.equal(content.metadata.namespace,undefined);
+      assert.equal(content.spec.deletionPolicy,'Retain');assert.equal(content.spec.source.snapshotHandle,handles[p]);
+      assert.deepEqual(content.spec.volumeSnapshotRef,{name:names[p],namespace:'ns-synth-b'});
+      assert.equal(snapshot.spec.source.volumeSnapshotContentName,content.metadata.name);
+      assert.deepEqual(content.metadata.labels,labels);assert.deepEqual(snapshot.metadata.labels,labels);
+      const claim=v.claims[p];
+      assert.deepEqual(claim.spec.dataSource,{kind:'VolumeSnapshot',name:names[p],apiGroup:'snapshot.storage.k8s.io'});
+      assert.equal(claim.metadata.namespace,'ns-synth-b');
+      assert.equal(v.seed[p].spec.dataSource,undefined);assert.equal(v.seed[p].metadata.name,names[p]);
+    }
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
