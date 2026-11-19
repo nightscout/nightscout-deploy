@@ -61,8 +61,9 @@ function checkImage () {
   if (labels?.['org.opencontainers.image.revision'] !== source) throw new Error('BUILT_SOURCE_COMMIT_CHANGED');
   if (marker && labels?.['org.nightscout.deploy.revision'] !== marker.deployCommit) throw new Error('BUILT_DEPLOY_COMMIT_CHANGED');
 }
-function build () {
-  const {source, config, marker} = configuration();
+function build (tag) {
+  if (tag && !/^[a-z0-9][a-z0-9._/-]*:[a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}$/.test(tag)) throw new Error('BUILD_LOCAL_TAG_REQUIRED');
+  const { source, config, marker } = tag ? { source: assertCleanSource(ROOT), marker: overlay(ROOT) } : configuration();
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'ns-compose-build-'));
   try {
     const context = path.join(temporary, 'context'); fs.mkdirSync(context);
@@ -78,13 +79,14 @@ function build () {
       labels.push('--label', 'org.nightscout.deploy.revision=' + marker.deployCommit);
     }
     execFileSync('docker', ['build', '--pull=false', '--build-arg', 'NS_SOURCE_COMMIT=' + source, '--build-arg', 'NS_DEPLOY_COMMIT=' + (marker?.deployCommit || source),
-      ...labels, '-t', config.services.api.image,
+      ...labels, '-t', tag || config.services.api.image,
       '-f', 'deploy/multitenant/Dockerfile', '.'], {cwd: context, stdio: 'inherit', timeout: 1200000});
   } finally { fs.rmSync(temporary, {recursive: true, force: true}); }
 }
 if (require.main === module) {
   try {
     if (process.argv.length === 3 && process.argv[2] === '--check-image') checkImage();
+    else if (process.argv.length === 4 && process.argv[2] === '--image') build(process.argv[3]);
     else if (process.argv.length === 2) build();
     else throw new Error('COMPOSE_BUILD_USAGE');
   } catch (error) {

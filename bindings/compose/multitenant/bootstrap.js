@@ -39,7 +39,7 @@ function writePrivate(filename,value,{uid,gid}={},{compact=false}={}) {
   fs.writeFileSync(filename,(compact?JSON.stringify(value):JSON.stringify(value,null,2))+'\n',{mode:0o600,flag:'wx'});
   if(uid!==undefined){fs.chownSync(path.dirname(filename),uid,gid);fs.chownSync(filename,uid,gid);}
 }
-async function bootstrap(options) {
+async function bootstrap(options, patchArgs) {
   require('./pgstream').enabled();
   const workers=require('./evaluator-workers'),evaluatorWorkers=workers.selection();
   if(evaluatorWorkers)workers.assertSeed(evaluatorWorkers);
@@ -52,6 +52,8 @@ async function bootstrap(options) {
     if(!response.ok){await response.body?.cancel();throw fail('BOOTSTRAP_VAULT_REFUSED');}
     return response.status===204?{}:response.json();
   }
+  if (patchArgs && (!['migrate','finish'].includes(patchArgs[0]) || patchArgs.length !== 3 ||
+      !patchArgs.slice(1).every(value => /^[a-f0-9]{40}$/.test(value)) || !fs.existsSync(completeFile) || !fs.existsSync(initFile))) throw fail('SEED_PATCH_COMPLETED_FIXTURE_REQUIRED');
   let initialization;
   const status=await request('sys/init');
   if(!status.initialized){
@@ -66,6 +68,10 @@ async function bootstrap(options) {
   if(seal.sealed){const unsealed=await request('sys/unseal',{key:initialization.keys_base64[0]});if(unsealed.sealed)throw fail('BOOTSTRAP_VAULT_UNSEAL_REFUSED');}
   if(fs.existsSync(completeFile)){
     const complete=JSON.parse(fs.readFileSync(completeFile,'utf8'));
+    if (patchArgs) {
+      if (complete.evaluatorWorkers !== evaluatorWorkers?.workers) throw fail('BOOTSTRAP_EVALUATOR_ROSTER_CHANGED_RECREATE_DEMO');
+      return require('./patch-seed').patch(options, complete, patchArgs.slice(1), patchArgs[0] === 'finish');
+    }
     if(complete.version!==2||complete.sourceCommit!==sourceCommit||complete.deployCommit!==deployCommit)throw fail('BOOTSTRAP_SOURCE_CHANGED_RECREATE_DEMO');
     if(complete.evaluatorWorkers!==evaluatorWorkers?.workers)throw fail('BOOTSTRAP_EVALUATOR_ROSTER_CHANGED_RECREATE_DEMO');
     return {state:'existing-demo-unsealed',sourceCommit};
@@ -138,5 +144,5 @@ function report(error){
   if(error?.cause)out.cause=redact(error.cause?.message??String(error.cause));
   return out;
 }
-if(require.main===module){Promise.resolve().then(()=>bootstrap(input())).then(result=>process.stdout.write(JSON.stringify(result)+'\n')).catch(error=>{process.stderr.write(JSON.stringify(report(error))+'\n');process.exitCode=1;});}
+if(require.main===module){Promise.resolve().then(()=>bootstrap(input(),process.argv.length>2?process.argv.slice(2):undefined)).then(result=>process.stdout.write(JSON.stringify(result)+'\n')).catch(error=>{process.stderr.write(JSON.stringify(report(error))+'\n');process.exitCode=1;});}
 module.exports={input,writePrivate,bootstrap,redact,report};
