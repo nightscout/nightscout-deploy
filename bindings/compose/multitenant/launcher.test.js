@@ -22,17 +22,11 @@ test('selected launcher applies the same two fixed-roster overlays and starts ev
     const final=calls.find(call=>call.includes('up')&&call.includes('nginx'));for(const service of ['realtime','realtime-2','socket-edge','evaluator','evaluator-2','pgstream','tenant-admin','ui','nginx'])assert.ok(final.includes(service),service);
     assert.ok(calls.find(call=>call.includes('api')&&call.includes('api-2')),'both API instances start before final roles');
     assert(!calls.some(call=>call.some(argument=>argument.endsWith('evaluator-pool.js'))),'native launch never configures pool membership');
-    const verification=calls.findIndex(call=>call.includes('deploy/multitenant/platform-verify.js'));
-    assert(verification>=0);
+    // Platform verification is retired; the one-shot bootstrap runs as part of up (provisioning-secrets-in).
+    assert(!calls.some(call=>call.includes('deploy/multitenant/platform-verify.js')));
+    assert(!calls.some(call=>call.includes('run')&&call.includes('bootstrap')),'bootstrap needs no separate run');
     assert(!calls.some(call=>call.includes('provision')||call.includes('prime')));
-    assert(verification<calls.findIndex(call=>call.includes('up')&&call.includes('api')));
-    fs.writeFileSync(record,'');options.env.NS_CONTROL_REFUSE_PLATFORM='1';
-    assert.throws(()=>execFileSync('bash',['demo.sh','up'],options),error=>error.status===23);
-    const refused=fs.readFileSync(record,'utf8').trim().split('\n').map(JSON.parse);
-    assert(refused.at(-1).includes('deploy/multitenant/platform-verify.js'));
-    assert(!refused.some(call=>call.includes('up')&&call.includes('api')),'verification refusal prevents serving birth');
-    assert(!refused.some(call=>call.includes('prime')),'verification refusal prevents lab priming');
-    delete options.env.NS_CONTROL_REFUSE_PLATFORM;
+    fs.writeFileSync(record,'');
     execFileSync('bash',['demo.sh','up'],options);
     assert(JSON.parse(fs.readFileSync(record,'utf8').trim().split('\n').at(-1)).includes('nginx'));
     options.env.NS_CONTROL_SEALED='1';
