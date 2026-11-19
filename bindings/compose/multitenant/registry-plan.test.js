@@ -37,7 +37,6 @@ test('registry role documents have no static roster or per-tenant key lists and 
     assert.equal(docs.configs.api.postgres.namespaces.settings.endsWith('_settings'), true);
     assert.equal(docs.admin.config.provisioning.checkpoints.length, 3);
     assert.equal(docs.operations.api.leaseSessions, 4);
-    for (const participant of docs.operations.api.participants) assert(!participant.namespaces.includes(docs.operations.api.namespace));
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
 test('control: restoring a static list into registry authority is refused, restoration passes', () => {
@@ -61,13 +60,6 @@ test('provisioning identity and read-only settings/activity capabilities are dis
   assert(!grants.split('\n').some(sql => /INSERT|UPDATE|DELETE/.test(sql) && /TO "nsdemo_display_reader"/.test(sql)));
 });
 
-test('control: adding the operation control schema to protected data refuses launcher resource matching', () => {
-  const { docs } = generated();
-  docs.operations.api.participants.find(row => row.id === 'api').namespaces.push(docs.operations.api.namespace);
-  const directory = files(docs);
-  try { assert.throws(() => plan.validateFiles(directory, docs), /namespace mismatch/); }
-  finally { fs.rmSync(directory, { recursive: true, force: true }); }
-});
 
 test('restore inventory admits the independent evaluator checkpoint and all current product metadata families', () => {
   const inventory = plan.lifecycle(plan.layout());

@@ -28,7 +28,7 @@ function plan(k, apiReplicas) {
   const realtime = workers('realtime', k, 1339), evaluator = workers('evaluator', k, 19913);
   const peers = JSON.stringify(realtime.map(worker => ({socket: worker.socketPath})));
   const applicationEnvironment = Object.fromEntries([
-    ...realtime.map(worker => [worker.service, {NS_REALTIME_SLICE: JSON.stringify({count: k, ordinal: worker.ordinal})}]),
+    ...realtime.map(worker => [worker.service, {NS_SLICE_ORDINAL: String(worker.ordinal), NS_SLICE_COUNT: String(k)}]),
     ...evaluator.map(worker => [worker.service, {NS_REALTIME_SLICE_PEERS: peers}])
   ]);
   return { count: k, rule: RULE, evaluator, realtime, api: replicas.instances(n), applicationEnvironment,
@@ -56,10 +56,8 @@ function load(source) {
   const raw = source[MAP];
   if (typeof raw !== 'string' || Buffer.byteLength(raw) > 2048 ||
       !/^[1-8]$/.test(source.NS_REALTIME_STATIC_COUNT || '')) throw new TypeError('STATIC_REALTIME_ROUTE_MAP');
-  const k = Number(source.NS_REALTIME_STATIC_COUNT), value = JSON.parse(raw);
-  const expected = plan(k, 1).routes.upstreams;
-  if (JSON.stringify(value?.upstreams) !== JSON.stringify(expected)) throw new TypeError('STATIC_REALTIME_UPSTREAM_ROSTER');
-  return compile(value, k);
+  // Upstreams are the owners in ordinal order: Compose service names, or Kubernetes Pod DNS names.
+  return compile(JSON.parse(raw), Number(source.NS_REALTIME_STATIC_COUNT));
 }
 
 function validateCompose(config, selected) {

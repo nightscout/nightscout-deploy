@@ -40,7 +40,6 @@ for (const finishFails of [false, true]) {
       './clinical-isolation': {grants: () => []},
       '../../lib/migrations/postgres': {},
       '../../lib/management-sessions/authority': {grants: () => ({authorityOwner: [], issuer: []})},
-      './platform-startup': {install: async () => {}},
       './pgstream': {enabled: () => true, descriptor: () => ({pgstream: {slot: 'fixture'}}), init: async () => {}},
       './credentials': {read: () => ({postgres: {}, vault: {}})},
       './registry-bootstrap': {finish}

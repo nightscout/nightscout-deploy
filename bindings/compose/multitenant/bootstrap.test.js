@@ -18,11 +18,6 @@ function files(docs){
 test('all generated service configs pass actual product parsers and exact namespace manifests',()=>{
   const {docs}=generated(),directory=files(docs);try{plan.validateFiles(directory,docs);}finally{fs.rmSync(directory,{recursive:true});}
 });
-test('control: absent notification namespace refuses actual API cohort match, restoration passes',()=>{
-  const {docs}=generated();docs.operations.api.participants.find(row=>row.id==='api').namespaces=docs.operations.api.participants.find(row=>row.id==='api').namespaces.filter(name=>!name.endsWith('_outbox'));
-  let directory=files(docs);try{assert.throws(()=>plan.validateFiles(directory,docs),/namespace mismatch/);}finally{fs.rmSync(directory,{recursive:true});}
-  const restored=generated();directory=files(restored.docs);try{plan.validateFiles(directory,restored.docs);}finally{fs.rmSync(directory,{recursive:true});}
-});
 test('runtime bundles retain isolated credential capabilities',()=>{
   const {docs}=generated();
   assert(!Object.hasOwn(docs.environments.api,'NS_OUTBOX_PG'));

@@ -28,19 +28,9 @@ test('equal API replicas pass real product parsers with exact instance roster an
     plan.validateFiles(dir, docs);
     assert.deepEqual(docs.configs.api, docs.configs['api-2']);
     assert.equal(docs.environments.realtime.NS_API_INTERNAL_URL, replicas.service);
-    assert.deepEqual(docs.operations.api.participants.filter(row => row.roles.includes('api')).map(row => row.id), ['api-1', 'api-2']);
-    assert.deepEqual(docs.remote.filter(row => row.roles.includes('api')).map(row => row.endpoint.url), ['http://api:7001/', 'http://api-2:7001/']);
-    assert.equal(docs.operations['api-2'].participantId, 'api-2');
+    assert.deepEqual(docs.operations['api-2'], docs.operations.api);
+    assert.equal(docs.environments['api-2'].NS_SERVE_INTERNAL_PORT, '7001');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
-});
-test('control: a service-aliased maintenance instance refuses; restored exact instance passes', () => {
-  const docs = replicas.expand(base(), 2);
-  const row = docs.operations.realtime.participants.find(row => row.id === 'api-2');
-  const original = row.address; row.address = { url: replicas.service };
-  let dir = files(docs);
-  try { assert.throws(() => plan.validateFiles(dir, docs), /invalid explicit tenant operation configuration/); } finally { fs.rmSync(dir, { recursive: true, force: true }); }
-  row.address = original; dir = files(docs);
-  try { plan.validateFiles(dir, docs); } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 test('replica count is bounded synthetic deployment input and default placement stays singular', () => {
   assert.equal(replicas.count({}), 1);

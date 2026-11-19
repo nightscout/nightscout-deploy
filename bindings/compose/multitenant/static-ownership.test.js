@@ -42,8 +42,6 @@ test('rendered map routes canonical IDs with the exact core slice and rejects th
   assert.throws(() => staticOwnership.compile(good, 1), /STATIC_REALTIME_ROUTE_MAP/);
   const routes = staticOwnership.compile(good, 2);
   assert.throws(() => routes.route('11111111-1111-4111-A111-111111111111'), /Canonical tenant id/);
-  assert.throws(() => staticOwnership.load({NS_REALTIME_STATIC_COUNT:'2',
-    [staticOwnership.MAP]:JSON.stringify({...good,upstreams:[...good.upstreams].reverse()})}), /STATIC_REALTIME_UPSTREAM_ROSTER/);
   assert.equal(staticOwnership.load({NS_REALTIME_STATIC_COUNT:'2',[staticOwnership.MAP]:JSON.stringify(good)})
     .route(tenant(0)).consumerOrigin, good.upstreams[bucket(tenant(0), 2)]);
 });
@@ -66,7 +64,7 @@ test('Compose expansion renders stable K1/K2 owners and N1/N2 upstreams and refu
       const { services } = config;
       staticOwnership.validateCompose(config, selected);
       for (const worker of selected.realtime) {
-        assert.deepEqual(JSON.parse(selected.applicationEnvironment[worker.service].NS_REALTIME_SLICE), {count:k,ordinal:worker.ordinal});
+        assert.deepEqual(selected.applicationEnvironment[worker.service], {NS_SLICE_ORDINAL:String(worker.ordinal),NS_SLICE_COUNT:String(k)});
       }
       for (const worker of selected.evaluator) {
         assert.deepEqual(JSON.parse(selected.applicationEnvironment[worker.service].NS_REALTIME_SLICE_PEERS),
@@ -115,7 +113,7 @@ test('socket edge refuses mixed transport profiles and count disagreement before
       [staticOwnership.MAP]:JSON.stringify(staticOwnership.plan(2,1).routes)};
     const { main } = require('./socket-edge');
     await assert.rejects(main({...source, MULTITENANT_REALTIME_ROUTES:'/unused.json'}), /REALTIME_ROUTE_PROFILE_CONFLICT/);
-    await assert.rejects(main({...source, NS_REALTIME_STATIC_COUNT:'1'}), /STATIC_REALTIME_UPSTREAM_ROSTER/);
+    await assert.rejects(main({...source, NS_REALTIME_STATIC_COUNT:'1'}), /STATIC_REALTIME_ROUTE_MAP/);
   } finally {
     fs.rmSync(workspace, {recursive:true, force:true});
   }

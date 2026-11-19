@@ -32,16 +32,9 @@ function expand(docs, selected) {
   if (!selected) return docs;
   const workers = roster(selected), receivers = workers.map(worker => worker.url);
   const evaluator = docs.configs.evaluator, operation = docs.operations.evaluator;
-  const original = operation.participants.find(row => row.id === 'evaluator');
-  const remote = docs.remote.find(row => row.id === 'evaluator');
-  const participants = [
-    ...operation.participants.filter(row => row !== original),
-    ...workers.map(({id, socket}) => ({ ...original, id, address: { socket } }))
-  ];
-  for (const value of Object.values(docs.operations)) value.participants = participants;
   for (const env of Object.values(docs.environments)) delete env.NS_EVALUATOR_INTERNAL_SOCKET;
   const baseEnvironment = docs.environments.evaluator;
-  for (const [ordinal, {service, id, url, socket}] of workers.entries()) {
+  for (const [ordinal, {service, url, socket}] of workers.entries()) {
     docs.configs[service] = {
       ...evaluator, pgstream: { ...evaluator.pgstream, receiver: { ...evaluator.pgstream.receiver, url } }
     };
@@ -50,11 +43,8 @@ function expand(docs, selected) {
       NS_POOL_EVALUATOR_MAX: '4', NS_POOL_OPERATION_MAX: '8',
       [PROFILE]: JSON.stringify({ count: workers.length, ordinal, receivers })
     };
-    docs.operations[service] = { ...operation, participantId: id };
+    docs.operations[service] = { ...operation };
   }
-  docs.remote = [...docs.remote.filter(row => row !== remote), ...workers.map(({id, socket}) => ({
-    ...remote, id, endpoint: { ...remote.endpoint, socketPath: socket }
-  }))];
   docs.evaluatorWorkers = selected;
   return docs;
 }
@@ -62,14 +52,10 @@ function expand(docs, selected) {
 function validate(docs, role, parsed, operation) {
   if (!docs.evaluatorWorkers) return;
   const workers = roster(docs.evaluatorWorkers);
-  const peers = operation.participants.filter(row => row.roles.includes('evaluator'));
-  if (peers.length !== workers.length || workers.some(({id, socket}) => !peers.some(row => row.id === id && row.endpoint.socketPath === socket))) {
-    throw new TypeError('Deployment evaluator participant coverage mismatch');
-  }
   const ordinal = workers.findIndex(worker => worker.service === role);
   if (ordinal === -1) return;
   const primary = docs.configs.evaluator;
-  if (operation.participantId !== workers[ordinal].id || parsed.processAssignment?.ordinal !== ordinal ||
+  if (parsed.processAssignment?.ordinal !== ordinal ||
       JSON.stringify(parsed.processAssignment.receivers) !== JSON.stringify(workers.map(worker => worker.url)) ||
       parsed.consumer !== primary.consumer || parsed.pgstream.slot !== primary.pgstream.slot ||
       parsed.pgstream.generation !== primary.pgstream.generation || parsed.pgstream.streamRole !== primary.pgstream.streamRole) {

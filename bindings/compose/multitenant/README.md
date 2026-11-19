@@ -98,35 +98,11 @@ convergence clocks remain separate. A future controller must allow the selected
 startup and schema/acknowledgment work plus its stability observation within the
 remaining outer work and cleanup windows. Existing prepared runs remain frozen.
 
-The admin service owns platform schema, catalogue and privilege verification.
-`platform-startup.js` writes the selected verification namespace and role into
-serving configuration and copies each role's exact configuration, environment
-and operation context into admin's private mount. The verification writer
-credential stays there.
-
-**Pre-start platform step.** Before starting the API, `up` runs
-`node deploy/multitenant/platform-verify.js` in the primer container, after
-migrations and restore commissioning. That job sends `{}` to the private
-`POST /v1/platform-verification` operation. A Job or controller can call the
-same operation through its private network access. The admin role verifies
-migrations, schema, grants, ownership and catalogues for every serving role
-once and issues the platform proof. The job records the selected-operation hash
-and verified role generations in `primer/platform-verification.json`; a refused
-or incomplete verification stops startup, and no serving role starts.
-
-Each serving role (api, evaluator, realtime) checks the proof once at start: it
-must be present and match the role, database and contract. Otherwise the role
-exits with `PLATFORM_VERIFICATION_REQUIRED` (or
-`PLATFORM_SERVING_IDENTITY_UNSAFE` for an unsafe login). The proof has no lease
-and no refresh: a serving role never re-verifies, polls or refuses requests
-because of it while it runs. A datastore restart does not invalidate it.
-Authority drift after start is detected at the next start, so run the
-pre-start step again after any schema, grant or ownership change and before
-restarting serving roles. Before a known schema or grant change, the platform
-sends `{}` to private `DELETE /v1/platform-verification`; that operation
-revokes the proof and fences any older in-flight verifier, so a role that
-starts during the change refuses. The platform then changes the schema or
-grants and runs the pre-start step again.
+Serving roles report readiness on their private listener (`/healthz/ready`; Compose runs
+`nightscout healthcheck --endpoint ready --socket /run/ns-ipc/<role>.sock`). Serving roles restart
+on failure (`NS_COMPOSE_RESTART`, default `on-failure`; tests set `no` to hold a role down).
+Realtime instances receive their slice as `NS_SLICE_ORDINAL` and `NS_SLICE_COUNT`. Evaluator
+K>1 is not supported.
 
 nginx waits only for the services it routes to, including each API instance.
 An unhealthy evaluator or tenant-admin does not keep ingress down. Preparation

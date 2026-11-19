@@ -10,7 +10,7 @@ const A = '11111111-1111-4111-8111-111111111111', B = '22222222-2222-4222-8222-2
 const env = { A_TOKEN: 'private-a-token', B_TOKEN: 'private-b-token', NS_OPERATOR_PG: 'postgres://operator:private-password@postgres/demo',
   NS_SOURCE_COMMIT: 'a'.repeat(40), NS_DEMO_CONFIRM_SYNTHETIC: '1' };
 const config = () => ({ version: 1, tenants: [{ id: A, host: 'one.example.test', tokenEnv: 'A_TOKEN' }, { id: B, host: 'two.example.test', tokenEnv: 'B_TOKEN' }],
-  apiOrigin: 'http://api:1337', control: { namespace: 'control', locks: [{ tenant: A, key: '1' }, { tenant: B, key: '2' }], participants: [{}] },
+  apiOrigin: 'http://api:1337', control: { namespace: 'control', locks: [{ tenant: A, key: '1' }, { tenant: B, key: '2' }] },
   namespaces: { entries: 'demo_entries' }, catalogues: [{ kind: 'entries', candidate: {} }], drainTimeoutMs: 5000 });
 
 test('operator config refuses a public target, shared lock and missing explicit drain bound', () => {

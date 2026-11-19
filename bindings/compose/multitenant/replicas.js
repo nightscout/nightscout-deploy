@@ -13,30 +13,20 @@ const instances = n => Array.from({ length: n }, (_, i) => ({ id: 'api-' + (i + 
 function expand(docs, n = count()) {
   if (!Number.isSafeInteger(n) || n < 1 || n > 16) throw new TypeError('Invalid fixed API replica count');
   if (n === 1) return docs;
-  const original = docs.operations.api.participants.find(row => row.id === 'api');
-  if (!original || docs.operations.api.participantId !== 'api') throw new TypeError('Expected unexpanded API roster');
+  if (!docs.configs.api) throw new TypeError('Expected unexpanded API roster');
   const nodes = instances(n);
-  const peers = nodes.map(node => ({ ...original, id: node.id, address: { url: 'http://' + node.service + ':7001' } }));
-  const participants = [...peers, ...docs.operations.api.participants.filter(row => row.id !== 'api')];
-  const configs = { ...docs.configs }, environments = {}, operations = {};
+  const configs = { ...docs.configs }, environments = {}, operations = { ...docs.operations };
   for (const [role, env] of Object.entries(docs.environments)) {
     const next = { ...env, NS_API_INTERNAL_URL: service }; delete next.NS_API_INTERNAL_SOCKET;
     environments[role] = next;
-    operations[role] = { ...docs.operations[role], participants };
   }
   for (const node of nodes) {
     configs[node.service] = docs.configs.api;
     environments[node.service] = { ...environments.api, NS_SERVE_INTERNAL_HOST: '0.0.0.0', NS_SERVE_INTERNAL_PORT: '7001' };
     delete environments[node.service].NS_SERVE_INTERNAL_SOCKET;
-    operations[node.service] = { ...docs.operations.api, participantId: node.id, participants };
+    operations[node.service] = { ...docs.operations.api };
   }
-  const old = docs.remote.find(row => row.id === 'api');
-  if (!old) throw new TypeError('Expected operator API roster');
-  const remote = [...nodes.map(node => ({ ...old, id: node.id,
-    endpoint: { ...old.endpoint, socketPath: undefined, url: 'http://' + node.service + ':7001/', trust: 'network' } })),
-  ...docs.remote.filter(row => row.id !== 'api')];
-  for (const row of remote) if (row.endpoint.socketPath === undefined) delete row.endpoint.socketPath;
-  return { ...docs, configs, environments, operations, remote, apiOrigin: 'http://api-internal:1337' };
+  return { ...docs, configs, environments, operations, apiOrigin: 'http://api-internal:1337' };
 }
 function compose(n = count(), composeFile = 'compose.yaml') {
   const lines = ['# Generated fixed-roster API placement.', 'services:'];

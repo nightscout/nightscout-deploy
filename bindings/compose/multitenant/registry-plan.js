@@ -47,13 +47,6 @@ function expand(docs, { layout, urls, vaultAddress }) {
     docs.operations[role].leaseSessions = leaseSessions(); docs.operations[role].registry = { namespace: ns.registry };
   }
   require('./pgstream').configure(docs,layout);
-  // Recompute manifest coverage from the selected product configuration.
-  const protectedNamespaces = require('../../lib/server/serve/role-topology').protectedNamespaces;
-  const participants = Object.entries(docs.configs).map(([role, config]) => ({ id: role, roles: [role],
-    namespaces: [...new Set([...protectedNamespaces(config), ...(role === 'api' ? [ns.outbox] : [])])].filter(name => name !== ns.control).sort(), maxMessageBytes: 1048576, timeoutMs: 10000 }));
-  for (const value of Object.values(docs.operations)) value.participants = participants;
-  docs.remote = participants.map(peer => ({ id: peer.id, roles: peer.roles, namespaces: peer.namespaces,
-    endpoint: { socketPath: '/run/ns-ipc/' + peer.id + '.sock', maxBytes: peer.maxMessageBytes, timeoutMs: peer.timeoutMs } }));
   docs.admin = { config: { version: 1, maxBytes: 1048576, timeoutMs: 60000,
     managementSessions: { connectionEnv: 'NS_MANAGEMENT_SESSIONS_PG',
       namespaces: { registry: ns.registry, authorization: ns.authorization, access: ns.access, control: ns.control },

@@ -85,7 +85,7 @@ test('standalone, K1 and K2 compose documents pass the exact core plan and deplo
     const receivers = roster.map(worker => worker.url);
     assert.deepEqual(receivers, workers.services(selected).map(service => 'http://' + service + ':19913/'));
     assert.equal(docs.configs.realtime.completedOutput.consumer, docs.configs.evaluator.consumer);
-    for (const [ordinal, {service, id, url, socket}] of roster.entries()) {
+    for (const [ordinal, {service, url, socket}] of roster.entries()) {
       const env = docs.environments[service], cfg = docs.configs[service], op = docs.operations[service];
       assert.equal(cfg.pgstream.receiver.url, url);
       assert.equal(cfg.pgstream.generation, docs.configs.evaluator.pgstream.generation);
@@ -94,15 +94,14 @@ test('standalone, K1 and K2 compose documents pass the exact core plan and deplo
       const raw = env.NS_PGSTREAM_EVALUATOR_SLICE;
       if (!selected) {
         assert.equal(raw, undefined);
-        assert.equal(op.participantId, 'evaluator');
+        assert.equal(op.version, 1);
         assert.equal(descriptor.processAssignment, undefined);
         continue;
       }
       assert.deepEqual(JSON.parse(raw), {count: roster.length, ordinal, receivers});
       assert.deepEqual(descriptor.processAssignment.receivers, receivers);
-      assert.equal(op.participantId, id);
+      assert.equal(op.version, 1);
       assert.equal(env.NS_SERVE_INTERNAL_SOCKET, socket);
-      assert.equal(docs.remote.find(peer => peer.id === id).endpoint.socketPath, socket);
       assert.equal(env.NS_EVALUATOR_INTERNAL_SOCKET, undefined);
       assert(!Object.keys(env).some(name => name.startsWith('MULTITENANT_POOL_')));
     }
@@ -113,7 +112,7 @@ test('standalone, K1 and K2 compose documents pass the exact core plan and deplo
   }
 });
 
-test('wrong ordinal, missing participant and divergent generation fail before deployment and the restored plan passes', () => {
+test('wrong ordinal and divergent generation fail before deployment and the restored plan passes', () => {
   const baseline = generated(2).docs;
   const badOrdinal = structuredClone(baseline);
   const env = badOrdinal.environments.evaluator;
@@ -125,9 +124,6 @@ test('wrong ordinal, missing participant and divergent generation fail before de
   assert.deepEqual(reports.map(process => process.name), ['evaluator']);
   assert.deepEqual(reports[0].findings.map(finding => finding.code), ['PLAN_CONFIGURATION_REFUSED']);
   assert.throws(() => validateFiles(badOrdinal), /invalid explicit evaluator preview configuration/);
-  const badPeer = structuredClone(baseline);
-  badPeer.operations.api.participants = badPeer.operations.api.participants.filter(row => row.id !== 'evaluator-2');
-  assert.throws(() => validateFiles(badPeer), /evaluator participant coverage mismatch/);
   const badGeneration = structuredClone(baseline);
   badGeneration.configs['evaluator-2'].pgstream.generation = 'b'.repeat(32);
   assert.throws(() => validateFiles(badGeneration), /native source or assignment mismatch/);

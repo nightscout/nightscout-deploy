@@ -75,15 +75,12 @@ function documents({layout:l,urls,vaultAddress,registryMode=true,realtimeOwnersh
     realtime:{...common,...own('realtime'),REALTIME_HOSTNAME:'0.0.0.0',REALTIME_PORT:'1339',MULTITENANT_REALTIME_CONFIG:base+'/config.json',NS_REALTIME_PG:urls.realtime},
     evaluator:{...common,...own('evaluator'),MULTITENANT_EVALUATOR_CONFIG:base+'/config.json',NS_EVALUATOR_PG:urls.evaluator,NS_OUTBOX_PG:urls.outbox,NS_SUPPRESSION_PG:urls.suppression},
     'tenant-admin':{...common,...own('tenant-admin'),TENANT_ADMIN_HOSTNAME:'0.0.0.0',TENANT_ADMIN_PORT:'1341',MULTITENANT_OWNER_PREVIEW_CONFIG:base+'/config.json',NS_OWNER_WRITER_PG:urls.owner_writer,NS_OWNER_READER_PG:urls.owner_reader}};
-  const protectedNamespaces=require('../../lib/server/serve/role-topology').protectedNamespaces;
-  const participants=serviceRoles.map(role=>({id:role,roles:[role],namespaces:[...new Set([...protectedNamespaces(configs[role]),...(role==='api'?[ns.outbox]:[])])].sort(),maxMessageBytes:1048576,timeoutMs:5000}));
   const operations={};
-  for(const role of serviceRoles){operations[role]={version:2,namespace:ns.control,connectionEnv:'NS_LIFETIME_PG',participantId:role,participants};Object.assign(environments[role],{NS_LIFETIME_PG:urls['lifetime_'+role.replace('-','_')],MULTITENANT_OPERATION_CONFIG:base+'/operation.json'});}
-  const remote=participants.map(peer=>({id:peer.id,roles:peer.roles,namespaces:peer.namespaces,endpoint:{socketPath:socketOf(peer.id),maxBytes:peer.maxMessageBytes,timeoutMs:peer.timeoutMs}}));
-  let docs = {configs,environments,operations,remote};
+  for(const role of serviceRoles){operations[role]={version:1,namespace:ns.control,connectionEnv:'NS_LIFETIME_PG'};Object.assign(environments[role],{NS_LIFETIME_PG:urls['lifetime_'+role.replace('-','_')],MULTITENANT_OPERATION_CONFIG:base+'/operation.json'});}
+  let docs = {configs,environments,operations};
   docs = require('./registry-plan').expand(docs,{layout:l,urls,vaultAddress});
   const evaluatorWorkers = require('./evaluator-workers');
-  return require('./platform-startup').documents(evaluatorWorkers.expand(require('./realtime-workers').expand(require('./replicas').expand(docs), realtimeOwnership), evaluatorWorkers.selection()), l, urls);
+  return evaluatorWorkers.expand(require('./realtime-workers').expand(require('./replicas').expand(docs), realtimeOwnership), evaluatorWorkers.selection());
 }
 function lifecycle(l) {
   const aliases={rt_checkpoint:'checkpoint',eval_checkpoint:'evaluator_checkpoint',alarm:'alarm_suppression',outbox:'notification_outbox',display_settings:'tenant_settings'};
@@ -108,18 +105,13 @@ function validateFiles(directory, docs) {
   }
   const parsers={api:require('../../lib/server/serve/preview-config').load,realtime:require('../../lib/server/realtime/config').load,
     evaluator:require('../../lib/server/serve/evaluator-config').load,'tenant-admin':require('../../lib/server/serve/owner-preview-config').load};
-  const namespaces=require('../../lib/server/serve/role-topology').protectedNamespaces;
   for(const role of Object.keys(docs.configs)){
     const productRole = role.startsWith('api-') ? 'api' : role.startsWith('realtime-') ? 'realtime' : role.startsWith('evaluator-') ? 'evaluator' : role;
     const env=Object.fromEntries(Object.entries(docs.environments[role]).map(([key,value])=>[key,typeof value==='string'?value.replace('/run/ns-config',path.join(directory,role)):value]));
     const internal=require('../../lib/server/internal-api/listener-config').resolve([productRole],env);
     const parsed=parsers[productRole](env,internal),operation=require('../../lib/server/serve/operation-cohort-config').load(env,internal);
     if((operation.nativeSelection?.selectionDigest)!==(native?.selectionDigest))throw new TypeError('COMPOSE_NATIVE_SELECTION_MISMATCH');
-    const participant=operation.participants.find(row=>row.id===operation.participantId);
     require('./evaluator-workers').validate(docs, role, parsed, operation);
-    if(JSON.stringify(namespaces(parsed).filter(name => name !== operation.namespace).sort())!==JSON.stringify(participant.namespaces))throw new TypeError('Deployment participant namespace mismatch');
-    require('../../lib/realtime-ownership').census(operation.participants);
-    if (productRole === 'realtime' && (participant.slice.count !== parsed.ownership.count || participant.slice.ordinal !== parsed.ownership.ordinal)) throw new TypeError('Deployment realtime ordinal mismatch');
 
   }
   // The ui's own parser (aliases), on the written file when there is one, so a
