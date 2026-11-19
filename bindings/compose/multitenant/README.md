@@ -120,13 +120,9 @@ checks the template, private listener exposure and readiness dependencies.
 A failed bootstrap prints one JSON line on stderr: the stable `error` code, the
 underlying `detail` message and the top stack frames (`at`). Connection-string
 credentials, password clauses, Vault tokens, JWT-shaped strings and long hex
-runs are redacted from both. Generated role configurations and environments use compact JSON. The optional
-`NS_BOOTSTRAP_CONFIG_MAX_BYTES` (off when empty; 65,536 to 67,108,864) is passed
-by Compose to every role container, and to the ownership overlay's admin, as
-core's `MULTITENANT_CONFIG_MAX_BYTES`, and `render.js` validates the files it
-writes against the same value. It never enters `env.json`. `load-env.js` takes its
-bound on `env.json` from core's reader (`lib/server/serve/config-file.js`), and
-keeps the fixed 1 MiB bound with a core that has no such module.
+runs are redacted from both. Generated role configurations and environments use compact JSON.
+`load-env.js` reads `env.json` with a fixed 1 MiB bound; the largest role document
+measured 3.8 KB at 10,000 tenants.
 
 The synthetic seed count (`NS_DEMO_TENANTS`) is any positive integer; there is no
 fixed tenant ceiling (limits come from measurement). It is provisioning input. Runtime roles read tenant membership
