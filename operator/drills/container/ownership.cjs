@@ -14,7 +14,7 @@ const note = name => path.join(notes, name + '.ownership.json');
 async function main ([command, name]) {
   if (!/^[a-z][a-z0-9-]{0,40}$/.test(name || '')) throw Object.assign(new Error('DRILL_USAGE'), { code: 'DRILL_USAGE' });
   const config = primer.load(path.join(directory, 'config.json'));
-  const row = JSON.parse(fs.readFileSync(path.join(directory, 'provisioned.json'), 'utf8'))[1];
+  const row = JSON.parse(fs.readFileSync(path.join(directory, 'tenants.json'), 'utf8')).tenants[1];
   const ownership = require(path.join(app, 'lib/server/internal-api/clients')).ownershipOperations({ url: config.adminOrigin, trust: 'network', maxBytes: 1048576, timeoutMs: 10000 });
   if (command === 'prepare') {
     // A second synthetic subject on the other tenant, and the owner set as it stands now.

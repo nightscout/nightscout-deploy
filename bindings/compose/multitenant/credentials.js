@@ -2,15 +2,21 @@
 'use strict';
 
 // Credentials exist before apply (decision provisioning-secrets-in). `seed` creates them once, in
-// a new private directory: one PostgreSQL password per deployment role and the Vault token ids the
-// roles use. The provisioning step creates the roles and tokens from these files; the document
-// renderer reads them. Nothing reads a credential back out of a running container.
+// a new private directory: one PostgreSQL password per deployment role, the Vault token ids the
+// roles use, and the deployment signing secret (decision deployment-signing-secret) from which the
+// issuing roles derive every tenant token-signing key. The provisioning step creates the roles and
+// tokens from these files; the document renderer reads them. Nothing reads a credential back out
+// of a running container.
 //
 //   node credentials.js seed <new-directory>
 //
-// Layout: <dir>/postgres/<role kind> and <dir>/vault/<token name>, one value per file, 0600.
+// Layout: <dir>/postgres/<role kind>, <dir>/vault/<token name> and <dir>/signing-secret, one value
+// per file, 0600. The signing secret is not Vault material and provisioning never reads it: Compose
+// renders it into the api, admin and tenant-admin documents; Kubernetes makes it one Secret
+// (ns-signing-secret) mounted into those three roles (scripts/secrets.sh).
 const fs = require('node:fs'), path = require('node:path'), crypto = require('node:crypto');
-const TOKENS = Object.freeze(['api', 'owner-credentials', 'management-issuer', 'provisioner']);
+const TOKENS = Object.freeze(['api', 'owner-credentials', 'provisioner']);
+const SIGNING = 'signing-secret';
 // Hex only: a password is embedded in CREATE ROLE ... PASSWORD and in connection URLs, and Vault
 // refuses custom token ids with a dot or a service-token prefix.
 const VALUE = /^[a-f0-9]{64}$/;
@@ -28,7 +34,8 @@ function seed (directory, kinds = roleKinds()) {
       fs.writeFileSync(path.join(directory, group, name), crypto.randomBytes(32).toString('hex') + '\n', { mode: 0o600, flag: 'wx' });
     }
   }
-  return { postgres: kinds.length, vault: TOKENS.length };
+  fs.writeFileSync(path.join(directory, SIGNING), crypto.randomBytes(32).toString('hex') + '\n', { mode: 0o600, flag: 'wx' });
+  return { postgres: kinds.length, vault: TOKENS.length, signing: 1 };
 }
 
 // Carry a complete earlier seed forward without changing any credential. Publish the
@@ -59,6 +66,8 @@ function read (directory, kinds = roleKinds()) {
     vault: Object.fromEntries(TOKENS.map(name => [name, value(path.join(directory, 'vault', name))])),
   };
 }
+// The deployment signing secret, read only by the document renderer.
+function signing (directory) { return value(path.join(directory, SIGNING)); }
 
 // Connection URL per role kind; the database address is the deployment's, never a credential.
 function urls (layout, passwords, { host = 'postgres', port = 5432, database = 'nightscout_compose_test' } = {}) {
@@ -81,4 +90,4 @@ if (require.main === module) {
     process.exitCode = 1;
   }
 }
-module.exports = { TOKENS, seed, addOwnerSettings, read, urls };
+module.exports = { TOKENS, SIGNING, seed, addOwnerSettings, read, signing, urls };

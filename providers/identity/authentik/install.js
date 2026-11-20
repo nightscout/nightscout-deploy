@@ -8,8 +8,10 @@ function grants({human,authority,access,role}){const table=(ns,t)=>q(ns)+'.'+q(t
  ...[[human,['human_identities','human_sessions','human_access_tokens','human_logout_events']],[access,['access_tenants','access_credentials','access_keys']],[authority,['tenant_authorization_subjects','tenant_authorization_roles','tenant_authorization_subject_roles','tenant_authorization_config','tenant_owner_actors']]].flatMap(([ns,tables])=>tables.map(t=>'GRANT SELECT ON '+table(ns,t)+' TO '+q(role))),
  'GRANT INSERT,UPDATE ON '+table(human,'human_sessions')+' TO '+q(role),
  'GRANT INSERT ON '+table(human,'human_access_tokens')+','+table(human,'human_logout_events')+' TO '+q(role)];}
-function mergeEnvironment(before,adapter,connection,human,layout,signingToken){if(Object.keys(before).some(key=>key.startsWith('OIDC_')))fail('IDP_EXISTING_HUMAN_CONFIG');const selected=generic.environment(adapter);return{...before,...selected,ENABLE:[...new Set((before.ENABLE||'').split(/\s+/).filter(Boolean).concat('oidc'))].join(' '),OIDC_POSTGRES_CONNECTION:connection,OIDC_NAMESPACE:human,OIDC_AUTHORITY_NAMESPACE:layout.namespaces.authorization,OIDC_ACCESS_NAMESPACE:layout.namespaces.access,
- OIDC_HUMAN_VAULT_ADDR:'https://vault:8200',OIDC_HUMAN_VAULT_TOKEN:signingToken,OIDC_ACCESS_CONFIG:JSON.stringify({version:1,registry:true,issuer:'https://sessions-'+adapter.clientId+'.synthetic.invalid',audiences:{data:'idp-human-data',management:'idp-human-management'},vault:{addressEnv:'OIDC_HUMAN_VAULT_ADDR',mount:layout.mount,tokenEnv:'OIDC_HUMAN_VAULT_TOKEN'}})};}
+function mergeEnvironment(before,adapter,connection,human,layout){if(Object.keys(before).some(key=>key.startsWith('OIDC_')))fail('IDP_EXISTING_HUMAN_CONFIG');const selected=generic.environment(adapter);return{...before,...selected,ENABLE:[...new Set((before.ENABLE||'').split(/\s+/).filter(Boolean).concat('oidc'))].join(' '),OIDC_POSTGRES_CONNECTION:connection,OIDC_NAMESPACE:human,OIDC_AUTHORITY_NAMESPACE:layout.namespaces.authorization,OIDC_ACCESS_NAMESPACE:layout.namespaces.access,
+ // Human session keys derive in process from the role's deployment signing secret
+ // (NS_SIGNING_SECRET_FILE, decision deployment-signing-secret): no Vault block or token.
+ OIDC_ACCESS_CONFIG:JSON.stringify({version:1,registry:true,issuer:'https://sessions-'+adapter.clientId+'.synthetic.invalid',audiences:{data:'idp-human-data',management:'idp-human-management'}})};}
 function atomic(file,value){const temporary=file+'.idp-'+crypto.randomBytes(12).toString('hex');try{fs.writeFileSync(temporary,JSON.stringify(value)+'\n',{mode:0o600,flag:'wx'});fs.renameSync(temporary,file);}finally{if(fs.existsSync(temporary))fs.unlinkSync(temporary);}}
 async function install(){
  if(process.env.NS_IDP_INSTALL!=='1')fail('IDP_INSTALL_OPT_IN');
@@ -49,15 +51,10 @@ async function install(){
    await client.query('INSERT INTO '+q(human)+'.human_identities (tenant_id,issuer,provider_subject,subject_id,credential_id,enabled,generation,purposes) VALUES ($1,$2,$3,$4,$5,true,1,$6)',[row.tenant,profile.adapter(p).issuer,row.providerSubject,row.principal,credential,row.purposes]);
   }
   await client.query('COMMIT');
-  const initialization=JSON.parse(generic.privateBytes('/state/bootstrap/vault-init.json'));
-  async function vault(resource,body){const response=await fetch(options.vault.origin+'/v1/'+resource,{method:'POST',headers:{'Content-Type':'application/json','X-Vault-Token':initialization.root_token},body:JSON.stringify(body),redirect:'manual',signal:AbortSignal.timeout(5000)});if(!response.ok)fail('IDP_VAULT_REFUSED');return response.status===204?{}:response.json();}
-  const policy='idp_'+p.nonce,rule=purpose=>'path "'+l.mount+'/sign/tenant-human-'+purpose+'-*" { capabilities = ["update"] }';
-  await vault('sys/policies/acl/'+policy,{policy:['data','management'].map(rule).join('\n')});
-  const signingToken=(await vault('auth/token/create',{policies:[policy],no_default_policy:true,renewable:true,ttl:'24h'})).auth.client_token;
   const connection=new URL(options.pg);connection.username=role;connection.password=password;
   const selected={...profile.adapter(p),secretFile:root+'/private/client-secret',cookieKeyFile:root+'/private/cookie-key'};
-  for(const {name,file,before}of originals){source.writePrivate('/state/bootstrap/idp-'+p.nonce+'-'+name+'.backup.json',before);atomic(file,mergeEnvironment(before,selected,connection.toString(),human,l,signingToken));}
-  source.writePrivate(done,{version:1,nonce:p.nonce,source:{core:p.coreCommit,deploy:p.deployCommit},humanNamespace:human,role,owner,people:provider.people.map(({username,...row})=>row),vault:{mode:'static-scoped-human-signer',agentLifecycle:'NOT_MEASURED'}});
+  for(const {name,file,before}of originals){source.writePrivate('/state/bootstrap/idp-'+p.nonce+'-'+name+'.backup.json',before);atomic(file,mergeEnvironment(before,selected,connection.toString(),human,l));}
+  source.writePrivate(done,{version:1,nonce:p.nonce,source:{core:p.coreCommit,deploy:p.deployCommit},humanNamespace:human,role,owner,people:provider.people.map(({username,...row})=>row),signing:{mode:'deployment-derived'}});
   console.log('IDP_HUMAN_BINDING_INSTALLED');
  }finally{await client.end().catch(()=>{});}
 }

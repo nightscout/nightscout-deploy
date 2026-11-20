@@ -11,7 +11,7 @@ batch() { # prefix, count -> private add.json for the lab client
   node -e 'const [p,n]=process.argv.slice(1);process.stdout.write(JSON.stringify({version:1,tenants:Array.from({length:Number(n)},(_,i)=>({id:p+"-0000-4000-8000-"+String(i).padStart(12,"0"),hosts:["drill-"+p+"-"+i+".example.test"],issueRootSecret:true}))})+"\n")' "$1" "$2" > "$state/primer/add.json"
   chmod 0600 "$state/primer/add.json"
 }
-custody() { node -e 'const fs=require("node:fs");const rows=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(String(rows.filter(r=>r.id.startsWith(process.argv[2])&&r.rootSecret).length))' "$state/primer/provisioned.json" "$1"; }
+custody() { node -e 'const fs=require("node:fs");const rows=fs.existsSync(process.argv[1])?JSON.parse(fs.readFileSync(process.argv[1],"utf8")).tenants:[];process.stdout.write(String(rows.filter(r=>r.id.startsWith(process.argv[2])&&r.dataToken).length))' "$state/primer/tenants.json" "$1"; }
 incomplete() { sql "SELECT count(*) FROM nsdemo_registry.tenant_registry r WHERE r.tenant_id::text LIKE '$1%' AND (r.state<>'active'
   OR NOT EXISTS (SELECT 1 FROM nsdemo_registry.tenant_registry_hosts h WHERE h.tenant_id=r.tenant_id)
   OR NOT EXISTS (SELECT 1 FROM nsdemo_registry.tenant_registry_keys k WHERE k.tenant_id=r.tenant_id)
@@ -55,7 +55,7 @@ provision-lost-acknowledgement|provision-admin-death)
   printf '{"drill":"%s","step":"admitted-without-custody","observed":%s}\n' "$drill" "$committed"
   # The allowed retry: the same request, same ids. It must not issue a second root secret.
   retry=$(client pv-op2 deploy/multitenant/prime.js add 2>&1 | field error || true)
-  step retry-refuses-missing-custody "\"$retry\"" '"PRIMER_PROVISION_REFUSED_OR_CUSTODY_MISSING"'
+  step retry-refuses-missing-custody "\"$retry\"" '"PRIMER_CREDENTIAL_NOT_RETURNED"'
   step all-requested-admitted-after-retry "$(registry_count "$prefix")" "$count"
   step no-half-admitted-tenant-after-retry "$(incomplete "$prefix")" 0
   step custody-only-for-tenants-created-by-retry "$(custody "$prefix")" $((count - committed))

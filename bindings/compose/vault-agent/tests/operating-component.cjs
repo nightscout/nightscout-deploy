@@ -43,10 +43,11 @@ async function prove () {
   const c = JSON.parse(fs.readFileSync(path.join(out, 'private/context.json'))), ca = fs.readFileSync(path.join(out, 'private/tls/ca.crt'));
   const origin = 'https://localhost:' + c.port, vault = (r, b, t = c.root, m) => request(origin, ca, r, b, t, m);
   const getToken = require(path.join(core, 'lib/secrets/vault-token-source')).tokenFileReader(path.join(out, 'private/sink/token'));
-  const production = require(path.join(core, 'lib/secrets/vault-transit')).createVaultTransit({ address: origin, mount: 'transit', encryptionKey: 'tenant-data-operating', signingKey: 'tenant-signing-operating', signingVersion: 1, getToken, timeoutMs: 1500 });
+  const production = require(path.join(core, 'lib/secrets/vault-transit')).createVaultTransit({ address: origin, mount: 'transit', encryptionKey: 'tenant-data-operating', getToken, timeoutMs: 1500 });
   const plaintext = Buffer.from('synthetic-operating-proof');
   const observations = [], check = (name, detail = {}) => { observations.push({ name, ...detail }); write('observations.json', observations); };
-  async function sign () { const value = Buffer.from('synthetic-operating-proof'); const signature = await production.sign(value); need(await production.verify(1, value, signature), 'OPERATING_SIGNATURE_ORACLE'); need((await production.decrypt(c.ciphertext)).equals(plaintext), 'OPERATING_DECRYPT_ORACLE'); return signature; }
+  // The serving capability is decrypt only; tenant tokens are signed in process (decision deployment-signing-secret).
+  async function sign () { need((await production.decrypt(c.ciphertext)).equals(plaintext), 'OPERATING_DECRYPT_ORACLE'); return true; }
   async function refused (name, code) { await assert.rejects(sign, e => e.code === code); check(name, { refused: code }); }
   async function lookup (token) { const response = await vault('auth/token/lookup-self', undefined, token, 'GET'); return response.status === 200 ? response.value.data : null; }
   function agent (verb) { return command('docker', [verb, c.agent]); }
@@ -56,7 +57,7 @@ async function prove () {
   try { await request(origin, fs.readFileSync(path.join(out, 'private/tls/wrong-ca.crt')), 'sys/health', undefined, undefined, 'GET'); } catch (e) { tlsError = e.code; }
   need(['UNABLE_TO_VERIFY_LEAF_SIGNATURE','UNABLE_TO_GET_ISSUER_CERT_LOCALLY','SELF_SIGNED_CERT_IN_CHAIN'].includes(tlsError), 'OPERATING_WRONG_CA_NOT_REFUSED');
   check('wrong-ca-control', { refused: tlsError }); await sign(); check('tls-restored');
-  const forbidden = await vault('transit/keys/tenant-signing-operating', undefined, await getToken(), 'GET');
+  const forbidden = await vault('transit/keys/tenant-data-operating', undefined, await getToken(), 'GET');
   need(forbidden.status === 403, 'OPERATING_KEY_MANAGEMENT_NOT_REFUSED'); check('private-key-management-refused', { status: forbidden.status });
   const first = await getToken(), start = await lookup(first); need(start?.renewable && start.ttl <= 4, 'OPERATING_TTL_CONTRACT');
   await until(async () => { const now = await getToken(); if (now !== first) return false; const x = await lookup(first); return x?.expire_time && Date.parse(x.expire_time) > Date.parse(start.expire_time); }, 6500, 'OPERATING_RENEWAL_UNMEASURED');
@@ -130,7 +131,7 @@ async function main () {
     const root = initialized.value.root_token, unseal = initialized.value.keys_base64[0], admin = (r,b,m) => request(origin,ca,r,b,root,m);
     need((await admin('sys/unseal',{key:unseal})).value?.sealed===false,'OPERATING_FIRST_UNSEAL');
     need((await admin('sys/mounts/transit',{type:'transit'})).status===204,'OPERATING_TRANSIT_MOUNT');
-    for(const [name,type] of [['tenant-data-operating','aes256-gcm96'],['tenant-signing-operating','aes256-gcm96']]) { const r=await admin('transit/keys/'+name,{type}); need([200,204].includes(r.status),'OPERATING_KEY_CREATE'); }
+    for(const [name,type] of [['tenant-data-operating','aes256-gcm96']]) { const r=await admin('transit/keys/'+name,{type}); need([200,204].includes(r.status),'OPERATING_KEY_CREATE'); }
     const policy = require(path.join(deploy, 'bindings/compose/vault-agent/vault-agent-bootstrap')).policyRules({mount:'transit',prefix:'operating'},'registry');
     need((await admin('sys/policies/acl/operating',{policy},'PUT')).status===204,'OPERATING_POLICY_CREATE');
     need((await admin('sys/auth/approle',{type:'approle'})).status===204,'OPERATING_APPROLE_ENABLE');

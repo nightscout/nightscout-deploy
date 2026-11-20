@@ -63,6 +63,8 @@ async function provision ({ vault, output, ttl, maxTtl, namespace, serviceAccoun
   }
   const policy = await request('sys/policies/acl/' + layout.prefix + '_api');
   if (typeof policy?.data?.policy !== 'string' || !policy.data.policy) throw fail('IMPORTED_TENANT_POLICY_MISSING');
+  // The deployment signing secret is not in Vault (decision deployment-signing-secret): it is the
+  // Secret ns-signing-secret, mounted into the issuing roles. The Agent renders only the token.
   const rules = [policy.data.policy];
   rules.push('# Vault Agent token self-management', 'path "auth/token/renew-self" { capabilities = ["update"] }', 'path "auth/token/lookup-self" { capabilities = ["read"] }');
   // 400 "path is already in use" when a previous partial run enabled the method.

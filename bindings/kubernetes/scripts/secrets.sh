@@ -12,8 +12,14 @@
 #
 # Creates ns-postgres-password, ns-vault-tls, ns-ca (CA signing key discarded),
 # ns-credentials-postgres and ns-credentials-vault (one PostgreSQL password per deployment role
-# and the Vault token ids; mounted only by the provision Job), and ns-config-<role> (each role's
-# credentials, scoped by role). Requires Docker and the application image locally.
+# and the Vault token ids; mounted only by the provision Job), ns-config-<role> (each role's
+# credentials, scoped by role) and ns-signing-secret: the deployment signing secret (decision
+# deployment-signing-secret), one object mounted into api, admin and tenant-admin. Requires Docker
+# and the application image locally.
+#
+# A fixture restore does not run this script: it re-creates the seed run's Secrets, including
+# ns-signing-secret, whose secret derived the public keys in the restored PostgreSQL (issuers refuse
+# a key they cannot derive, SIGNING_KEY_MISMATCH).
 #
 # It refuses to replace existing Secrets. To reseed, delete the owned namespace and start again.
 set -euo pipefail
@@ -30,6 +36,7 @@ trap 'rm -rf "$work"' EXIT
 k() { kubectl --context "$NS_KUBE_CONTEXT" -n "$ns" "$@"; }
 owner=$(kubectl --context "$NS_KUBE_CONTEXT" get namespace "$ns" -o jsonpath='{.metadata.labels.nightscout\.org/run-id}')
 [ "$owner" = "$NS_RUN_ID" ] || { echo 'REFUSED: namespace run ownership does not match' >&2; exit 65; }
+signing_valid() { [ -f "$1" ] && [ ! -L "$1" ] && grep -Eqx '[a-f0-9]{64}' "$1" && [ "$(wc -l < "$1")" -le 1 ]; }
 created=()
 secret() { local name=$1; shift; k create secret generic "$name" "$@" >/dev/null; created+=("$name"); }
 from_dir() { local dir=$1 file; for file in "$dir"/*; do [ -f "$file" ] && printf -- '--from-file=%s=%s\n' "$(basename "$file")" "$file"; done; }
@@ -72,6 +79,8 @@ secret ns-vault-tls --from-file=server.crt="$work/server.crt" --from-file=server
 secret ns-ca --from-file=ca.crt="$work/ca.crt"
 mapfile -t args < <(from_dir "$work/seed/credentials/postgres"); secret ns-credentials-postgres "${args[@]}"
 mapfile -t args < <(from_dir "$work/seed/credentials/vault"); secret ns-credentials-vault "${args[@]}"
+signing_valid "$work/seed/credentials/signing-secret" || { echo 'REFUSED: the seeded signing secret is missing or invalid' >&2; exit 65; }
+secret ns-signing-secret --from-file=signing-secret="$work/seed/credentials/signing-secret"
 for role in api realtime evaluator tenant-admin ui admin primer; do
   mapfile -t args < <(from_dir "$docs/$role")
   secret "ns-config-$role" "${args[@]}"

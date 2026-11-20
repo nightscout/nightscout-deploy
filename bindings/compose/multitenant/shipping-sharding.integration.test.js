@@ -28,7 +28,7 @@ test('actual shipping edge preserves registered Host polling/WebSocket/API3 and 
   const evaluatorProfile=process.env.NS_COMPOSE_SHARDING_PROFILE==='evaluator';
   assert.match(project||'',evaluatorProfile?/^ns-evaluator-binding(?:-proof)?-[0-9]{8}(?:-[a-z][a-z0-9]{0,15})?$/:/^ns-rt-binding(?:-clean|-final|-proof)?-[0-9]{8}$/);assert.ok(port>=1024&&port<=65535);
   const credentials=JSON.parse(fs.readFileSync(path.join(state,'primer/tenants.json'),'utf8')).tenants;
-  const roots=JSON.parse(fs.readFileSync(path.join(state,'primer/provisioned.json'),'utf8'));
+  const roots=JSON.parse(fs.readFileSync(path.join(state,'primer/tenants.json'),'utf8')).tenants;
   assert.equal(credentials.length,2);const [a,b]=credentials;
   const {io}=require(path.join(core,'node_modules/socket.io-client'));
   const sockets=[],agents=[];const {observer,traffic,typedCode}=require('./fixtures/api-readiness-observation.cjs'),trace=observer();let measured=null;

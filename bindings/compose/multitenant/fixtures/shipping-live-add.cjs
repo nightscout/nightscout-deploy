@@ -7,8 +7,8 @@ function raw(origin,route,host){return new Promise((resolve,reject)=>{const req=
 async function qualify({directory,edgeOrigin='http://nginx:8080',config=primer.load(path.join(directory,'config.json'))}){
  const known=JSON.parse(fs.readFileSync(path.join(directory,'tenants.json')));assert.equal(known.version,1);assert.ok(known.tenants.length>=2);
  const oldBytes=fs.readFileSync(path.join(directory,'tenants.json')),old=known.tenants[0];
- const roots=JSON.parse(fs.readFileSync(path.join(directory,'provisioned.json')));const root=roots.find(row=>row.id===old.id);assert.ok(root);
- const headers={host:old.host,'api-secret':crypto.createHash('sha1').update(root.rootSecret).digest('hex')};
+ assert.ok(old.rootSecret);
+ const headers={host:old.host,'api-secret':crypto.createHash('sha1').update(old.rootSecret).digest('hex')};
  const before=await primer.request(edgeOrigin,'/api/v1/entries.json',{headers});assert.equal(before.status,200);assert.ok(Array.isArray(before.body));
  const nonce=crypto.randomUUID(),id=crypto.randomUUID(),host='live-add-'+nonce+'.example.test';
  // Sealed request before any mutation: rerunning this fixture is refused. Its
@@ -17,19 +17,20 @@ async function qualify({directory,edgeOrigin='http://nginx:8080',config=primer.l
  const spec={id,hosts:[host],issueRootSecret:true};
  // One valid new tenant plus a conflicting existing tenant exercises actual
  // per-tenant partial failure, not a synthetic transport exception.
- await assert.rejects(primer.provision({...config,seed:[spec,{id:old.id,hosts:['conflict-'+nonce+'.example.test'],issueRootSecret:true}]},directory),{code:'PRIMER_PROVISION_REFUSED_OR_CUSTODY_MISSING'});
- assert.deepEqual(fs.readFileSync(path.join(directory,'tenants.json')),oldBytes);
- const partial=JSON.parse(fs.readFileSync(path.join(directory,'provisioned.json')));assert.ok(partial.find(row=>row.id===id)?.rootSecret);assert.deepEqual(partial.find(row=>row.id===old.id),root);
- const newRoot=partial.find(row=>row.id===id).rootSecret;
+ // The refused peer stops the run after the new tenant's row is saved.
+ await assert.rejects(primer.provision({...config,seed:[spec,{id:old.id,hosts:['conflict-'+nonce+'.example.test'],issueRootSecret:true}]},directory),{code:'PRIMER_PROVISION_REFUSED'});
+ const partial=JSON.parse(fs.readFileSync(path.join(directory,'tenants.json')));
+ assert.deepEqual(partial.tenants.filter(row=>row.id!==id),known.tenants);
+ const added=partial.tenants.find(row=>row.id===id);assert.ok(added?.dataToken&&added?.ownerSubject&&added?.rootSecret);
+ const newRoot=added.rootSecret,partialBytes=fs.readFileSync(path.join(directory,'tenants.json'));
+ // A retry of the saved tenant sends nothing and keeps its custody.
  await primer.provision({...config,seed:[spec]},directory);
- assert.equal(JSON.parse(fs.readFileSync(path.join(directory,'provisioned.json'))).find(row=>row.id===id).rootSecret,newRoot);
- await primer.prime(config,directory);
- const after=JSON.parse(fs.readFileSync(path.join(directory,'tenants.json')));assert.deepEqual(after.tenants.slice(0,known.tenants.length),known.tenants);assert.equal(after.tenants.length,known.tenants.length+1);
- const added=after.tenants.find(row=>row.id===id);assert.ok(added?.dataToken&&added?.managementToken);
+ assert.deepEqual(fs.readFileSync(path.join(directory,'tenants.json')),partialBytes);
+ assert.notDeepEqual(partialBytes,oldBytes);
  const freshHeaders={host,'api-secret':crypto.createHash('sha1').update(newRoot).digest('hex')};
  const deadline=Date.now()+60000;let fresh;
  do{fresh=await primer.request(edgeOrigin,'/api/v1/entries.json',{headers:freshHeaders});if(fresh.status===200)break;if(fresh.status!==503||fresh.body.error!=='TENANT_WARMING')throw new Error('LIVE_ADD_FRONTDOOR_REFUSED');await new Promise(r=>setTimeout(r,200));}while(Date.now()<deadline);
- assert.equal(fresh.status,200);assert.ok(fresh.body.some(row=>row._id==='synthetic-reading-'+known.tenants.length),'new tenant data reaches actual edge');
+ assert.equal(fresh.status,200);assert.ok(Array.isArray(fresh.body),'new tenant reaches actual edge');
  const continuity=await primer.request(edgeOrigin,'/api/v1/entries.json',{headers});assert.equal(continuity.status,200);assert.deepEqual(continuity.body,before.body,'old tenant clinical rows unchanged');
  const foreign=await primer.request(edgeOrigin,'/api/v1/entries.json',{headers:{host:old.host,'api-secret':added.dataToken}});assert.ok([401,403].includes(foreign.status),'new credential refused on old tenant');
  assert.equal(await raw(edgeOrigin,'/api/v1/entries.json','unknown-'+nonce+'.example.test'),421);

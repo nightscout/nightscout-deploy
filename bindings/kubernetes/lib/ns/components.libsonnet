@@ -49,7 +49,8 @@
     local spec(role) =
       local agent = role == 'api';
       local keep = ['secret-' + role, 'ns-ca', 'tmp'] +
-                   (if agent then ['ns-vault', 'vault-token', 'vault-agent-config'] else []);
+                   (if agent then ['ns-vault', 'vault-token', 'vault-agent-config'] else []) +
+                   (if std.member(['api', 'tenant-admin'], role) then ['ns-signing'] else []);
       local key = std.asciiUpper(std.strReplace(role, '-', '_'));
       local publicPorts = { api: '1337', realtime: '1339', 'tenant-admin': '1341' };
       local env = [
@@ -61,7 +62,10 @@
               { name: key + '_HOSTNAME', value: '0.0.0.0' }, { name: key + '_PORT', value: publicPorts[role] },
            ] else [])
         + (if std.member(['api', 'tenant-admin'], role) then [{ name: 'NS_VAULT_ADDR', value: 'https://vault:8200' }] else [])
-        + (if agent then [{ name: 'NS_VAULT_TOKEN_FILE', value: '/run/ns-vault/token' }] else []);
+        + (if agent then [{ name: 'NS_VAULT_TOKEN_FILE', value: '/run/ns-vault/token' }] else [])
+        // Deployment signing secret (decision deployment-signing-secret): the one Secret
+        // ns-signing-secret, mounted into the roles that issue tokens.
+        + (if std.member(['api', 'tenant-admin'], role) then [{ name: 'NS_SIGNING_SECRET_FILE', value: '/run/ns-signing/signing-secret' }] else []);
       source + {
         initContainers: if agent then [source.initContainers[0]] else [],
         containers: [x + {

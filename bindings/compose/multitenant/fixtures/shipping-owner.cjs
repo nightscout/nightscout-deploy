@@ -10,8 +10,10 @@ async function qualify({tenant, adminOrigin, request, session, requestId, phase}
   assert.ok(['before', 'after'].includes(phase));
   assert.match(requestId, /^[0-9a-f-]{36}$/);
   assert.ok(['primer', 'renew'].includes(session));
-  let token = tenant.managementToken;
-  if (session === 'renew') {
+  // Management sessions live at most 600 s and are not kept in the roster:
+  // both phases issue one from the owner subject (same request id: same session).
+  let token;
+  {
     const issued = await request(adminOrigin, '/v1/tenants/' + tenant.id + '/management-sessions', {
       method: 'POST', classification: 'management-session-create', headers: {'idempotency-key': requestId},
       body: {subjectId: tenant.ownerSubject, requestId}

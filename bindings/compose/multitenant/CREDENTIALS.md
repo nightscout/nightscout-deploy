@@ -64,7 +64,8 @@ inherits the object owner or bootstrap administrator.
 | Owner authority reader | tenant-admin | Current management access and authorization reads |
 | Lifetime identity, distinct per process | corresponding API/realtime/evaluator/tenant-admin | Lifecycle operation registration/finish columns and own-backend birth function only; no clinical mutation |
 | Maintenance operator | ops only | Lifecycle capture reads, clinical logical-restore writes/counters, forward clock advancement and restore control; `pg_read_all_stats` for actual backend-birth census |
-| Tenant-scoped Vault tokens | API only | That tenant's decrypt/HMAC/verify/data-token signing paths; no management signing or root authority |
+| Vault tokens | API, tenant-admin (decrypt), admin provisioning (create `tenant-data-*`, encrypt) | Only the per-tenant `data` Transit key; no Transit sign, HMAC or verify path and no root authority |
+| Deployment signing secret (`signing-secret`, `NS_SIGNING_SECRET_FILE`) | API, admin, tenant-admin | Every tenant token-signing key (data, management, human-data, human-management) is derived from it in process; a leak affects every tenant, so recovery is rotating it and invalidating outstanding tokens. Seeded once as `<credentials>/signing-secret` (not Vault material; Vault holds no copy). Compose renders it into the three role documents; Kubernetes makes it the one Secret `ns-signing-secret`. A fixture carries it: the Compose state directory holds the seed, and a Kubernetes restore re-creates the seed run's Secrets, this one among them |
 | nginx/UI | neither gets database or Vault credentials | Public routing and presentation only |
 
 Each lower identity receives only lifecycle window/operation/ledger reads, so all
@@ -142,8 +143,10 @@ acceptance run. No source-only check promotes those boundaries.
 
 The canonical registry API selects `localDataAuthentication: "node"` with its
 explicit existing issuer and audience. Fresh provisioning installs one-way root
-verifiers and a dedicated Node data-signing key. The primer creates subjects
-through root administration, which prepares their verifiers. The API has SELECT
+verifiers and the public key of the tenant's derived data-signing key (kid `data-1`; the private
+key is derived in process and never stored). Provisioning's bootstrap block
+creates the lab subjects in the tenant's provisioning transaction and prepares their verifiers
+from the root secret it holds; the primer makes no root-administration call. The API has SELECT
 on the legacy key table; it has no key mutation grant. Owner subject management
 uses a separate `owner_credentials` SQL identity and a decrypt-only Vault token.
 Its existing secret and legacy-authority pools each have maximum four connections
@@ -157,8 +160,8 @@ reader pools before maintenance admission. A changed reference refuses under the
 exclusive lock. The controller owns drain, branded authority, COMMIT, invalidation
 and reactivation. A failed or uncertain operation does not reopen the tenant here.
 The root buffer is erased on completion or failure. No credential material is
-printed. An old HS256 token renews only through explicit exchange; ordinary data,
-socket, status and root authentication use the selected local verifier.
+printed. Ordinary data, socket, status and root authentication use the selected local
+verifier; the HS256 token profile is retired.
 
 For a canonical, already provisioned synthetic fixture, use the existing ops
 service and the explicit tenant UUID from its private configuration:
@@ -169,10 +172,11 @@ docker compose --profile ops run --rm --no-deps demo \
   deploy/multitenant/prepare-local-auth.js "$tenant"
 ```
 
-Append `--rotate` to install a new signing key. The previous public key stays
-active for overlap while its private bytes are removed. Deactivation of an old
-public key remains an explicit current-authority operation. Process restart reads
-the durable keyring. Direct SQL fixture subject insertion must prepare verifiers
+It prepares verifiers only. Tenant token-signing keys (data, management, human-data,
+human-management) are derived in process by the issuing roles from the deployment
+signing secret (`NS_SIGNING_SECRET_FILE`, decision `deployment-signing-secret`); no
+private signing key is stored in PostgreSQL or Vault, and there is no per-tenant key to
+install or rotate here. Direct SQL fixture subject insertion must prepare verifiers
 through this consumer or the real management API before use.
 
 Native activation,

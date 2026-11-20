@@ -43,6 +43,9 @@ test('binds the deployment role to the cohort service account with the api polic
     [['ns-cohort'], ['nightscout-preview'], 'vault', ['nsdemo_vault_agent']]);
   const policy = calls.find(c => c.resource === 'sys/policies/acl/nsdemo_vault_agent').body.policy;
   assert.match(policy, /decrypt\/tenant-data-\*/); assert.match(policy, /renew-self/);
+  // The signing secret is not in Vault (decision deployment-signing-secret): no KV path, no write.
+  assert.doesNotMatch(policy, /_kv\/|signing/);
+  assert.ok(!calls.some(c => c.resource.startsWith('nsdemo_kv')), 'the auth step writes no secret');
   assert.deepStrictEqual(fs.readdirSync(dir).sort(), [...before, 'vault-agent'].sort(), 'only its own completion record');
   assert.strictEqual(fs.statSync(path.join(dir, 'vault-agent/complete.json')).mode & 0o777, 0o600);
   assert.deepStrictEqual(await provision(options(dir)), { state: 'existing-vault-agent-provisioned' });
