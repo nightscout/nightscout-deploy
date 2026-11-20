@@ -39,6 +39,13 @@ function loginSQL(role,password) {
   if(!/^[a-f0-9]{64}$/.test(password))throw fail('SEEDED_CREDENTIAL_INVALID');
   return 'CREATE ROLE '+plan.quote(role)+" LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD '"+password+"'";
 }
+// A restored or repeated lab must keep its input transport. Under pgstream the database carries
+// one subscription per evaluator, so K must match too; writer-driven fixtures carry no
+// subscriptions and are K-free (decision statefulset-ordinal-scaling, amended 2026-11-20).
+function restoreCheck(complete,inputTransport,workers){
+  if((complete.inputTransport ?? 'pgstream') !== inputTransport)throw fail('BOOTSTRAP_INPUT_TRANSPORT_CHANGED_RECREATE_DEMO');
+  if(inputTransport==='pgstream'&&complete.evaluatorWorkers!==workers)throw fail('BOOTSTRAP_EVALUATOR_ROSTER_CHANGED_RECREATE_DEMO');
+}
 async function bootstrap(options) {
   const inputTransport=require('./input-transport').selection();
   const workers=require('./evaluator-workers'),evaluatorWorkers=workers.selection();
@@ -81,8 +88,7 @@ async function bootstrap(options) {
     // An existing lab (a repeat up, or a restored fixture snapshot at another core or deploy
     // commit) is brought forward with migrate up; the roles' readiness checks decide the rest.
     const complete=JSON.parse(fs.readFileSync(completeFile,'utf8'));
-    if((complete.inputTransport ?? 'pgstream') !== inputTransport)throw fail('BOOTSTRAP_INPUT_TRANSPORT_CHANGED_RECREATE_DEMO');
-    if(complete.evaluatorWorkers!==evaluatorWorkers?.workers)throw fail('BOOTSTRAP_EVALUATOR_ROSTER_CHANGED_RECREATE_DEMO');
+    restoreCheck(complete,inputTransport,evaluatorWorkers?.workers);
     const l=plan.layout(),admin=new (require('pg').Client)({connectionString:pg.toString(),connectionTimeoutMillis:10000,statement_timeout:10000});
     await admin.connect();
     try{
@@ -184,4 +190,4 @@ function report(error){
   return out;
 }
 if(require.main===module){Promise.resolve().then(()=>{if(process.argv.length>2)throw fail('BOOTSTRAP_USAGE');return bootstrap(input());}).then(result=>process.stdout.write(JSON.stringify(result)+'\n')).catch(error=>{process.stderr.write(JSON.stringify(report(error))+'\n');process.exitCode=1;});}
-module.exports={input,writePrivate,bootstrap,redact,report};
+module.exports={input,writePrivate,bootstrap,redact,report,restoreCheck};
