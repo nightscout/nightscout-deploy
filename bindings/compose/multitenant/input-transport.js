@@ -40,7 +40,7 @@ function compose(apiReplicas, evaluator, realtime) {
         hostname, networks: { backend: { aliases: [hostname + '.' + domain] } },
         environment: { ...settings, NS_SERVE_INTERNAL_SOCKET: '', NS_SERVE_INTERNAL_HOST: '0.0.0.0',
           NS_SERVE_INTERNAL_PORT: String(port), ...(role === 'evaluator' ? { NS_REALTIME_SLICE_PEERS: JSON.stringify(peers) } : {}) },
-        healthcheck: { test: ['CMD','node','bin/nightscout.js','healthcheck','--endpoint','ready','--url','http://127.0.0.1:' + port + '/'] },
+        healthcheck: { test: ['CMD','node','bin/nightscout.js','healthcheck','--endpoint','ready','--url','http://127.0.0.1:' + port + '/healthz/ready'] },
       };
     }
   }

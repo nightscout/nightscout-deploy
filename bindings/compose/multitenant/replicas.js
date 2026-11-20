@@ -22,7 +22,7 @@ function compose(n = count(), composeFile = 'compose.yaml') {
       '      - ${NS_DEMO_STATE}/tls/ca.crt:/run/ns-ca/ca.crt:ro');
     lines.push('    environment:', '      NS_API_INTERNAL_SOCKET: ""', '      NS_API_INTERNAL_URL: ' + service,
       '      NS_SERVE_INTERNAL_SOCKET: ""', '      NS_SERVE_INTERNAL_HOST: 0.0.0.0', '      NS_SERVE_INTERNAL_PORT: "7001"');
-    lines.push('    healthcheck:', '      test: [CMD, node, bin/nightscout.js, healthcheck, --endpoint, ready, --url, http://127.0.0.1:7001/]');
+    lines.push('    healthcheck:', '      test: [CMD, node, bin/nightscout.js, healthcheck, --endpoint, ready, --url, http://127.0.0.1:7001/healthz/ready]');
     lines.push('    networks: {backend: {aliases: [api-internal]}}');
   }
   if (n > 1) for (const role of ['evaluator', 'realtime', 'tenant-admin']) lines.push('  ' + role + ':',
