@@ -2,15 +2,21 @@
 'use strict';
 
 // Credentials exist before apply (decision provisioning-secrets-in). `seed` creates them once, in
-// a new private directory: one PostgreSQL password per deployment role and the Vault token ids the
-// roles use. The provisioning step creates the roles and tokens from these files; the document
-// renderer reads them. Nothing reads a credential back out of a running container.
+// a new private directory: one PostgreSQL password per deployment role, the Vault token ids the
+// roles use, and the deployment signing secret (decision deployment-signing-secret) from which the
+// issuing roles derive every tenant token-signing key. The provisioning step creates the roles and
+// tokens from these files; the document renderer reads them. Nothing reads a credential back out
+// of a running container.
 //
 //   node credentials.js seed <new-directory>
 //
-// Layout: <dir>/postgres/<role kind> and <dir>/vault/<token name>, one value per file, 0600.
+// Layout: <dir>/postgres/<role kind>, <dir>/vault/<token name> and <dir>/vault/signing-secret, one
+// value per file, 0600. The signing secret sits with the Vault material: the Kubernetes bootstrap
+// writes it into the deployment's KV mount for the Vault Agent template (api); Compose and the
+// other Kubernetes roles receive it as a mounted file.
 const fs = require('node:fs'), path = require('node:path'), crypto = require('node:crypto');
-const TOKENS = Object.freeze(['api', 'owner-credentials', 'management-issuer', 'provisioner']);
+const TOKENS = Object.freeze(['api', 'owner-credentials', 'provisioner']);
+const SIGNING = 'signing-secret';
 // Hex only: a password is embedded in CREATE ROLE ... PASSWORD and in connection URLs, and Vault
 // refuses custom token ids with a dot or a service-token prefix.
 const VALUE = /^[a-f0-9]{64}$/;
@@ -21,7 +27,7 @@ function roleKinds () { return Object.keys(require('./config').layout().roles); 
 
 function seed (directory, kinds = roleKinds()) {
   fs.mkdirSync(directory, { mode: 0o700 });
-  for (const [group, names] of [['postgres', kinds], ['vault', TOKENS]]) {
+  for (const [group, names] of [['postgres', kinds], ['vault', [...TOKENS, SIGNING]]]) {
     fs.mkdirSync(path.join(directory, group), { mode: 0o700 });
     for (const name of names) {
       if (!KIND.test(name.replaceAll('-', '_'))) throw fail('CREDENTIAL_NAME_INVALID');
@@ -57,6 +63,7 @@ function read (directory, kinds = roleKinds()) {
   return {
     postgres: Object.fromEntries(kinds.map(kind => [kind, value(path.join(directory, 'postgres', kind))])),
     vault: Object.fromEntries(TOKENS.map(name => [name, value(path.join(directory, 'vault', name))])),
+    signing: value(path.join(directory, 'vault', SIGNING)),
   };
 }
 
@@ -81,4 +88,4 @@ if (require.main === module) {
     process.exitCode = 1;
   }
 }
-module.exports = { TOKENS, seed, addOwnerSettings, read, urls };
+module.exports = { TOKENS, SIGNING, seed, addOwnerSettings, read, urls };

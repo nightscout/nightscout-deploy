@@ -65,8 +65,9 @@ function replacePrivate (file, value, { exclusive = false } = {}) {
 function policyRules (layout, mode) {
   if (!/^[a-z][a-z0-9_-]{0,62}$/.test(layout.mount) || !/^[a-z][a-z0-9_]{0,50}$/.test(layout.prefix) || mode !== 'registry') throw fail('VAULT_AGENT_LAYOUT_INVALID');
   const key = purpose => 'tenant-' + purpose + '-*';
-  return [...[['decrypt', 'data'], ['hmac', 'signing'], ['verify', 'signing'], ['sign', 'access']]
-    .map(([operation, purpose]) => 'path "' + layout.mount + '/' + operation + '/' + key(purpose) + '" { capabilities = ["update"] }'),
+  // Token signing is in process from the deployment signing secret (decision
+  // deployment-signing-secret); the serving api only decrypts tenant data.
+  return ['path "' + layout.mount + '/decrypt/' + key('data') + '" { capabilities = ["update"] }',
   'path "auth/token/renew-self" { capabilities = ["update"] }', 'path "auth/token/lookup-self" { capabilities = ["read"] }'].join('\n');
 }
 function apiNames (replicas) {

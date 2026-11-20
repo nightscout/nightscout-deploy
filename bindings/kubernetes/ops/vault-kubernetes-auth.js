@@ -7,7 +7,8 @@
 // writes no role document: the api documents were rendered before apply with the Agent sink as
 // their token file (ops/render-documents.cjs, decision provisioning-secrets-in).
 //
-// Policy: the api's serving policy plus the Agent's renew-self and lookup-self. The login is
+// Policy: the api's serving policy, read on the deployment signing secret's KV path (written by the
+// registry bootstrap, rendered by the Agent template), plus the Agent's renew-self and lookup-self. The login is
 // Kubernetes auth bound to the cohort's service account and namespace, with a projected token of a
 // dedicated audience (decision vault-agent-sidecar). No AppRole material is created or written.
 //
@@ -63,7 +64,11 @@ async function provision ({ vault, output, ttl, maxTtl, namespace, serviceAccoun
   }
   const policy = await request('sys/policies/acl/' + layout.prefix + '_api');
   if (typeof policy?.data?.policy !== 'string' || !policy.data.policy) throw fail('IMPORTED_TENANT_POLICY_MISSING');
+  // The deployment signing secret (decision deployment-signing-secret) is written to KV once by
+  // the registry bootstrap; the Agent's template renders it to /run/ns-vault/signing-secret.
+  const signingPath = layout.prefix + '_kv/data/signing';
   const rules = [policy.data.policy];
+  rules.push('# Vault Agent template: the deployment signing secret', 'path "' + signingPath + '" { capabilities = ["read"] }');
   rules.push('# Vault Agent token self-management', 'path "auth/token/renew-self" { capabilities = ["update"] }', 'path "auth/token/lookup-self" { capabilities = ["read"] }');
   // 400 "path is already in use" when a previous partial run enabled the method.
   await request('sys/auth/kubernetes', { type: 'kubernetes' }, 'POST', { accept: [400] });

@@ -6,12 +6,12 @@ the base binding when the overlay is not selected. Decisions of record are the
 alignment release decisions `vault-agent-sidecar` and `vault-one-approle-per-deployment`.
 
 The Agent owns AppRole login, renewal and max-TTL reauthentication. Serving APIs
-read its token sink on every Transit call. The policy has six fixed rules: decrypt
-`tenant-data-*`, HMAC/verify `tenant-signing-*`, sign `tenant-access-*`, and token
-self-lookup/renewal. Static lab key naming uses the corresponding fixed suffix
-patterns. It never imports or unions tenant policies, enumerates keys or leases,
-or grants key management or management-session signing. Provisioning and management
-issuer credentials remain on their existing private operator paths.
+read its token sink on every Transit call. The policy has three fixed rules: decrypt
+`tenant-data-*` and token self-lookup/renewal. Tenant tokens are signed in process from
+the deployment signing secret (decision `deployment-signing-secret`), so the policy grants
+no HMAC, verify or sign capability. It never imports or unions tenant policies, enumerates
+keys or leases, or grants key management. Provisioning credentials remain on their existing
+private operator path.
 
 Only selected APIs receive the read-only sink mount. Realtime, evaluator, UI,
 placement publisher and operation helpers inherit no Agent credential. Agent

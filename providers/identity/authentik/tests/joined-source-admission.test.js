@@ -59,6 +59,6 @@ test('actual source defaults and OIDC environment preserve canonical mg/dL repre
   assert.equal(require(path.join(input.core,'lib/settings'))().units,'mg/dl');
   const p=input.profile;write(path.join(p.state,'private/client-secret'),crypto.randomBytes(32).toString('base64url'));write(path.join(p.state,'private/cookie-key'),crypto.randomBytes(32).toString('base64'));
   const before={DISPLAY_UNITS:'mg/dl',ENABLE:'api'};
-  const result=install.mergeEnvironment(before,profile.adapter(p),'synthetic-only','synthetic_human',{namespaces:{authorization:'synthetic_auth',access:'synthetic_access'},mount:'synthetic_transit'},crypto.randomBytes(32).toString('hex'));
+  const result=install.mergeEnvironment(before,profile.adapter(p),'synthetic-only','synthetic_human',{namespaces:{authorization:'synthetic_auth',access:'synthetic_access'},mount:'synthetic_transit'});
   assert.equal(result.DISPLAY_UNITS,'mg/dl');assert(!Object.hasOwn(profile.apiOverlay(p).services.api.environment,'DISPLAY_UNITS'));
 }));

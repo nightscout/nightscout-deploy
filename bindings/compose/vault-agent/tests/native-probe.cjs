@@ -66,7 +66,9 @@ async function main () {
     if (role.token_policies.length !== 1 || role.token_policies[0] !== complete.policy || role.token_no_default_policy !== true || role.token_ttl !== 20 || role.token_max_ttl !== 60 || role.secret_id_ttl !== 0 || role.secret_id_num_uses !== 0 || complete.secretIdTtl !== 0 || complete.secretIdNumUses !== 0 ||
       crypto.createHash('sha256').update(policy).digest('hex') !== complete.policySha256) throw fail('NATIVE_ROLE_POLICY_MISMATCH');
     const key = purpose => require('/opt/app/lib/tenant-registry/rules').vaultKey(tenants[0].id, purpose);
-    const specs = [['decrypt', 'data', true], ['hmac', 'signing', true], ['verify', 'signing', true], ['sign', 'access', true],
+    // Signing is in process (decision deployment-signing-secret); the retired Transit
+    // signing paths must stay denied.
+    const specs = [['decrypt', 'data', true], ['hmac', 'signing', false], ['verify', 'signing', false], ['sign', 'access', false],
       ['keys', 'data', false], ['encrypt', 'data', false], ['sign', 'management', false], ['sign', 'human-management', false]];
     const paths = specs.map(([operation, purpose]) => layout.mount + '/' + operation + '/' + key(purpose));
     const selected = await vault('sys/capabilities', { token: sink(), paths });

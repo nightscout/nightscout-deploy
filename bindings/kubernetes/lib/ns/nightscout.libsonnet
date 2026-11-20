@@ -183,7 +183,15 @@
           }
         }
       }
-    ||| % { role: c.prefix + '_vault_agent' },
+
+      # Deployment signing secret (decision deployment-signing-secret): the api derives every
+      # tenant token-signing key from it in process. Written to KV once by the registry bootstrap.
+      template {
+        destination = "/run/ns-vault/signing-secret"
+        perms = "0400"
+        contents = "{{ with secret \"%(kv)s/data/signing\" }}{{ .Data.data.secret }}{{ end }}"
+      }
+    ||| % { role: c.prefix + '_vault_agent', kv: c.prefix + '_kv' },
 
     local vaultHcl = |||
       disable_mlock = true
@@ -348,7 +356,7 @@
             { name: 'VAULT_CACERT', value: '/run/ns-ca/ca.crt' },
             { name: 'SKIP_SETCAP', value: '1' },
           ],
-          startupProbe: { exec: { command: ['test', '-s', '/run/ns-vault/token'] }, periodSeconds: 2, failureThreshold: 45 },
+          startupProbe: { exec: { command: ['sh', '-c', 'test -s /run/ns-vault/token && test -s /run/ns-vault/signing-secret'] }, periodSeconds: 2, failureThreshold: 45 },
           securityContext: hardened,
           volumeMounts: [
             { name: 'vault-agent-config', mountPath: '/vault/config', readOnly: true },
@@ -441,6 +449,8 @@
                 env: [
                   { name: 'NODE_EXTRA_CA_CERTS', value: '/run/ns-ca/ca.crt' },
                   { name: 'NS_VAULT_ADDR', value: 'https://vault:8200' },
+                  // Deployment signing secret from the admin role Secret (decision deployment-signing-secret).
+                  { name: 'NS_SIGNING_SECRET_FILE', value: '/run/ns-config/signing-secret' },
                   { name: 'ADMIN_HOSTNAME', valueFrom: { fieldRef: { fieldPath: 'status.podIP' } } },
                   { name: 'ADMIN_PORT', value: '1342' }, { name: 'ADMIN_INSECURE_BIND_ACKNOWLEDGED', value: 'true' },
                 ],
@@ -804,8 +814,8 @@
           api: ['ns_api_pg','ns_readiness_pg','ns_api_root_writer_pg','ns_alarm_pg','ns_display_pg','ns_lifetime_pg'],
           realtime: ['ns_realtime_pg','ns_display_pg','ns_lifetime_pg'],
           evaluator: ['ns_evaluator_pg','ns_outbox_pg','ns_suppression_pg','ns_activity_pg','ns_display_pg','ns_stream_recovery_pg','ns_lifetime_pg','ns_pgstream_generation'],
-          'tenant-admin': ['ns_owner_writer_pg','ns_owner_reader_pg','ns_owner_credentials_pg','ns_owner_settings_pg','ns_lifetime_pg','vault-token'],
-          admin: ['ns_provisioner_pg','ns_ownership_pg','ns_connector_sources_pg','ns_management_sessions_pg','vault-token','management-vault-token'],
+          'tenant-admin': ['ns_owner_writer_pg','ns_owner_reader_pg','ns_owner_credentials_pg','ns_owner_settings_pg','ns_lifetime_pg','vault-token','signing-secret'],
+          admin: ['ns_provisioner_pg','ns_ownership_pg','ns_connector_sources_pg','ns_management_sessions_pg','vault-token','signing-secret'],
           ui: ['env.json','config.json'], pgstream: ['pgstream.yaml'], primer: ['config.json'],
         },
         ownership: { namespace: c.namespace, label: { 'nightscout.org/run-id': c.runId }, clusterScoped: [{ kind: 'ClusterRoleBinding', name: c.namespace + '-vault-tokenreview' }] },

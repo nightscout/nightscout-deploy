@@ -73,18 +73,25 @@ function render ({ output, credentials, postgres, useAgent, sourceCommit }) {
       const dir = path.join(output, name);
       for (const [setting, login] of Object.entries(connections[role])) token(path.join(dir, setting.toLowerCase()), roleURLs[login]);
       if (role === 'api') {
-        const file = path.join(dir, 'vault-token');
-        if (useAgent) fs.rmSync(file, { force: true });
-        else token(file, tokens.api);
+        // With the Vault Agent (Kubernetes) the api reads its token and the signing secret from
+        // the Agent's sink and template, not from this document.
+        for (const [file, value] of [['vault-token', tokens.api], ['signing-secret', seeded.signing]]) {
+          if (useAgent) fs.rmSync(path.join(dir, file), { force: true });
+          else token(path.join(dir, file), value);
+        }
       }
       if (role === 'evaluator' && name !== 'evaluator') token(path.join(dir, 'ns_pgstream_generation'), generation);
-      if (role === 'tenant-admin') token(path.join(dir, 'vault-token'), tokens['owner-credentials']);
+      if (role === 'tenant-admin') {
+        token(path.join(dir, 'vault-token'), tokens['owner-credentials']);
+        token(path.join(dir, 'signing-secret'), seeded.signing);
+      }
       if (role === 'admin') {
         token(path.join(dir, 'vault-token'), tokens.provisioner);
-        token(path.join(dir, 'management-vault-token'), tokens['management-issuer']);
+        token(path.join(dir, 'signing-secret'), seeded.signing);
       }
-      // A seeded project may have been rendered by the earlier JSON binding.
-      for (const retired of ['env.json', 'config.json', 'operation.json', 'evaluator-metadata.json']) fs.rmSync(path.join(dir, retired), { force: true });
+      // A seeded project may have been rendered by the earlier JSON binding; management sessions
+      // no longer sign through Vault (decision deployment-signing-secret).
+      for (const retired of ['env.json', 'config.json', 'operation.json', 'evaluator-metadata.json', 'management-vault-token']) fs.rmSync(path.join(dir, retired), { force: true });
     }
   }
   const stream = require('./pgstream');

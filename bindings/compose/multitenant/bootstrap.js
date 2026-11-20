@@ -124,7 +124,7 @@ async function bootstrap(options) {
     const streamDescriptor=require('./pgstream').descriptor(l,evaluatorWorkers);
     await require('./pgstream').init({admin,adminURL:pg.toString(),layout:l,config:streamDescriptor});
     // Registry completion runs before the admin client closes.
-    const result=await require('./registry-bootstrap').finish({request,rootToken:initialization.root_token,layout:l,tokens:seeded.vault,admin});
+    const result=await require('./registry-bootstrap').finish({request,rootToken:initialization.root_token,layout:l,tokens:seeded.vault,signing:seeded.signing,admin});
     writePrivate(path.join(privateDirectory,'layout.json'),l);
     writePrivate(completeFile,{version:2,sourceCommit,deployCommit,registryMode:true,evaluatorWorkers:evaluatorWorkers?.workers});
     return {...result,sourceCommit};

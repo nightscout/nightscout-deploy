@@ -104,8 +104,11 @@ readiness so lifecycle and intake readiness cannot deadlock startup. Core still 
 storage admission on each contract.
 
 Each role receives its private HTTP listener and peer Service addresses in the Pod environment.
-The API receives the Vault Agent token sink at `/run/ns-vault/token`. Tenant-admin and admin
-read their own scoped token files directly from projected Secrets.
+The API receives the Vault Agent token sink at `/run/ns-vault/token` and, through the Agent's
+template, the deployment signing secret at `/run/ns-vault/signing-secret` (`NS_SIGNING_SECRET_FILE`;
+written to `<prefix>_kv/data/signing` once by the registry bootstrap, decision
+`deployment-signing-secret`). Tenant-admin and admin read their own scoped token files and the same
+signing secret (`/run/ns-config/signing-secret`) directly from projected Secrets.
 
 Default deny ingress and directed policies admit the four roles and the operator to private role
 ports, edge/operator to consumer API/realtime ports, and only pgstream to stream intake. Public

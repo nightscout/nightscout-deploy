@@ -55,10 +55,10 @@ session/token/logout writes. Existing credentials are preserved independently.
 A partial install is retained and refused on repetition; there is no replay,
 rollback or credential fallback.
 
-Human Transit signing uses a separate constant two-pattern sign-only static
-24-hour qualification credential. It cannot manage keys. It is **not** the
-completed Vault Agent serving lifecycle profile; its renewal is not claimed.
-Existing Agent evidence keeps its original source and scope. No live IdP or
+Human session tokens are signed in process with keys derived from the role's
+deployment signing secret (`NS_SIGNING_SECRET_FILE`, decision
+`deployment-signing-secret`); the installer creates no Vault policy or token and
+the access configuration carries no Vault block. No live IdP or
 user data belongs in this candidate.
 
 Backchannel logout is optional. This candidate can register one exact origin;

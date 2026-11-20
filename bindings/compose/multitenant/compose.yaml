@@ -126,6 +126,9 @@ services:
       ADMIN_HOSTNAME: admin
       ADMIN_PORT: "1342"
       NS_VAULT_ADDR: https://vault:8200
+      # Deployment signing secret (decision deployment-signing-secret), rendered into the role's
+      # private document directory; tenant token-signing keys are derived from it in process.
+      NS_SIGNING_SECRET_FILE: /run/ns-config/signing-secret
       ADMIN_INSECURE_BIND_ACKNOWLEDGED: "true"
     command: [node, deploy/multitenant/entrypoint.js, admin]
     restart: ${NS_COMPOSE_RESTART:-on-failure}
@@ -168,6 +171,9 @@ services:
       API_HOSTNAME: 0.0.0.0
       API_PORT: "1337"
       NS_VAULT_ADDR: https://vault:8200
+      # Deployment signing secret (decision deployment-signing-secret), rendered into the role's
+      # private document directory; tenant token-signing keys are derived from it in process.
+      NS_SIGNING_SECRET_FILE: /run/ns-config/signing-secret
       NS_API_REST_CONCURRENCY: ${NS_API_REST_CONCURRENCY:-}
       NS_API_REST_QUEUE: ${NS_API_REST_QUEUE:-}
       NS_API_REST_QUEUE_TIMEOUT_MS: ${NS_API_REST_QUEUE_TIMEOUT_MS:-}
@@ -263,6 +269,9 @@ services:
       TENANT_ADMIN_HOSTNAME: 0.0.0.0
       TENANT_ADMIN_PORT: "1341"
       NS_VAULT_ADDR: https://vault:8200
+      # Deployment signing secret (decision deployment-signing-secret), rendered into the role's
+      # private document directory; tenant token-signing keys are derived from it in process.
+      NS_SIGNING_SECRET_FILE: /run/ns-config/signing-secret
     command: [node, deploy/multitenant/entrypoint.js, tenant-admin]
     restart: ${NS_COMPOSE_RESTART:-on-failure}
     depends_on:

@@ -53,8 +53,9 @@ test('bootstrap rejects changed credentials and partially provisioned Vault stat
 });
 test('role policy permits serving operations only; identity includes exact fixed roster; no key management', () => {
   const registry = bootstrap.policyRules({ mount: 'synthetic_transit', prefix: 'synthetic' }, 'registry');
-  assert.equal(registry.split('\n').length, 6); assert.ok(registry.includes('decrypt/tenant-data-*')); assert.ok(registry.includes('sign/tenant-access-*'));
-  assert.equal(/keys\/|management|encrypt\/|create|delete|list/.test(registry), false);
+  assert.equal(registry.split('\n').length, 3); assert.ok(registry.includes('decrypt/tenant-data-*'));
+  // Signing is in process from the deployment signing secret (decision deployment-signing-secret).
+  assert.equal(/keys\/|management|encrypt\/|create|delete|list|hmac\/|verify\/|sign\/|tenant-signing|tenant-access/.test(registry), false);
   assert.throws(() => bootstrap.policyRules({ mount: '../bad', prefix: 'synthetic' }, 'registry'));
   assert.throws(() => bootstrap.apiNames(0)); assert.throws(() => bootstrap.apiNames(17));
 });
