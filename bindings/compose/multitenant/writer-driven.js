@@ -1,12 +1,5 @@
 'use strict';
 
-function selection(env = process.env) {
-  const mode = env.NS_INPUT_TRANSPORT ?? 'pgstream';
-  if (!['pgstream', 'writer-driven'].includes(mode)) throw new Error('Unknown NS_INPUT_TRANSPORT');
-  require('./pgstream').enabled(env);
-  return mode;
-}
-
 // JSON is valid Compose YAML. The final overlay gives every sender the same ordinal
 // roster, including replicas that extend the base file directly.
 function compose(apiReplicas, evaluator, realtime) {
@@ -22,12 +15,7 @@ function compose(apiReplicas, evaluator, realtime) {
     NS_REALTIME_INTERNAL_SOCKET: '', NS_REALTIME_INTERNAL_URL: 'http://realtime:19003/',
     ...(apiReplicas > 1 ? { NS_API_INTERNAL_SOCKET: '', NS_API_INTERNAL_URL: api.service } : {}),
   };
-  const services = {
-    pgstream: { profiles: ['cdc'] },
-    postgres: { command: ['postgres', '-c', 'max_connections=${NS_POSTGRES_MAX_CONNECTIONS:-140}',
-      '-c', 'reserved_connections=${NS_POSTGRES_CLINICAL_RESERVED_CONNECTIONS:-40}'] },
-    bootstrap: { environment: mode },
-  };
+  const services = { bootstrap: { environment: mode } };
   for (const name of [...api.instances(apiReplicas).map(x => x.service), 'tenant-admin'])
     services[name] = { environment: settings };
   for (const [role, names, domain, port] of [
@@ -46,4 +34,4 @@ function compose(apiReplicas, evaluator, realtime) {
   }
   return JSON.stringify({services}, null, 2) + '\n';
 }
-module.exports = {selection, compose};
+module.exports = {compose};

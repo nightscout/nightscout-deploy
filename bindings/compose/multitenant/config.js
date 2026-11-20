@@ -10,13 +10,12 @@ function quote(name) {
   if (typeof name !== 'string' || !/^[a-z][a-z0-9_]{0,62}$/.test(name) || name.startsWith('pg_')) throw new TypeError('Explicit deployment SQL identifier required');
   return '"' + name + '"';
 }
-// Ordinary streaming and its lifetime roles use the same lifecycle catalogue.
+// The lifetime roles use the same lifecycle catalogue.
 function nativeSelection(prefix = 'nsdemo') {
   const settings = require('../../lib/server/serve/deployment-settings');
   return settings.nativeSelection(settings.layout({ NS_PG_PREFIX: prefix }));
 }
 function catalogues() {
-  require('./pgstream').enabled();
   const domains = require('../../lib/server/serve/postgres-domains');
   const successors = require('../../lib/server/tenant-socket-order-port').catalogues;
   return {...Object.fromEntries([...clinical,'settings'].map(name => [name,successors[name] || domains.get(name).catalogue])),
@@ -32,10 +31,10 @@ function catalogues() {
     subject_policy:require('../../lib/subject-policy/postgres-candidate.json'),
     owner_configuration:require('../../lib/tenant-settings/owner-authority-candidate.json')};
 }
-function layout(prefix = 'nsdemo', inputTransport = require('./input-transport').selection()) {
+function layout(prefix = 'nsdemo') {
   quote(prefix);
   if (prefix.length > 24) throw new TypeError('Deployment prefix too long');
-  const names = [...(inputTransport === 'pgstream' ? ['pgstream'] : []),'api','readiness','realtime','evaluator','alarm','suppression','outbox','owner_writer','owner_reader','owner_credentials','owner_settings','root_writer','operator','provisioner','display_reader','activity_reader','ownership_operator','connector_writer','management_issuer','ui_registry',
+  const names = ['api','readiness','realtime','evaluator','alarm','suppression','outbox','owner_writer','owner_reader','owner_credentials','owner_settings','root_writer','operator','provisioner','display_reader','activity_reader','ownership_operator','connector_writer','management_issuer','ui_registry',
     ...serviceRoles.map(name=>'lifetime_'+name.replace('-','_'))];
   return {prefix,owner:prefix+'_owner',managementAuthorityOwner:prefix+'_management_authority',namespaces:Object.fromEntries(Object.keys(catalogues()).map(name=>[name,prefix+'_'+name])),
     roles:Object.fromEntries(names.map(name=>[name,prefix+'_'+name])),mount:prefix+'_transit'};

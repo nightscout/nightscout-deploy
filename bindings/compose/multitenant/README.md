@@ -1,6 +1,6 @@
 # Single-host multitenant Compose demonstration
 
-This explicit synthetic deployment runs API, realtime, evaluator, pgstream, tenant-admin
+This explicit synthetic deployment runs API, realtime, evaluator, tenant-admin
 and the shipped web pages in separate containers. nginx presents one browser
 origin. PostgreSQL and TLS-enabled Vault stay on the private network. It does
 not change `nightscout single` or the existing Mongo Compose deployment.
@@ -63,7 +63,7 @@ both (`org.opencontainers.image.revision`, `org.nightscout.deploy.revision`).
 `prepare` seeds every credential before the first start (`credentials.js`: one PostgreSQL password
 per role and the Vault token ids, under the private state's `credentials/`). `up` is one apply: the
 one-shot `bootstrap` service writes each role’s mounted credential files (`render.js`), then
-creates the schemas, roles, grants, Vault tokens and pgstream capture metadata from the same
+creates the schemas, roles, grants and Vault tokens from the same
 credentials, and every role waits for it to complete (decision `provisioning-secrets-in`). A
 repeat `up` renders again and finds the database already provisioned. `./demo.sh bootstrap` runs
 the one-shot step alone. Run `./demo.sh prime` to populate the lab.
@@ -77,33 +77,13 @@ no serving identity authority to modify that relation. The admin service compose
 ownership operations and durable connector-source configuration on separate
 database identities. Connector definitions contain secret references, never
 plaintext endpoint credentials. The private operator resolves a requested tenant’s current lock key from PostgreSQL. The registry-backed operator format requires an active grant for that tenant and role for export, restore, and recovery. The two-tenant lab demonstration selects its synthetic clients independently.
-The separate pgstream service owns capture through its registered stream login.
-The platform restarts that worker independently; its wire credentials are mounted
-only in the pgstream container. Evaluators accept the private stream at their
-admitted endpoints, commit durable evaluation work and hand completed output to realtime
+The API marks each written tenant pending in its write transaction and sends a private hint
+after commit. Evaluators recompute pending tenants on a hint or a periodic sweep, commit durable
+evaluation work and hand completed output to realtime
 over the private service boundary. Clinical reads stay on the evaluator's
 registered storage connection; realtime reads typed completed output and current
 presentation/control metadata. Partial setup is refused; source
 and deployment revision changes require fresh synthetic state.
-
-Each native `run` invocation can wait for its explicitly configured receiver
-transport before opening a health source pool, initializing or consuming WAL.
-The generated configuration selects `pgstream.startupTransport` with
-`timeoutMs: 300000` and `retryIntervalMs: 50`. These positive integer settings are
-overridable in a newly prepared configuration. They produce the separate
-`target.webhooks.startup_transport` wire document with the canonical ordered
-receiver roster. An absent option preserves the previous native startup path.
-
-The wait requires every selected receiver to answer GET `/pgstream/ready` with
-204. This checks HTTP listener and checkpoint-store ownership; source admission,
-schema verification, clinical completion and whole-role health follow their
-existing checks. Only typed dial connection refusal retries within the selected
-startup budget. Other HTTP/network refusals and cancellation stop startup. After
-success, the startup wait ends; delivery retains its existing strict retry and
-checkpoint behavior. Startup, notifier acknowledgment, clinical and controller
-convergence clocks remain separate. A future controller must allow the selected
-startup and schema/acknowledgment work plus its stability observation within the
-remaining outer work and cleanup windows. Existing prepared runs remain frozen.
 
 Serving roles report readiness on their private listener (`/healthz/ready`; Compose runs
 `nightscout healthcheck --endpoint ready --socket /run/ns-ipc/<role>.sock`). Serving roles restart
@@ -213,8 +193,7 @@ are not automatically replayed.
 
 The existing `add` operation remains limited to 100 explicit tenant specs per
 addition. It provisions through the private tenant API and commissions only
-unfinished tenants. Reusing a cohort does not authorize resetting its stream,
-changing source/image pins, replacing credentials or changing its observation
+unfinished tenants. Reusing a cohort does not authorize changing source/image pins, replacing credentials or changing its observation
 window. Higher worker counts can increase database contention and custody I/O;
 measure their effects before choosing later scale points.
 
@@ -369,7 +348,7 @@ When a limit is set, a refused request runs no handler, so a refused write has n
 storage effect. The limit counts only the API's public listener; `serve.internal`
 (socket authority for realtime, lifecycle status) and realtime sockets are not counted.
 
-Bootstrap grants `pg_use_reserved_connections` to the pgstream, evaluator, realtime,
+Bootstrap grants `pg_use_reserved_connections` to the evaluator, realtime,
 outbox, suppression and evaluator/realtime lifetime roles only. The API, admin, UI
 and the shared display/activity reader roles cannot use the reserved slots. The
 defaults keep the 97 general slots of PostgreSQL's default configuration and add 40
@@ -476,8 +455,7 @@ native test is UNMEASURED, not deployment acceptance.
 
 ## Fixed native evaluator processes
 
-Prepare fresh synthetic state with a core revision that accepts
-`NS_PGSTREAM_EVALUATOR_PROCESSES`. Set `NS_EVALUATOR_WORKERS` during preparation
+Set `NS_EVALUATOR_WORKERS` during preparation
 to opt in to a fixed roster of 1–8 processes. Leaving it unset keeps the
 standalone evaluator. This example starts two evaluator processes and provisions two synthetic tenants.
 
@@ -492,28 +470,6 @@ Each process owns a tenant slice selected by core's SHA-256 modulo rule. An idle
 slice can receive a newly provisioned tenant. Set `NS_DEMO_TENANTS` when running the lab
 client to select the synthetic population. Each evaluator has its
 own private listener and readiness identity. A diagnostic Compose override may set CPU or
-memory limits for selected workers or the producer. Evaluator and operation pools are
-bounded at four and eight connections per process respectively. PostgreSQL
-keeps one persistent producer slot and permits bounded snapshot recovery.
+memory limits for selected workers. Evaluator and operation pools are
+bounded at four and eight connections per process respectively.
 
-The producer registers every receiver for every input table and transaction
-boundary. It advances the source checkpoint only after all receivers acknowledge
-a cohort. An evaluator can finish accepted work while another is held.
-An unavailable receiver can stall later intake for every slice. Restart the
-same receiver with its prepared configuration so the producer can replay
-from the retained slot. Replanning receiver membership requires coordinated
-downtime and a fresh synthetic deployment through this binding. Live tenant
-admission, populated slot rebootstrap, and the restore demo require separate
-qualification for fixed process rosters.
-
-## Explicit pgstream slot recovery
-
-[Populated pgstream rebootstrap](PGSTREAM-REBOOTSTRAP.md) is an explicit host
-operator action after confirmed process exclusion. It replaces only the selected
-missing or lost slot, leaves all effect-serving roles stopped and preserves
-durable clinical/completed/pending/due/notification state. It never reruns initial
-DBA setup or reopens services automatically. Actual populated recovery acceptance
-remains UNMEASURED until the recorded platform/database case runs.
-
-The fixture sets PostgreSQL `max_slot_wal_keep_size = -1` so priming can retain WAL while
-the consumer catches up. Operators choose retention for their disk budget and monitor slot lag and free space.

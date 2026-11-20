@@ -40,7 +40,8 @@ for (const finishFails of [false, true]) {
       './clinical-isolation': {grants: () => []},
       '../../lib/migrations/postgres': {},
       '../../lib/management-sessions/authority': {grants: () => ({authorityOwner: [], issuer: []})},
-      './pgstream': {enabled: () => true, descriptor: () => ({pgstream: {slot: 'fixture'}}), init: async () => {}},
+      './output-grants': {outputGrants: () => async () => {}},
+      '../../lib/server/serve/deployment-settings': {evaluator: () => ({consumer: 'evaluator-fixture'})},
       './credentials': {read: () => ({postgres: {}, vault: {}})},
       './registry-bootstrap': {finish}
     };

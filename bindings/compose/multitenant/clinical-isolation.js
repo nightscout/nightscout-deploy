@@ -12,7 +12,7 @@
 //    reserved_connections slots that only members of pg_use_reserved_connections
 //    may use (PostgreSQL 16). Bootstrap grants that membership to the roles that
 //    produce and deliver clinical output and to nothing that serves REST, so API,
-//    admin and UI pools cannot take the slots evaluator, realtime and pgstream need.
+//    admin and UI pools cannot take the slots evaluator and realtime need.
 //
 // Each value is selected at preparation, recorded in .env and applied by Compose
 // (PostgreSQL command) and bootstrap (api environment, grants). The connection
@@ -37,7 +37,7 @@ const SUPERUSER_RESERVED = 3;
 // display_reader and activity_reader are shared with the api role and are not
 // reserved; the api's own roles (api, readiness, root_writer, alarm, lifetime_api)
 // are never members.
-const CLINICAL_ROLE_KINDS = Object.freeze(['pgstream', 'evaluator', 'realtime', 'outbox', 'suppression', 'lifetime_evaluator', 'lifetime_realtime']);
+const CLINICAL_ROLE_KINDS = Object.freeze(['evaluator', 'realtime', 'outbox', 'suppression', 'lifetime_evaluator', 'lifetime_realtime']);
 
 // Declared PostgreSQL connection budget (decision pg-connection-budget): each
 // role process's pools (core lib/server/serve/pool-config.js, NS_POOL_<ROLE>_MAX,

@@ -65,7 +65,7 @@ test('shipping plan starts serving workers before the independent lab client', (
   assert.ok(steps[1].endsWith('run --rm bootstrap'));
   assert.ok(!steps.some(step => step.includes('platform-verify.js')));
   assert.ok(steps[4].endsWith('vault-agent'));
-  assert.ok(steps[5].endsWith('api api-2 api-3 api-4 realtime realtime-2 socket-edge evaluator evaluator-2 pgstream tenant-admin ui nginx'));
+  assert.ok(steps[5].endsWith('api api-2 api-3 api-4 realtime realtime-2 socket-edge evaluator evaluator-2 tenant-admin ui nginx'));
   assert.equal(steps.length,6);
   const lab = launch.commands(selected, 'prime').map(row => row.args.join(' '));
   assert.ok(lab[0].includes('prime.js provision')); assert.ok(lab[1].includes('prime.js prime')); assert.ok(lab[2].includes('publish-primer.js'));

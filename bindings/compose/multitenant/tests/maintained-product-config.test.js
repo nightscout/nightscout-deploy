@@ -14,13 +14,9 @@ test('generated maintained role files pass actual product parsers without constr
   const render=require('../render');render.render(render.input({NS_RENDER_OUTPUT:state,NS_CREDENTIALS_DIR:credentials}));
   const configure=require('../../../lib/cli/commands/multitenant').configure;
   for(const role of [...plan.serviceRoles,'admin']){
-    const settings=configure([role],{NS_SECRETS_DIR:path.join(state,role),NS_VAULT_ADDR:'https://vault:8200'});
+    const settings=configure([role],{NS_SECRETS_DIR:path.join(state,role),NS_VAULT_ADDR:'https://vault:8200',NS_INPUT_TRANSPORT:'writer-driven'});
     if(role!=='admin')assert.equal(settings.operationConfig.namespace,layout.namespaces.control);
   }
   assert.equal(constructed,0);
  }finally{Module._load=load;fs.rmSync(root,{recursive:true,force:true});}
-});
-test('legacy capture disable refuses before product preparation',()=>{
- assert.throws(()=>require('../pgstream').enabled({NS_PGSTREAM:'0'}),/PGSTREAM_LEGACY_MODE_RETIRED/);
- assert.equal(require('../pgstream').enabled({}),true);
 });

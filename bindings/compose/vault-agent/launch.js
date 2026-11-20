@@ -63,6 +63,7 @@ function plan (tree, source = process.env) {
   if (selected.NS_EVALUATOR_WORKERS !== undefined) {
     const ev = require(path.join(base, 'evaluator-workers')); add('compose.evaluator.yaml', ev.compose(ev.selection(selected), 'compose.yaml'));
   }
+  add('compose.writer.yaml', require(path.join(base, 'writer-driven')).compose(count, require(path.join(base, 'evaluator-workers')).selection(selected), realtime));
   files.push(path.join(here, 'compose.vault-agent.yaml'));
   const allowed = ['NS_VAULT_AGENT_TOKEN_TTL', 'NS_VAULT_AGENT_TOKEN_MAX_TTL'];
   const runtime = { ...selected, NS_VAULT_AGENT_DIR: here, NS_VAULT_AGENT_PROJECT: project };
@@ -86,7 +87,7 @@ function commands (selected, command, detail) {
     const steps = [node(path.join(selected.base, 'build.js'), '--check-image'), compose('--profile', 'ops', 'run', '--rm', 'bootstrap')];
     if (command === 'bootstrap') return [...steps, run('vault-agent-bootstrap')];
     return [...steps, up('admin'), run('vault-agent-bootstrap'), up('vault-agent'),
-      up(...selected.apis, ...selected.realtime, ...selected.evaluators, 'pgstream', 'tenant-admin', 'ui', 'nginx')];
+      up(...selected.apis, ...selected.realtime, ...selected.evaluators, 'tenant-admin', 'ui', 'nginx')];
   }
   if (command === 'prime' || command === 'demo') {
     // Restore authority is granted only for the restore demonstration, never by ordinary priming.

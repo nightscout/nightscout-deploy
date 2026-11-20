@@ -16,7 +16,7 @@ test('each TCP replica probes the private role readiness path', () => {
   assert.equal(apiOverlay.split(probe).length - 1, 2);
 
   const workerCount = { workers: 2 };
-  const { services } = JSON.parse(require('./input-transport').compose(2, workerCount, workerCount));
+  const { services } = JSON.parse(require('./writer-driven').compose(2, workerCount, workerCount));
   for (const [role, port] of [['evaluator', 19002], ['realtime', 19003]]) {
     for (const name of [role, role + '-2']) {
       assert.deepEqual(services[name].healthcheck.test, ['CMD', 'node', 'bin/nightscout.js', 'healthcheck',
