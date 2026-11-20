@@ -98,7 +98,9 @@
       allowPrivilegeEscalation: false,
       capabilities: { drop: ['ALL'] },
     },
-    local podSecurity = { fsGroup: uid, seccompProfile: { type: 'RuntimeDefault' } },
+    // OnRootMismatch: a remounted or snapshot-restored claim keeps its 0600 private files;
+    // the default (Always) re-applies group bits on every mount and they are then refused.
+    local podSecurity = { fsGroup: uid, fsGroupChangePolicy: 'OnRootMismatch', seccompProfile: { type: 'RuntimeDefault' } },
     // Compose tmpfs /tmp.
     local tmp = { name: 'tmp', emptyDir: { medium: 'Memory', sizeLimit: '16Mi' } },
     local tmpMount = { name: 'tmp', mountPath: '/tmp' },
@@ -277,7 +279,7 @@
               serviceAccountName: 'vault',
               // The image runs as its vault user (uid 100, gid 1000) and chowns nothing, so a
               // block volume (fixture or existing claim) is writable only through its group.
-              securityContext: { fsGroup: 1000 },
+              securityContext: { fsGroup: 1000, fsGroupChangePolicy: 'OnRootMismatch' },
               containers: [{
                 name: 'vault',
                 image: c.images.vault,
