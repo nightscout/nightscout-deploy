@@ -223,7 +223,10 @@
                 name: 'postgres',
                 image: c.images.postgres,
                 // Preserve docker-entrypoint.sh: it owns initdb before postgres starts.
-                args: ['postgres', '-c', 'wal_level=logical', '-c', 'max_replication_slots=4', '-c', 'max_wal_senders=' + std.max(4, c.slices.evaluator + 2), '-c', 'max_slot_wal_keep_size=-1', '-c', 'output_plugin_libraries=wal2json', '-c', 'max_connections=140', '-c', 'reserved_connections=40'],
+                args: ['postgres', '-c', 'wal_level=logical', '-c', 'max_replication_slots=4', '-c', 'max_wal_senders=' + std.max(4, c.slices.evaluator + 2), '-c', 'max_slot_wal_keep_size=-1', '-c', 'output_plugin_libraries=wal2json', '-c', 'max_connections=140', '-c', 'reserved_connections=40',
+                  // Statement statistics and I/O timing for capacity runs (the observer snapshots
+                  // pg_stat_statements around steady state); the image ships the contrib module.
+                  '-c', 'shared_preload_libraries=pg_stat_statements', '-c', 'track_io_timing=on'],
                 env: [
                   { name: 'POSTGRES_DB', value: 'nightscout_compose_test' },
                   { name: 'POSTGRES_PASSWORD_FILE', value: '/run/secrets/postgres-password' },
