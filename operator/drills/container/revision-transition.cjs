@@ -3,7 +3,38 @@
 // and process generations may change. No SQL writes, input counter or TIME gate.
 const fs = require('node:fs'), path = require('node:path'), assert = require('node:assert/strict');
 const { execFileSync } = require('node:child_process');
-const { wait } = require('./pgstream-recovery.cjs');
+const crypto = require('node:crypto');
+// Seed, gap-write and viewer modes: a fixed in-container API client.
+const pause=ms=>new Promise(r=>setTimeout(r,ms));
+async function wait(fn,code,ms=30000){const end=Date.now()+ms;let last;do{try{last=await fn();if(last)return last;}catch(e){last=e.code||e.message;}await pause(200);}while(Date.now()<end);throw Object.assign(Error(code),{code,observation:last});}
+async function client(mode){
+ const root=process.cwd(),demo=require(path.join(root,'deploy/multitenant/demo')),operator=require(path.join(root,'deploy/multitenant/restore'));
+ assert.equal(process.env.NS_DEMO_CONFIRM_SYNTHETIC,'1');const config=operator.loadConfig();
+ const file='/run/ns-drill-state/revision-expect.json';
+ if(mode==='seed'){
+  for(const tenant of config.tenants){const old=(await demo.request(config,tenant,'/api/v3/entries?limit=1000')).result;assert(Array.isArray(old));for(const row of old)await demo.request(config,tenant,'/api/v3/entries/'+row.identifier,{method:'DELETE'});}
+  const at=Date.now(),rows=config.tenants.map((t,i)=>({tenant:t.id,id:crypto.randomUUID(),value:i?120:50,date:i?at:at-600000+90000}));
+  for(const row of rows){const tenant=config.tenants.find(t=>t.id===row.tenant);await demo.request(config,tenant,'/api/v3/entries/'+row.id,{method:'PUT',body:demo.document(row.id,row.date,row.value)});}
+  fs.writeFileSync(file,JSON.stringify(rows),{mode:0o600,flag:'wx'});return {state:'seeded'};
+ }
+ const rows=JSON.parse(fs.readFileSync(file));
+ if(mode==='gap-write'){
+  const row=rows[1];await demo.request(config,config.tenants[1],'/api/v3/entries/'+row.id,{method:'PATCH',body:{sgv:159}});row.value=159;fs.writeFileSync(file,JSON.stringify(rows),{mode:0o600});return {state:'gap-written'};
+ }
+ assert.equal(mode,'viewer');const io=require('/run/ns-client/node_modules/socket.io-client');
+ for(const row of rows){
+  const tenant=config.tenants.find(t=>t.id===row.tenant),token=await demo.exchange(config,tenant);
+  const body=(await demo.request(config,tenant,'/api/v3/entries/'+row.id)).result;assert.equal(body.sgv,row.value,'AUTHORIZED_API_CURRENT_VALUE');
+  const socket=io('http://nginx:8080',{forceNew:true,reconnection:false,transports:['websocket'],extraHeaders:{host:tenant.host}}),frames=[];
+  socket.on('dataUpdate',x=>frames.push(x));
+  try{await new Promise((resolve,reject)=>{socket.once('connect',resolve);socket.once('connect_error',()=>reject(Object.assign(Error('DRILL_VIEWER_CONNECT_REFUSED'),{code:'DRILL_VIEWER_CONNECT_REFUSED'})));});
+   const ack=await new Promise((resolve,reject)=>{const t=setTimeout(()=>reject(Error('VIEWER_AUTHORIZE_TIMEOUT')),10000);socket.emit('authorize',{token},x=>{clearTimeout(t);resolve(x);});});
+   assert.equal(ack.read,true,'CURRENT_VIEWER_AUTHORIZED');await wait(()=>frames.find(f=>f.sgvs?.some(r=>(r.mills===row.date)&&r.mgdl===row.value)),'AUTHORIZED_CURRENT_CLINICAL_FRAME');
+   assert(!frames.some(f=>f.sgvs?.some(r=>r.mgdl===rows.find(x=>x.tenant!==row.tenant).value)),'NO_FOREIGN_CLINICAL_VALUE');
+  }finally{socket.close();}
+ }
+ return {state:'authorized-current-two-tenant-frames'};
+}
 function qualify(rows, expected) {
   assert.deepEqual(rows.map(r => r.tenant).sort(), expected.map(r => r.tenant).sort(), 'EXACT_TENANT_COHORT');
   for (const row of rows) {
@@ -22,7 +53,7 @@ function qualify(rows, expected) {
 async function main() {
   if (process.argv[2] === 'write') {
     assert.equal(process.env.NS_DEMO_CONFIRM_SYNTHETIC, '1');
-    const file = '/run/ns-drill-state/pgstream-expect.json', expected = JSON.parse(fs.readFileSync(file));
+    const file = '/run/ns-drill-state/revision-expect.json', expected = JSON.parse(fs.readFileSync(file));
     const root = process.cwd(), config = require(path.join(root, 'deploy/multitenant/restore')).loadConfig();
     const demo = require(path.join(root, 'deploy/multitenant/demo')), row = expected[1];
     const value = row.value === 177 ? 178 : 177;
@@ -38,7 +69,7 @@ async function main() {
   const pg = all.find(r => r.Config.Labels['com.docker.compose.service'] === 'postgres');
   assert(pg);
   const state = fs.readFileSync(path.join(core, 'deploy/multitenant/.env'), 'utf8').split('\n').find(x => x.startsWith('NS_DEMO_STATE=')).slice('NS_DEMO_STATE='.length);
-  const expected = JSON.parse(fs.readFileSync(path.join(state, 'drill/pgstream-expect.json')));
+  const expected = JSON.parse(fs.readFileSync(path.join(state, 'drill/revision-expect.json')));
   let last;
   try { await wait(() => {
     const sql = `SELECT c.tenant_id::text AS tenant,c.work_observed,c.work_completed,c.work_pending_at,c.work_due_at,c.work_completed_at,c.output_restore_generation,c.projection->0->'output' AS output,i.checkpoint AS input_checkpoint,i.projection->0 AS input,w.last_stamp,s.version AS settings,p.generation AS policy,a.version AS activity,l.generation AS restore,l.phase FROM nsdemo_eval_checkpoint.tenant_consumer_checkpoint c JOIN nsdemo_eval_checkpoint.tenant_consumer_checkpoint i ON i.tenant_id=c.tenant_id AND i.consumer='evaluator-compose-demo' JOIN nsdemo_clock.tenant_write_clock w ON w.tenant_id=c.tenant_id JOIN nsdemo_display_settings.tenant_settings s ON s.tenant_id=c.tenant_id JOIN nsdemo_operator_policy.tenant_operator_policy p ON p.tenant_id=c.tenant_id JOIN nsdemo_control.tenant_activity a ON a.tenant_id=c.tenant_id JOIN nsdemo_control.tenant_lifecycle_windows l ON l.tenant_id=c.tenant_id WHERE c.consumer='evaluator-compose-demo-completed' ORDER BY c.tenant_id`;
@@ -50,5 +81,5 @@ async function main() {
   fs.writeFileSync(file, JSON.stringify(last) + '\n', { flag: 'wx', mode: 0o600 });
   return { state: 'current-two-tenant-physical-input-completed-content', evidence: file };
 }
-if (require.main === module) main().then(x => console.log(JSON.stringify(x)), e => { console.error(JSON.stringify({ error: e.code || 'REVISION_DRILL_FAILED' })); process.exitCode = 1; });
+if (require.main === module) (['seed', 'gap-write', 'viewer'].includes(process.argv[2]) ? client(process.argv[2]) : main()).then(x => console.log(JSON.stringify(x)), e => { console.error(JSON.stringify({ error: e.code || 'REVISION_DRILL_FAILED' })); process.exitCode = 1; });
 module.exports = { qualify };

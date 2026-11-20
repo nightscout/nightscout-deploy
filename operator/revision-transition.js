@@ -45,8 +45,23 @@ function sourceIdentity(source) {
 
 // Fixed ordinary binding inventory; no schema discovery, caller DDL or wildcard
 // extension. The registry remains operational and travels in the cold backup.
+const need = (value, code) => { if (!value) throw fail(code); };
+function ordinaryAdmission(root,libraryRoot=root){
+ const config=require(path.join(root,'deploy/multitenant/config')),common=require(path.join(libraryRoot,'lib/tenant-operations/common')),ops=require(path.join(libraryRoot,'lib/tenant-operations/catalogues'));
+ const found=ops.discoverCatalogues(root),layout=config.layout(),namespaces={},selection={},extensions=[];
+ const aliases={control:'lifecycle',rt_checkpoint:'checkpoint',eval_checkpoint:'evaluator_checkpoint',alarm:'alarm_suppression',outbox:'notification_outbox',display_settings:'tenant_settings'};
+ for(const [key,candidate]of Object.entries(config.catalogues())){
+  need(key!=='pool','REVISION_ADMISSION_PROFILE');if(key==='registry')continue;
+  const kind=aliases[key]||key;
+  if(key==='control'){namespaces[kind]=layout.namespaces[key];continue;}
+  const matches=found.filter(row=>common.canonical(row.candidate)===common.canonical(candidate));need(matches.length===1,'REVISION_ADMISSION_CATALOGUE');namespaces[kind]=layout.namespaces[key];
+  if(['alarm','outbox'].includes(key))extensions.push({kind,candidatePath:matches[0].file,candidateDigest:common.sha256(common.canonical(candidate)),tables:ops.createdTables(candidate)});else if(key!=='control')selection[kind]=matches[0].file;
+ }
+ const native=config.nativeSelection?.(layout.prefix);
+ return {root,namespaces,selection,extensions,...(native?{nativeSelection:native,notificationBindings:[{namespace:layout.namespaces.outbox,consumer:require(path.join(root,'lib/server/serve/deployment-settings')).IDENTITY.realtimeConsumer}]}:{}),instances:[{kind:'evaluator_checkpoint',of:'checkpoint'}]};
+}
 function admission(root, libraryRoot = root) {
-  return require('../bindings/compose/multitenant/pgstream-rebootstrap').ordinaryAdmission(root, libraryRoot);
+  return ordinaryAdmission(root, libraryRoot);
 }
 
 function stopped(plan, run = args => execFileSync('docker', args, { encoding: 'utf8', timeout: 30000 })) {
@@ -55,7 +70,7 @@ function stopped(plan, run = args => execFileSync('docker', args, { encoding: 'u
   if (all.some(row => row.Config.Labels['com.docker.compose.project'] !== plan.project)) throw fail('REVISION_COHORT_CHANGED_OR_RUNNING');
   const roles = all.filter(row => !['postgres', 'vault'].includes(row.Config.Labels['com.docker.compose.service']));
   const services = roles.map(row => row.Config.Labels['com.docker.compose.service']);
-  if (['api', 'evaluator', 'realtime', 'pgstream'].some(service => services.filter(name => name === service).length !== 1) || services.some(name => /^(api|evaluator|realtime)-/.test(name))) throw fail('REVISION_SELECTED_PROFILE_UNSUPPORTED');
+  if (['api', 'evaluator', 'realtime'].some(service => services.filter(name => name === service).length !== 1) || services.some(name => /^(api|evaluator|realtime)-/.test(name))) throw fail('REVISION_SELECTED_PROFILE_UNSUPPORTED');
   if (roles.length !== plan.cohort.length || roles.some(row => row.State.Running || row.State.Restarting ||
       !plan.cohort.some(expected => expected.id === row.Id && expected.image === row.Image))) throw fail('REVISION_COHORT_CHANGED_OR_RUNNING');
 }
@@ -121,7 +136,7 @@ async function execute(command, plan, env = process.env) {
       if (complete.sourceCommit !== plan.source.sourceCommit || complete.deployCommit !== plan.source.deployCommit) throw fail('REVISION_BOOTSTRAP_BINDING_CHANGED');
       // This first supported profile retains its existing configuration contract.
       // A changed generator needs a separately specified configuration transition.
-      for (const file of ['config.js', 'pgstream.js']) {
+      for (const file of ['config.js']) {
         if (!fs.readFileSync(path.join(plan.source.root, 'deploy/multitenant', file)).equals(fs.readFileSync(path.join(plan.target.root, 'deploy/multitenant', file)))) throw fail('REVISION_CONFIGURATION_TRANSITION_UNSUPPORTED');
       }
       const labels = JSON.parse(execFileSync('docker', ['image', 'inspect', '--format', '{{json .Config.Labels}}', plan.target.image], { encoding: 'utf8' }));

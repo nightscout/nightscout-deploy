@@ -18,7 +18,7 @@ test('refuses ambiguous revision/profile/cohort plans', () => {
 });
 test('stopped census binds the exact complete application cohort and images', () => {
   const row = { Id: id, Image: image, State: { Running: false, Restarting: false }, Config: { Labels: { 'com.docker.compose.service': 'api', 'com.docker.compose.project': plan().project } } };
-  const check = rows => { const fixed = ['evaluator','realtime','pgstream'].map((service,i) => ({ ...row, Id: String(i + 1).repeat(64), Config: { Labels: { ...row.Config.Labels, 'com.docker.compose.service': service } } })); const all = [...rows, ...fixed]; const p = { ...plan(), cohort: [row, ...fixed].map(r => ({ id: r.Id, image: r.Image })) }; return stopped(p, args => args[0] === 'ps' ? all.map(r => r.Id).join('\n') : JSON.stringify(all)); };
+  const check = rows => { const fixed = ['evaluator','realtime'].map((service,i) => ({ ...row, Id: String(i + 1).repeat(64), Config: { Labels: { ...row.Config.Labels, 'com.docker.compose.service': service } } })); const all = [...rows, ...fixed]; const p = { ...plan(), cohort: [row, ...fixed].map(r => ({ id: r.Id, image: r.Image })) }; return stopped(p, args => args[0] === 'ps' ? all.map(r => r.Id).join('\n') : JSON.stringify(all)); };
   check([row]);
   for (const rows of [[], [{ ...row, Image: 'sha256:' + 'f'.repeat(64) }], [{ ...row, State: { Running: true } }], [row, { ...row, Id: 'f'.repeat(64) }]]) {
     assert.throws(() => check(rows), error => ['REVISION_COHORT_CHANGED_OR_RUNNING','REVISION_SELECTED_PROFILE_UNSUPPORTED'].includes(error.code));
@@ -28,7 +28,7 @@ test('ordinary default projects are admitted while another valid project cannot 
   const project = require('../bindings/compose/multitenant/project');
   for (const name of [project.DEFAULT, 'nsdemo']) {
     const p = validate({ ...plan(), project: name });
-    const rows = ['api','evaluator','realtime','pgstream'].map((service,i) => ({ Id: String(i + 1).repeat(64), Image: image,
+    const rows = ['api','evaluator','realtime'].map((service,i) => ({ Id: String(i + 1).repeat(64), Image: image,
       State: { Running: false, Restarting: false }, Config: { Labels: { 'com.docker.compose.service': service, 'com.docker.compose.project': name } } }));
     p.cohort = rows.map(row => ({ id: row.Id, image: row.Image }));
     const run = args => args[0] === 'ps' ? rows.map(r => r.Id).join('\n') : JSON.stringify(rows);

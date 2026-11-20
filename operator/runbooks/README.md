@@ -18,7 +18,7 @@ Restore advances the selected tenant’s generation and suspends it. Uploaders r
 
 Use the private operator container to inspect an interrupted restore (`restore.js inspect --tenant <tenant>`). The reported claim identifies the tenant, generation and restore artifact. A `before-data` interruption kept the preceding data. A `data-replaced` interruption kept the committed replacement. When the original backend has gone and inspection reports that the claim is resumable, run `restore.js resume --tenant <tenant> --claim <claimId>` with the exact inspected claim. A refused or uncertain outcome requires another inspection. Confirm the active generation, the matching resume record and actual tenant service before telling users that service has returned. A selection-proof refusal requires the intended configuration and current verified evaluator contract. Historical operation markers and clearance rows remain available for audit.
 
-For a retained native database, stop the old evaluator, pgstream, provisioner and serving roles before switching images. Preserve the logical slot, source generation and private operation documents. Using the paired image and a direct migration-admin connection from `NS_RECEIPT_ADMIN_PG`, stage the updated private provisioning document in a new file.
+For a retained native database, stop the old evaluator, provisioner and serving roles before switching images. Preserve the private operation documents. Using the paired image and a direct migration-admin connection from `NS_RECEIPT_ADMIN_PG`, stage the updated private provisioning document in a new file.
 
 ```bash
 node deploy/multitenant/native-lifecycle.js "$EVALUATOR_OPERATION_FILE" "$ADMIN_CONFIG_FILE" "$NEW_ADMIN_CONFIG_FILE"
