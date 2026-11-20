@@ -30,15 +30,16 @@
       // commit before it is loaded into the cluster: an exact tag, never :local or :latest.
       app: null,  // required
       // Same digests as ../../compose/multitenant/compose.yaml.
-      postgres: null,  // required: supplied maintained PostgreSQL/wal2json image digest
+      postgres: null,  // required: supplied maintained PostgreSQL image digest
       vault: 'hashicorp/vault@sha256:962a92876e168d68eaaa24b0b8b49bbce1cb63024060a67bba95cd158a366fc2',
       nginx: 'nginx@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10',
     },
     // Decision statefulset-ordinal-scaling: K per sliced role. The same value sets the
     // StatefulSet replicas and the slice count. Evaluator K>1: hostname ordinal, NS_EVALUATOR_SLICES,
-    // DNS receivers evaluator-<i>.evaluator, patched pgstream slice_receivers on one slot (components.libsonnet).
+    // private addresses evaluator-<i>.evaluator (components.libsonnet).
     apiReplicas: 1,
-    inputTransport: 'pgstream',
+    // Writer-driven is the only input transport; the field is kept for existing binding inputs.
+    inputTransport: 'writer-driven',
     slices: { realtime: 1, evaluator: 1 },
     // Above the serve.internal drain deadline (NS_SERVE_INTERNAL_SHUTDOWN_TIMEOUT_MS, default
     // 5000 ms, at most 60000 ms; decision internal-listener-graceful-shutdown).
@@ -76,7 +77,7 @@
         requests: { cpu: '25m', memory: '32Mi', 'ephemeral-storage': '16Mi' },
         limits: { cpu: '500m', memory: '256Mi', 'ephemeral-storage': '128Mi' },
       }
-      for name in ['install-config', 'vault-agent', 'wait-stores', 'bootstrap', 'vault-kubernetes-auth', 'primer', 'api', 'realtime', 'evaluator', 'tenant-admin', 'admin', 'ui', 'pgstream', 'postgres', 'nginx', 'vault', 'prometheus', 'postgres-exporter']
+      for name in ['install-config', 'vault-agent', 'wait-stores', 'bootstrap', 'vault-kubernetes-auth', 'primer', 'api', 'realtime', 'evaluator', 'tenant-admin', 'admin', 'ui', 'postgres', 'nginx', 'vault', 'prometheus', 'postgres-exporter']
     },
     storage: { mode: 'dynamic', postgres: '1Gi', vault: '256Mi', provisionState: '64Mi', primerResults: '64Mi', claims: {} },
   },
@@ -86,7 +87,7 @@
     local ns = c.namespace,
     assert std.isString(c.sourceCommit) && std.length(c.sourceCommit) == 40 && std.length([x for x in std.stringChars(c.sourceCommit) if !std.member(std.stringChars('0123456789abcdef'),x)]) == 0 : 'sourceCommit must be the full 40-hex commit',
     assert std.isString(c.images.app) && std.length(std.split(c.images.app, '@')) == 2 && std.startsWith(std.split(c.images.app, '@')[1], 'sha256:') && std.length(std.split(c.images.app, '@')[1]) == 71 : 'images.app requires an immutable manifest digest',
-    assert std.isString(c.images.postgres) && std.length(std.split(c.images.postgres, '@')) == 2 && std.startsWith(std.split(c.images.postgres, '@')[1], 'sha256:') && std.length(std.split(c.images.postgres, '@')[1]) == 71 : 'images.postgres requires an explicit maintained PostgreSQL/wal2json image digest',
+    assert std.isString(c.images.postgres) && std.length(std.split(c.images.postgres, '@')) == 2 && std.startsWith(std.split(c.images.postgres, '@')[1], 'sha256:') && std.length(std.split(c.images.postgres, '@')[1]) == 71 : 'images.postgres requires an explicit maintained PostgreSQL image digest',
     assert c.prefix == 'nsdemo' : 'source bootstrap supports only prefix nsdemo',
 
     local uid = 1000,
@@ -228,7 +229,7 @@
                 name: 'postgres',
                 image: c.images.postgres,
                 // Preserve docker-entrypoint.sh: it owns initdb before postgres starts.
-                args: ['postgres'] + (if c.inputTransport == 'pgstream' then ['-c', 'wal_level=logical', '-c', 'max_replication_slots=4', '-c', 'max_wal_senders=' + std.max(4, c.slices.evaluator + 2), '-c', 'max_slot_wal_keep_size=-1', '-c', 'output_plugin_libraries=wal2json'] else []) + ['-c', 'max_connections=140', '-c', 'reserved_connections=40',
+                args: ['postgres', '-c', 'max_connections=140', '-c', 'reserved_connections=40',
                   // Statement statistics and I/O timing for capacity runs (the observer snapshots
                   // pg_stat_statements around steady state); the image ships the contrib module.
                   '-c', 'shared_preload_libraries=pg_stat_statements', '-c', 'track_io_timing=on'],
@@ -364,7 +365,7 @@
       containers: [
         roleContainer('api', [{ name: 'http-api', containerPort: 1337 }]),
         roleContainer('realtime', [{ name: 'http-realtime', containerPort: 1339 }]),
-        roleContainer('evaluator', if c.inputTransport == 'pgstream' then [{ name: 'stream-intake', containerPort: 19913 }] else []),
+        roleContainer('evaluator', []),
         // The owner plane (1341): a container port only; no Service, and the
         // NetworkPolicy admits nothing to it.
         roleContainer('tenant-admin', [{ name: 'int-owner', containerPort: 1341 }]),
@@ -381,36 +382,6 @@
         tmp,
       ],
     },
-    },
-
-    // One independently managed consumer of the precreated database slot.
-    pgstream: {
-      deployment: {
-        apiVersion: 'apps/v1',
-        kind: 'Deployment',
-        metadata: meta('pgstream', 'pgstream'),
-        spec: {
-          replicas: 1,
-          strategy: { type: 'Recreate' },
-          selector: { matchLabels: labels('pgstream') },
-          template: {
-            metadata: { labels: labels('pgstream') },
-            spec: {
-              enableServiceLinks: false,
-              automountServiceAccountToken: false,
-              securityContext: podSecurity,
-              terminationGracePeriodSeconds: c.terminationGraceSeconds,
-              containers: [{
-                name: 'pgstream', image: c.images.app, imagePullPolicy: 'IfNotPresent',
-                command: ['/usr/local/bin/pgstream', 'run', '-c', '/run/ns-stream/pgstream.yaml', '--log-level', 'info'],
-                securityContext: hardened,
-                volumeMounts: [{ name: 'secret-pgstream', mountPath: '/run/ns-stream', readOnly: true }, tmpMount],
-              }],
-              volumes: [{ name: 'secret-pgstream', secret: { secretName: 'ns-config-pgstream', defaultMode: 288 } }, tmp],
-            },
-          },
-        },
-      },
     },
 
     // ---------------------------------------------------------------- admin plane
@@ -621,9 +592,8 @@
                 step('bootstrap', ['node', 'deploy/multitenant/bootstrap.js'], [
                   { name: 'NS_COMPOSE_BOOTSTRAP', value: '1' },
                   { name: 'NS_BOOTSTRAP_VAULT_ADDR', value: 'https://vault-bootstrap:8200' },
-                  if c.inputTransport == 'pgstream' then { name: 'NS_PGSTREAM', value: '1' } else { name: 'NS_INPUT_TRANSPORT', value: c.inputTransport },
+                  { name: 'NS_INPUT_TRANSPORT', value: c.inputTransport },
                 ] + (if c.slices.evaluator > 1 then [
-                  // The DNS receiver roster: one subscriptions row set per receiver (pgstream.js init).
                   { name: 'NS_EVALUATOR_WORKERS', value: std.toString(c.slices.evaluator) },
                 ] else []) + [
                   { name: 'NS_API_REPLICAS', value: '1' },
@@ -807,10 +777,10 @@
         documents: {
           api: ['ns_api_pg','ns_readiness_pg','ns_api_root_writer_pg','ns_alarm_pg','ns_display_pg','ns_lifetime_pg'],
           realtime: ['ns_realtime_pg','ns_display_pg','ns_lifetime_pg'],
-          evaluator: ['ns_evaluator_pg','ns_outbox_pg','ns_suppression_pg','ns_activity_pg','ns_display_pg','ns_lifetime_pg'] + (if c.inputTransport == 'pgstream' then ['ns_stream_recovery_pg','ns_pgstream_generation'] else []),
+          evaluator: ['ns_evaluator_pg','ns_outbox_pg','ns_suppression_pg','ns_activity_pg','ns_display_pg','ns_lifetime_pg'],
           'tenant-admin': ['ns_owner_writer_pg','ns_owner_reader_pg','ns_owner_credentials_pg','ns_owner_settings_pg','ns_lifetime_pg','vault-token'],
           admin: ['ns_provisioner_pg','ns_ownership_pg','ns_connector_sources_pg','ns_management_sessions_pg','vault-token','management-vault-token'],
-          ui: ['env.json','config.json'], [if c.inputTransport == 'pgstream' then 'pgstream']: ['pgstream.yaml'], primer: ['config.json'],
+          ui: ['env.json','config.json'], primer: ['config.json'],
         },
         ownership: { namespace: c.namespace, label: { 'nightscout.org/run-id': c.runId }, clusterScoped: [{ kind: 'ClusterRoleBinding', name: c.namespace + '-vault-tokenreview' }] },
         services: { [v.metadata.name]: { selector: v.spec.selector, type: if std.objectHas(v.spec,'type') then v.spec.type else 'ClusterIP', ports: if std.objectHas(v.spec,'ports') then v.spec.ports else [] } for v in [v for v in collect(rendered) if v.kind == 'Service'] },
@@ -818,7 +788,7 @@
         imagePullSecrets: c.imagePullSecrets,
         placement: c.placement,
         placementByWorkload: c.placementByWorkload,
-        seed: { script: 'scripts/secrets.sh seed', [if c.slices.evaluator > 1 || c.inputTransport != 'pgstream' then 'environment']: { [if c.slices.evaluator > 1 then 'NS_EVALUATOR_WORKERS']: std.toString(c.slices.evaluator), [if c.inputTransport != 'pgstream' then 'NS_INPUT_TRANSPORT']: c.inputTransport }, credentials: ['ns-credentials-postgres', 'ns-credentials-vault'], mountedBy: ['provision'] },
+        seed: { script: 'scripts/secrets.sh seed', environment: { [if c.slices.evaluator > 1 then 'NS_EVALUATOR_WORKERS']: std.toString(c.slices.evaluator), NS_INPUT_TRANSPORT: c.inputTransport }, credentials: ['ns-credentials-postgres', 'ns-credentials-vault'], mountedBy: ['provision'] },
         results: { primer: { claim: if c.storage.mode == 'existing-claim' then std.get(c.storage.claims, 'primerResults', null) else if c.storage.mode == 'dynamic' then 'primer-results' else null, file: 'tenants.json' } },
         order: ['seed role Secrets', 'apply', 'run optional lab client; its private results stay on its claim', 'observe correctness', 'delete only owned namespace and tokenreview binding'],
         workloads: {

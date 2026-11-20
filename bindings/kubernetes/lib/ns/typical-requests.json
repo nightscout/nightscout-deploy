@@ -39,11 +39,6 @@
     "memory": "3Mi",
     "ephemeral-storage": "16Mi"
   },
-  "pgstream": {
-    "cpu": "8m",
-    "memory": "57Mi",
-    "ephemeral-storage": "16Mi"
-  },
   "postgres": {
     "cpu": "590m",
     "memory": "132Mi",

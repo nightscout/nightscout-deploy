@@ -155,41 +155,25 @@ function checks (all, inventory, composeDir, envMain) {
     }
   });
 
-  run('independent-pgstream', fail => {
+  run('writer-driven-input', fail => {
     const streams=workloads.filter(w=>(podSpec(w).containers||[]).some(c=>c.name==='pgstream'));
-    if (inventory.inputTransport === 'writer-driven') {
-      if (streams.length || inventory.documents.pgstream) fail('writer-driven input must omit pgstream');
-      const evaluator = services.find(v => v.metadata.name === 'evaluator');
-      if (evaluator?.spec.clusterIP !== 'None' || !evaluator.spec.ports.some(p => p.port === 19002 && p.targetPort === 'int-role')) fail('writer hints require the private ordinal evaluator Service');
-      const postgres = workloads.find(w => w.metadata.name === 'postgres');
-      if (podSpec(postgres).containers.find(c => c.name === 'postgres').args.some(x => /wal_level=logical|wal2json/.test(x))) fail('writer-driven input must omit logical decoding');
-      for (const role of ['api', 'evaluator', 'realtime', 'tenant-admin']) {
-        const workload = workloads.find(w => w.metadata.name === role);
-        const env = Object.fromEntries(podSpec(workload).containers.find(c => c.name === role).env.map(x => [x.name, x.value]));
-        if (env.NS_INPUT_TRANSPORT !== 'writer-driven' || env.NS_EVALUATOR_SLICES !== String(inventory.slices.evaluator) || env.NS_REALTIME_SLICES !== String(inventory.slices.realtime)) fail(role + ' writer target counts differ from the bound slices');
-      }
-      return;
+    if (inventory.inputTransport !== 'writer-driven') fail('writer-driven is the only input transport');
+    if (streams.length || inventory.documents.pgstream) fail('writer-driven input must omit pgstream');
+    const evaluator = services.find(v => v.metadata.name === 'evaluator');
+    if (evaluator?.spec.clusterIP !== 'None' || !evaluator.spec.ports.some(p => p.port === 19002 && p.targetPort === 'int-role')) fail('writer hints require the private ordinal evaluator Service');
+    const postgres = workloads.find(w => w.metadata.name === 'postgres');
+    if (podSpec(postgres).containers.find(c => c.name === 'postgres').args.some(x => /wal_level=logical|wal2json/.test(x))) fail('writer-driven input must omit logical decoding');
+    for (const role of ['api', 'evaluator', 'realtime', 'tenant-admin']) {
+      const workload = workloads.find(w => w.metadata.name === role);
+      const env = Object.fromEntries(podSpec(workload).containers.find(c => c.name === role).env.map(x => [x.name, x.value]));
+      if (env.NS_INPUT_TRANSPORT !== 'writer-driven' || env.NS_EVALUATOR_SLICES !== String(inventory.slices.evaluator) || env.NS_REALTIME_SLICES !== String(inventory.slices.realtime)) fail(role + ' writer target counts differ from the bound slices');
     }
-    if(streams.length!==1)return fail('exactly one pgstream workload required');
-    const stream=streams[0],spec=podSpec(stream),container=spec.containers.find(c=>c.name==='pgstream');
-    if(stream.kind!=='Deployment'||stream.spec.replicas!==1||stream.spec.strategy?.type!=='Recreate')fail('pgstream must be a one-replica Recreate Deployment');
-    if(JSON.stringify(container.command)!==JSON.stringify(['/usr/local/bin/pgstream','run','-c','/run/ns-stream/pgstream.yaml','--log-level','info']))fail('pgstream must run the maintained binary directly');
-    const volume=(spec.volumes||[]).find(v=>v.name==='secret-pgstream');
-    if(volume?.secret?.secretName!=='ns-config-pgstream'||!(container.volumeMounts||[]).some(v=>v.name==='secret-pgstream'&&v.mountPath==='/run/ns-stream'&&v.readOnly))fail('pgstream requires its dedicated wire Secret');
-    for(const w of workloads)if(w!==stream&&(podSpec(w).volumes||[]).some(v=>v.secret?.secretName==='ns-config-pgstream'))fail('streaming wire credentials must not be mounted in the evaluator or another workload');
-    const intake=services.find(v=>v.metadata.name==='evaluator');
-    if(!intake||intake.spec.type!=='ClusterIP'||intake.spec.selector?.['app.kubernetes.io/component']!=='evaluator')fail('intake Service must select the evaluator');
-    if(intake?.spec.publishNotReadyAddresses!==true)fail('intake routing must bypass pod-wide clinical readiness to avoid a stream startup cycle');
-    if(intake&&intake.spec.clusterIP!=='None')fail('intake Service must be headless: each receiver is one Pod, never load-balanced across slices');
-    if(intake&&!intake.spec.ports?.some(p=>p.port===19913&&p.targetPort==='stream-intake'))fail('intake Service must target the declared receiver port');
-    const postgres=workloads.find(w=>w.metadata.name==='postgres'),command=(podSpec(postgres).containers.find(c=>c.name==='postgres').args||[]);
-    for(const setting of ['wal_level=logical','max_replication_slots=4','max_wal_senders='+Math.max(4,inventory.slices.evaluator+2),'max_slot_wal_keep_size=-1','output_plugin_libraries=wal2json'])if(!command.includes(setting))fail('PostgreSQL is missing maintained streaming setting '+setting);
   });
 
   run('evaluator-statefulset', fail => {
     // Decision statefulset-ordinal-scaling: a StatefulSet of slices.evaluator Pods governed by the
     // headless `evaluator` Service. Each Pod reads its ordinal from its hostname (evaluator-<i>)
-    // and K from NS_EVALUATOR_SLICES; receiver i is evaluator-<i>.evaluator.
+    // and K from NS_EVALUATOR_SLICES; evaluator i is evaluator-<i>.evaluator.
     const hosts = workloads.filter(w => (podSpec(w).containers || []).some(c => c.name === 'evaluator'));
     if (hosts.length !== 1) return fail('the evaluator must run in exactly one workload, found ' + hosts.length);
     const w = hosts[0], k = inventory.slices.evaluator;
@@ -199,7 +183,6 @@ function checks (all, inventory, composeDir, envMain) {
     if (env.find(e => e.name === 'NS_EVALUATOR_SLICES')?.value !== String(k)) fail('NS_EVALUATOR_SLICES must equal slices.evaluator');
     if (env.some(e => ['NS_PGSTREAM_EVALUATOR_SLICE', 'NS_PGSTREAM_RECEIVER_URL', 'NS_SLICE_ORDINAL'].includes(e.name))) fail('the evaluator derives its slice and receiver from its hostname and K');
     if (JSON.stringify(container.command) !== JSON.stringify(['node', 'deploy/multitenant/entrypoint.js', 'evaluator'])) fail('the evaluator runs the entrypoint directly');
-    if (inventory.inputTransport !== 'writer-driven' && services.filter(v => v.spec.selector?.['app.kubernetes.io/component'] === 'evaluator' && v.spec.ports?.some(p => p.port === 19913)).length !== 1) fail('one intake Service for every evaluator ordinal');
   });
 
   run('realtime-slices', fail => {
@@ -269,7 +252,7 @@ function checks (all, inventory, composeDir, envMain) {
     if(p.command)fail('postgres must retain its image entrypoint for initdb');
     const bootstrap=containersOf(podSpec(workloads.find(w=>w.metadata.name==='provision'))).find(c=>c.name==='bootstrap');
     const env=Object.fromEntries(bootstrap.env.map(e=>[e.name,e.value]));
-    if(env.NS_SOURCE_COMMIT!==inventory.sourceCommit || env.NS_DEPLOY_COMMIT!==inventory.imageDeployCommit || (inventory.inputTransport === 'writer-driven' ? env.NS_INPUT_TRANSPORT !== 'writer-driven' : env.NS_PGSTREAM !== '1'))fail('bootstrap source/producer identity is missing or wrong');
+    if(env.NS_SOURCE_COMMIT!==inventory.sourceCommit || env.NS_DEPLOY_COMMIT!==inventory.imageDeployCommit || env.NS_INPUT_TRANSPORT !== 'writer-driven')fail('bootstrap source/producer identity is missing or wrong');
   });
 
   run('container-budgets', fail => {

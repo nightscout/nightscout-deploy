@@ -56,8 +56,9 @@ test('realtime K=1,2,3: one Pod per ordinal, disjoint slices covering every tena
       assert.deepEqual(peers.map(p => p.url), Array.from({ length: k }, (_, i) => 'http://realtime-' + i + '.realtime-peers.' + inputs.namespace + '.svc:19003/'));
     }
     if (previous) {
-      // K change: the Pod template changes only in NS_SLICE_COUNT (an ordinary rolling update).
-      const strip = t => JSON.stringify(t, (key, value) => key === 'env' ? value.filter(row => row.name !== 'NS_SLICE_COUNT') : value);
+      // K change: the Pod template changes only in NS_SLICE_COUNT and the writer target count
+      // NS_REALTIME_SLICES, both K (an ordinary rolling update).
+      const strip = t => JSON.stringify(t, (key, value) => key === 'env' ? value.filter(row => !['NS_SLICE_COUNT', 'NS_REALTIME_SLICES'].includes(row.name)) : value);
       assert.equal(strip(previous.spec.template), strip(set.spec.template));
     }
     previous = set;

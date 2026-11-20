@@ -5,11 +5,8 @@
 // replica count (c.slices.<role>). A K change is an ordinary rolling update triggered by that
 // env change. A Pod whose ordinal is at or above K owns no tenant (core hashes tenant mod K).
 // The evaluator reads its ordinal from its hostname (Pod evaluator-<i>) and K from
-// NS_EVALUATOR_SLICES (core lib/pgstream/assigned-worker.js hostAssignment). Its governing
-// Service `evaluator` is headless, so receiver i is evaluator-<i>.evaluator:19913, the name the
-// image's seed render and bootstrap use for the pgstream roster at K>1; at K=1 `evaluator`
-// resolves to the one Pod. The patched pgstream delivers each slice to its receiver from one
-// slot, and the slot advances only when every slice accepts.
+// NS_EVALUATOR_SLICES. Its governing Service `evaluator` is headless, so evaluator i is
+// evaluator-<i>.evaluator; at K=1 `evaluator` resolves to the one Pod.
 {
   ports:: { api: 19001, evaluator: 19002, realtime: 19003, 'tenant-admin': 19004 },
   // The routing proxy that sends a tenant's realtime connections to its owning Pod
@@ -19,8 +16,7 @@
   render(raw, c)::
     local lab = import 'lab-metrics.libsonnet';
     local roles = std.objectFields($.ports);
-    local writer = c.inputTransport == 'writer-driven';
-    assert std.member(['writer-driven', 'pgstream'], c.inputTransport) : 'unknown inputTransport';
+    assert c.inputTransport == 'writer-driven' : 'inputTransport must be writer-driven';
     assert std.isNumber(c.apiReplicas) && c.apiReplicas == std.floor(c.apiReplicas) && c.apiReplicas >= 1 && c.apiReplicas <= 16 : 'apiReplicas must be an integer 1..16';
     local k = c.slices.realtime;
     local e = c.slices.evaluator;
@@ -32,7 +28,7 @@
     local source = raw.roleTemplate.spec;
     // Pod DNS names under the realtime governing (headless) Service.
     local realtimePod(i, port) = 'http://realtime-' + i + '.realtime-peers.' + c.namespace + '.svc:' + port + '/';
-    local targets(role) = if !writer then [] else [
+    local targets(role) = [
       { name: 'NS_INPUT_TRANSPORT', value: c.inputTransport },
       { name: 'NS_REALTIME_SLICES', value: std.toString(k) },
       { name: 'NS_EVALUATOR_SLICE_URL', value: 'http://evaluator-{i}.evaluator:19002/' },
@@ -110,7 +106,7 @@
           template: { metadata: { labels: label(role) }, spec: spec(role) } },
       };
     local routed = k > 1;
-    { [key]: raw[key] for key in std.objectFields(raw) if key != 'networkPolicies' && !(writer && key == 'pgstream') } + {
+    { [key]: raw[key] for key in std.objectFields(raw) if key != 'networkPolicies' } + {
       postgres: lab.postgres(raw.postgres, c),
       [if lab.enabled(c) then 'labMetrics']: lab.render(c, c.namespace, label),
       // One API agent retains its existing policy/sink. Other roles use their
@@ -128,8 +124,8 @@
         } else {}) + (if std.member(['api', 'realtime'], role) then {
           public: service(role, role, [{ name: 'http', port: if role == 'api' then 1337 else 1339, targetPort: 'http-' + role }]),
         } else if role == 'evaluator' then {
-          // Headless: a receiver is addressed per Pod, never load-balanced across slices.
-          intake: service('evaluator', role, if writer then [{ name: 'internal', port: $.ports.evaluator, targetPort: 'int-role' }] else [{ name: 'stream-intake', port: 19913, targetPort: 'stream-intake' }], true) + { spec+: { clusterIP: 'None' } },
+          // Headless: an evaluator is addressed per Pod, never load-balanced across slices.
+          intake: service('evaluator', role, [{ name: 'internal', port: $.ports.evaluator, targetPort: 'int-role' }], true) + { spec+: { clusterIP: 'None' } },
         } else {}) for role in roles
       },
       [if routed then 'socketEdge']: {
@@ -165,8 +161,7 @@
       } + lab.policies(c, policy) + {
         apiPublic: policy('api-public', 'api', ['edge', 'operator'], [1337]),
         realtimePublic: policy('realtime-public', 'realtime', ['edge', 'operator'] + (if routed then ['socket-edge'] else []), [1339]),
-        [if !writer then 'evaluatorIntake']: policy('evaluator-intake', 'evaluator', ['pgstream'], [19913]),
-        postgresFromApp: policy('postgres-from-app', 'postgres', roles + (if writer then [] else ['pgstream']) + ['admin', 'ui', 'provision'] + (if routed then ['socket-edge'] else []), [5432]),
+        postgresFromApp: policy('postgres-from-app', 'postgres', roles + ['admin', 'ui', 'provision'] + (if routed then ['socket-edge'] else []), [5432]),
         vaultFromApp: policy('vault-from-app', 'vault', ['api', 'tenant-admin', 'admin', 'provision', 'vault'], [8200]),
       } + (if routed then {
         socketEdgeFromEdge: policy('socket-edge-from-edge', 'socket-edge', ['edge'], [$.socketEdgePort]),

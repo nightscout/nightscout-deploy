@@ -24,9 +24,8 @@ operator-supplied, verified registry references or another explicitly qualified 
 | Source capability | Kubernetes binding |
 |---|---|
 | API, realtime, evaluator, tenant-admin | api, tenant-admin: one Deployment per role, Recreate, one replica. evaluator, realtime: StatefulSets (slice = pod index). Private HTTP between roles |
-| Maintained pgstream producer | Independent one-replica Recreate Deployment, same binary command and private wire Secret; private evaluator intake Service selects the evaluator workload for the chosen profile |
-| PostgreSQL/wal2json | Explicit supplied image digest and the source streaming/connection settings; image entrypoint retained for initdb |
-| Source bootstrap | Explicit no-retry Job with a finite deadline; consumes seeded credentials and creates roles, schemas, Vault tokens and slot/publication configuration; each role mounts its scoped credential Secret |
+| PostgreSQL | Explicit supplied image digest and the source connection settings; image entrypoint retained for initdb |
+| Source bootstrap | Explicit no-retry Job with a finite deadline; consumes seeded credentials and creates roles, schemas and Vault tokens; each role mounts its scoped credential Secret |
 | API Vault policy | Kubernetes-auth helper imports the source-created policy and adapts the supported tokenFile; projected audience-bound token feeds the native Vault Agent sidecar |
 | Admin | Core admin entrypoint with mounted credentials and its Pod IP from the downward API, behind a ClusterIP and operator-only NetworkPolicy |
 | UI and edge | Source UI preload/command and byte-identical nginx asset; ClusterIP consumer entry |
@@ -56,26 +55,16 @@ evaluator receives `NS_REALTIME_SLICE_PEERS` in ordinal order. At K=1 none of th
 
 `slices.evaluator` (default 1, at most 8) sets the evaluator StatefulSet's `replicas` and its
 one environment value `NS_EVALUATOR_SLICES` (decision `statefulset-ordinal-scaling`). The
-StatefulSet is governed by the headless `evaluator` Service on 19913, so Pod `evaluator-<i>` is
-`evaluator-<i>.evaluator`. At K=1 the one Pod is the unsliced receiver `http://evaluator:19913/`.
+StatefulSet is governed by the headless `evaluator` Service on 19002, so Pod `evaluator-<i>` is
+`evaluator-<i>.evaluator`. At K=1 the one Pod is the unsliced evaluator.
 
-At K>1 each Pod derives everything from its hostname and K (core `hostAssignment` in
-`lib/pgstream/assigned-worker.js`): ordinal i, its slice, its owner key, its own receiver
-`http://evaluator-<i>.evaluator:19913/` and the roster of K receivers. There is no shell shim, no
+At K>1 each Pod derives its ordinal and slice from its hostname and K. There is no shell shim, no
 downward-API field and no per-ordinal Service. A Pod whose ordinal is K or more owns nothing and is
 not refused; keeping `replicas` equal to K is the binding's job. Compose takes the same path by
 giving each evaluator service `hostname: evaluator-<i>` and the alias `evaluator-<i>.evaluator`.
 
-- The provision Job's bootstrap step gets `NS_EVALUATOR_WORKERS=K`, so it installs
-  `pgstream.webhook_subscriptions` for the same DNS roster. PostgreSQL gets
-  `max_wal_senders = max(4, K+2)`; one replication slot either way.
 - **Seed with the same K:** `NS_EVALUATOR_WORKERS=K scripts/secrets.sh seed ...` (the inventory's
-  `seed.environment` names it). The image then renders `pgstream.yaml` with the patched pgstream's
-  `transaction_batch.slice_receivers` for that roster. A mismatch fails loudly at startup.
-  K is still fixed when a fixture is seeded; making it a property of the render alone is open.
-- The patched pgstream advances the one slot only after every slice accepts, so a slow or failed
-  evaluator slice pauses intake for all slices. Bootstrap records K; changing K needs a fresh
-  namespace. Live admission, populated-slot rebootstrap and restore at K>1 are not qualified here.
+  `seed.environment` names it). Bootstrap records K; changing K needs a fresh namespace.
 
 Role Secret files are copied from Kubernetes symlinks into regular 0400 files inside private 0700
 directories. This includes extensionless source token files. The installer test passes the copied
@@ -87,7 +76,7 @@ input. No Secret or literal credential is rendered.
 `labMetrics: {enabled: true}` adds, in the run namespace only: one Prometheus Deployment (pinned
 digest, admin API on for a TSDB snapshot before teardown, emptyDir storage), a `postgres_exporter`
 sidecar in the postgres Pod (Unix socket, local superuser, `pg_stat_statements` with query text,
-replication slots, and lab queries for walsender waits, slot lag, `pg_stat_io` and backends by
+and lab queries for `pg_stat_io` and backends by
 `application_name`), and `NS_METRICS=true` on api, evaluator, realtime and tenant-admin. Prometheus
 discovers Pods through each `<role>-internal` Service's EndpointSlices, so every evaluator ordinal
 is its own target, under a namespace Role (get/list/watch Pods, Services, Endpoints,
@@ -99,8 +88,8 @@ default) renders byte-identically to a binding without the component (`check/lab
 `lib/ns/components.libsonnet` renders one workload per role from the shared role Pod template
 (`roleTemplate`, not rendered itself). Each role owns a private ClusterIP Service at
 `<role>-internal`, on ports 19001–19004 for API, evaluator, realtime and tenant-admin respectively.
-The evaluator intake remains `evaluator:19913`. Private Services publish addresses before clinical
-readiness so lifecycle and intake readiness cannot deadlock startup. Core still checks its own
+Private Services publish addresses before clinical
+readiness so lifecycle readiness cannot deadlock startup. Core still checks its own
 storage admission on each contract.
 
 Each role receives its private HTTP listener and peer Service addresses in the Pod environment.
@@ -108,7 +97,7 @@ The API receives the Vault Agent token sink at `/run/ns-vault/token`. Tenant-adm
 read their own scoped token files directly from projected Secrets.
 
 Default deny ingress and directed policies admit the four roles and the operator to private role
-ports, edge/operator to consumer API/realtime ports, and only pgstream to stream intake. Public
+ports and edge/operator to consumer API/realtime ports. Public
 Services and edge routes do not expose private listeners. Actual NetworkPolicy enforcement requires
 a live negative connectivity check.
 
@@ -243,7 +232,7 @@ with fresh PVC names and the source capacities. A driver that supports direct PV
 can instead use `'PersistentVolumeClaim'` with the cold source PVC names. Wait for binding
 according to the StorageClass, then run the ordinary provision Job and role startup with
 `storage: {mode: 'existing-claim', claims: targetNames}` and the original Secrets. Start
-with the same PostgreSQL major version, wal2json plugin and Vault storage configuration.
+with the same PostgreSQL major version and Vault storage configuration.
 Recreate a completed provision Job for this run. Keep the completed primer results
 as the workload driver's inputs.
 
