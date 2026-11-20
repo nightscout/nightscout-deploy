@@ -18,7 +18,7 @@ function input (env = process.env) {
   if (!/^[a-z0-9.-]{1,253}$/.test(postgres.host) || postgres.database !== 'nightscout_compose_test') throw fail('RENDER_POSTGRES_ADDRESS_INVALID');
   if (env.NS_SOURCE_COMMIT !== undefined && !/^[a-f0-9]{40}$/.test(env.NS_SOURCE_COMMIT)) throw fail('RENDER_SOURCE_IDENTITY_INVALID');
   return { credentials: path.resolve(env.NS_CREDENTIALS_DIR), output: path.resolve(env.NS_RENDER_OUTPUT), vault, postgres,
-    useAgent: !!env.NS_API_VAULT_TOKEN_FILE, sourceCommit: env.NS_SOURCE_COMMIT };
+    useAgent: !!env.NS_API_VAULT_TOKEN_FILE, inputTransport: require('./input-transport').selection(env), sourceCommit: env.NS_SOURCE_COMMIT };
 }
 
 // Replace one private file whole: written beside the target and renamed, 0600 in a 0700 directory.
@@ -57,13 +57,13 @@ function streamGeneration (output) {
   return value;
 }
 
-function render ({ output, credentials, postgres, useAgent, sourceCommit }) {
+function render ({ output, credentials, postgres, useAgent, sourceCommit, inputTransport = require('./input-transport').selection() }) {
   const plan = require('./config'), l = plan.layout();
   const seeded = require('./credentials').read(credentials, Object.keys(l.roles));
   const roleURLs = require('./credentials').urls(l, seeded.postgres, postgres);
   const tokens = seeded.vault;
   const replicas = require('./replicas'), workers = require('./evaluator-workers'), realtime = require('./realtime-workers');
-  const apis = replicas.instances(replicas.count()), generation = streamGeneration(output);
+  const apis = replicas.instances(replicas.count()), generation = inputTransport === 'pgstream' ? streamGeneration(output) : null;
   const services = {
     api: apis.map(instance => instance.service), evaluator: workers.services(workers.selection()),
     realtime: realtime.services(realtime.selection()).filter(name => name !== 'socket-edge'), 'tenant-admin': ['tenant-admin'], admin: ['admin']
@@ -71,13 +71,13 @@ function render ({ output, credentials, postgres, useAgent, sourceCommit }) {
   for (const [role, instances] of Object.entries(services)) {
     for (const name of instances) {
       const dir = path.join(output, name);
-      for (const [setting, login] of Object.entries(connections[role])) token(path.join(dir, setting.toLowerCase()), roleURLs[login]);
+      for (const [setting, login] of Object.entries(connections[role])) if (generation || setting !== 'NS_STREAM_RECOVERY_PG') token(path.join(dir, setting.toLowerCase()), roleURLs[login]);
       if (role === 'api') {
         const file = path.join(dir, 'vault-token');
         if (useAgent) fs.rmSync(file, { force: true });
         else token(file, tokens.api);
       }
-      if (role === 'evaluator' && name !== 'evaluator') token(path.join(dir, 'ns_pgstream_generation'), generation);
+      if (generation && role === 'evaluator' && name !== 'evaluator') token(path.join(dir, 'ns_pgstream_generation'), generation);
       if (role === 'tenant-admin') token(path.join(dir, 'vault-token'), tokens['owner-credentials']);
       if (role === 'admin') {
         token(path.join(dir, 'vault-token'), tokens.provisioner);
@@ -88,7 +88,7 @@ function render ({ output, credentials, postgres, useAgent, sourceCommit }) {
     }
   }
   const stream = require('./pgstream');
-  json(path.join(output, 'pgstream', 'pgstream.yaml'), stream.wire(stream.descriptor(l, workers.selection()), roleURLs.pgstream));
+  if (generation) json(path.join(output, 'pgstream', 'pgstream.yaml'), stream.wire(stream.descriptor(l, workers.selection()), roleURLs.pgstream));
   json(path.join(output, 'ui', 'config.json'), { version: 2, registry: { connectionEnv: 'NS_UI_REGISTRY_PG', namespace: l.namespaces.registry, refreshMs: 2000 }, theme: 'default' });
   json(path.join(output, 'ui', 'env.json'), { NS_UI_REGISTRY_PG: roleURLs.ui_registry });
   const apiOrigin = apis.length > 1 ? 'http://api-internal:1337' : 'http://api:1337';

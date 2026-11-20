@@ -37,6 +37,8 @@
     // Decision statefulset-ordinal-scaling: K per sliced role. The same value sets the
     // StatefulSet replicas and the slice count. Evaluator K>1: hostname ordinal, NS_EVALUATOR_SLICES,
     // DNS receivers evaluator-<i>.evaluator, patched pgstream slice_receivers on one slot (components.libsonnet).
+    apiReplicas: 1,
+    inputTransport: 'pgstream',
     slices: { realtime: 1, evaluator: 1 },
     // Above the serve.internal drain deadline (NS_SERVE_INTERNAL_SHUTDOWN_TIMEOUT_MS, default
     // 5000 ms, at most 60000 ms; decision internal-listener-graceful-shutdown).
@@ -226,7 +228,7 @@
                 name: 'postgres',
                 image: c.images.postgres,
                 // Preserve docker-entrypoint.sh: it owns initdb before postgres starts.
-                args: ['postgres', '-c', 'wal_level=logical', '-c', 'max_replication_slots=4', '-c', 'max_wal_senders=' + std.max(4, c.slices.evaluator + 2), '-c', 'max_slot_wal_keep_size=-1', '-c', 'output_plugin_libraries=wal2json', '-c', 'max_connections=140', '-c', 'reserved_connections=40',
+                args: ['postgres'] + (if c.inputTransport == 'pgstream' then ['-c', 'wal_level=logical', '-c', 'max_replication_slots=4', '-c', 'max_wal_senders=' + std.max(4, c.slices.evaluator + 2), '-c', 'max_slot_wal_keep_size=-1', '-c', 'output_plugin_libraries=wal2json'] else []) + ['-c', 'max_connections=140', '-c', 'reserved_connections=40',
                   // Statement statistics and I/O timing for capacity runs (the observer snapshots
                   // pg_stat_statements around steady state); the image ships the contrib module.
                   '-c', 'shared_preload_libraries=pg_stat_statements', '-c', 'track_io_timing=on'],
@@ -362,7 +364,7 @@
       containers: [
         roleContainer('api', [{ name: 'http-api', containerPort: 1337 }]),
         roleContainer('realtime', [{ name: 'http-realtime', containerPort: 1339 }]),
-        roleContainer('evaluator', [{ name: 'stream-intake', containerPort: 19913 }]),
+        roleContainer('evaluator', if c.inputTransport == 'pgstream' then [{ name: 'stream-intake', containerPort: 19913 }] else []),
         // The owner plane (1341): a container port only; no Service, and the
         // NetworkPolicy admits nothing to it.
         roleContainer('tenant-admin', [{ name: 'int-owner', containerPort: 1341 }]),
@@ -619,7 +621,7 @@
                 step('bootstrap', ['node', 'deploy/multitenant/bootstrap.js'], [
                   { name: 'NS_COMPOSE_BOOTSTRAP', value: '1' },
                   { name: 'NS_BOOTSTRAP_VAULT_ADDR', value: 'https://vault-bootstrap:8200' },
-                  { name: 'NS_PGSTREAM', value: '1' },
+                  if c.inputTransport == 'pgstream' then { name: 'NS_PGSTREAM', value: '1' } else { name: 'NS_INPUT_TRANSPORT', value: c.inputTransport },
                 ] + (if c.slices.evaluator > 1 then [
                   // The DNS receiver roster: one subscriptions row set per receiver (pgstream.js init).
                   { name: 'NS_EVALUATOR_WORKERS', value: std.toString(c.slices.evaluator) },
@@ -796,6 +798,8 @@
         images: c.images,
         [if (import 'lab-metrics.libsonnet').enabled(c) then 'labMetrics']: { enabled: true, images: (import 'lab-metrics.libsonnet').settings(c).images },
         profile: c.profile,
+        apiReplicas: c.apiReplicas,
+        inputTransport: c.inputTransport,
         [if (import 'edge-configuration.libsonnet').selected(c.edge) then 'edgeConfiguration']: (import 'edge-configuration.libsonnet').record(c.edge),
         resourceAccounting: c.resourceAccounting,
         storage: c.storage,
@@ -803,10 +807,10 @@
         documents: {
           api: ['ns_api_pg','ns_readiness_pg','ns_api_root_writer_pg','ns_alarm_pg','ns_display_pg','ns_lifetime_pg'],
           realtime: ['ns_realtime_pg','ns_display_pg','ns_lifetime_pg'],
-          evaluator: ['ns_evaluator_pg','ns_outbox_pg','ns_suppression_pg','ns_activity_pg','ns_display_pg','ns_stream_recovery_pg','ns_lifetime_pg','ns_pgstream_generation'],
+          evaluator: ['ns_evaluator_pg','ns_outbox_pg','ns_suppression_pg','ns_activity_pg','ns_display_pg','ns_lifetime_pg'] + (if c.inputTransport == 'pgstream' then ['ns_stream_recovery_pg','ns_pgstream_generation'] else []),
           'tenant-admin': ['ns_owner_writer_pg','ns_owner_reader_pg','ns_owner_credentials_pg','ns_owner_settings_pg','ns_lifetime_pg','vault-token'],
           admin: ['ns_provisioner_pg','ns_ownership_pg','ns_connector_sources_pg','ns_management_sessions_pg','vault-token','management-vault-token'],
-          ui: ['env.json','config.json'], pgstream: ['pgstream.yaml'], primer: ['config.json'],
+          ui: ['env.json','config.json'], [if c.inputTransport == 'pgstream' then 'pgstream']: ['pgstream.yaml'], primer: ['config.json'],
         },
         ownership: { namespace: c.namespace, label: { 'nightscout.org/run-id': c.runId }, clusterScoped: [{ kind: 'ClusterRoleBinding', name: c.namespace + '-vault-tokenreview' }] },
         services: { [v.metadata.name]: { selector: v.spec.selector, type: if std.objectHas(v.spec,'type') then v.spec.type else 'ClusterIP', ports: if std.objectHas(v.spec,'ports') then v.spec.ports else [] } for v in [v for v in collect(rendered) if v.kind == 'Service'] },
@@ -814,7 +818,7 @@
         imagePullSecrets: c.imagePullSecrets,
         placement: c.placement,
         placementByWorkload: c.placementByWorkload,
-        seed: { script: 'scripts/secrets.sh seed', [if c.slices.evaluator > 1 then 'environment']: { NS_EVALUATOR_WORKERS: std.toString(c.slices.evaluator) }, credentials: ['ns-credentials-postgres', 'ns-credentials-vault'], mountedBy: ['provision'] },
+        seed: { script: 'scripts/secrets.sh seed', [if c.slices.evaluator > 1 || c.inputTransport != 'pgstream' then 'environment']: { [if c.slices.evaluator > 1 then 'NS_EVALUATOR_WORKERS']: std.toString(c.slices.evaluator), [if c.inputTransport != 'pgstream' then 'NS_INPUT_TRANSPORT']: c.inputTransport }, credentials: ['ns-credentials-postgres', 'ns-credentials-vault'], mountedBy: ['provision'] },
         results: { primer: { claim: if c.storage.mode == 'existing-claim' then std.get(c.storage.claims, 'primerResults', null) else if c.storage.mode == 'dynamic' then 'primer-results' else null, file: 'tenants.json' } },
         order: ['seed role Secrets', 'apply', 'run optional lab client; its private results stay on its claim', 'observe correctness', 'delete only owned namespace and tokenreview binding'],
         workloads: {

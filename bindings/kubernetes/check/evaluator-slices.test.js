@@ -111,3 +111,29 @@ test('evaluator K=2,3: hostname ordinal and one K; core, seed render and bootstr
     }
   } finally { fs.rmSync(image, { recursive: true, force: true }); }
 });
+
+test('two API processes route to two private writer-driven evaluator and realtime ordinals', () => {
+  const selected = render({inputTransport: 'writer-driven', apiReplicas: 2, slices: {evaluator: 2, realtime: 2}});
+  assert.equal(selected.status, 0, selected.error);
+  const {value, inventory} = selected;
+  const {components} = value;
+  assert.equal(components.api.deployment.spec.replicas, 2);
+  assert.equal(components.evaluator.statefulset.spec.replicas, 2);
+  assert.equal(components.realtime.statefulset.spec.replicas, 2);
+  assert.equal(components.evaluator.intake.spec.clusterIP, 'None');
+  assert.equal(components.evaluator.intake.spec.ports[0].port, 19002);
+  assert.equal(inventory.workloads.pgstream, undefined);
+  assert.equal(inventory.documents.pgstream, undefined);
+  assert.deepEqual(inventory.seed.environment, {NS_EVALUATOR_WORKERS: '2', NS_INPUT_TRANSPORT: 'writer-driven'});
+  assert.doesNotMatch(JSON.stringify(value.postgres.statefulset.spec.template.spec.containers[0].args), /wal2json|wal_level=logical/);
+  for (const role of ['api', 'tenant-admin', 'evaluator', 'realtime']) {
+    const workload = components[role].deployment || components[role].statefulset;
+    const container = workload.spec.template.spec.containers.find(x => x.name === role);
+    assert.equal(env(container, 'NS_EVALUATOR_SLICE_URL').value, 'http://evaluator-{i}.evaluator:19002/');
+    assert.equal(env(container, 'NS_REALTIME_SLICE_URL').value, 'http://realtime-{i}.realtime-peers:19003/');
+  }
+  const failures = () => checks(manifests(value), inventory, composeDir, {}).filter(x => x.failures.length);
+  assert.deepEqual(failures(), []);
+  env(components.api.deployment.spec.template.spec.containers[0], 'NS_REALTIME_SLICES').value = '1';
+  assert.ok(failures().some(x => x.failures.some(f => f.includes('writer target counts'))));
+});

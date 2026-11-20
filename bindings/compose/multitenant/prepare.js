@@ -9,7 +9,7 @@ const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 const base = __dirname;
 function prepare (args) {
-  require('./pgstream').enabled();
+  const transport = require('./input-transport'), mode = transport.selection();
   const project = require('./project');
   const options = {project:project.DEFAULT, bind: '127.0.0.1', port: '18080', state: path.join(base, '.state')};
   for (let i = 0; i < args.length; i += 2) {
@@ -76,13 +76,15 @@ function prepare (args) {
   }
   write(path.join(state, 'edge/nginx.conf'), require('./edge').render(fs.readFileSync(path.join(base, 'nginx.compose.conf'), 'utf8'), { replicas: apiReplicas, realtime: !!selectedRealtime }));
   write(path.join(state, 'compose.replicas.yaml'), replicas.compose(apiReplicas, 'compose.yaml')+require('./networks').render(selectedNetworks));
-  write(path.join(base, '.env'), 'NS_PGSTREAM='+(require('./pgstream').enabled()?'1':'0')+'\nNS_DEPLOY_COMMIT=' + deployCommit + '\nNS_DEMO_PROJECT=' + options.project + '\nNS_API_REPLICAS=' + apiReplicas + '\n' +
+  if (mode === 'writer-driven') write(path.join(state, 'compose.writer.yaml'), transport.compose(apiReplicas, selectedEvaluator, selectedRealtime));
+  write(path.join(base, '.env'), (mode === 'writer-driven' ? 'NS_INPUT_TRANSPORT=writer-driven' : 'NS_PGSTREAM=1')+'\nNS_DEPLOY_COMMIT=' + deployCommit + '\nNS_DEMO_PROJECT=' + options.project + '\nNS_API_REPLICAS=' + apiReplicas + '\n' +
     (selectedRealtime ? 'NS_REALTIME_WORKERS=' + selectedRealtime.workers + '\n' : '') +
     (selectedEvaluator ? 'NS_EVALUATOR_WORKERS=' + selectedEvaluator.workers + '\nNS_PGSTREAM_WAL_SENDERS=' + Math.max(4, selectedEvaluator.workers + 2) + '\n' : '') +
     'NS_M7_DIAGNOSTICS=' + diagnostics.enabled + '\nNS_M7_DIAGNOSTICS_INTERVAL_MS=' + diagnostics.interval + '\n' +
     require('./clinical-isolation').envLines(clinicalIsolation) +
     'NS_DEMO_STATE=' + state + '\nNS_DEMO_BIND=' + options.bind + '\nNS_DEMO_PORT=' + options.port + '\nNS_SOURCE_COMMIT=' + source + '\n');
   process.stdout.write('Prepared private synthetic deployment state. Start it with one up.\n');
+  process.stdout.write(JSON.stringify({ inputTransport: mode, apiReplicas, evaluatorSlices: selectedEvaluator?.workers ?? 1, realtimeSlices: selectedRealtime?.workers ?? 1, coreCommit: source, deployCommit, fixture: 'fresh' }) + '\n');
   return {state, source};
 }
 if (require.main === module) {

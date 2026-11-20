@@ -267,6 +267,8 @@
       "type": "integer",
       "minimum": 30
     },
+    "apiReplicas": {"type": "integer", "minimum": 1, "maximum": 16},
+    "inputTransport": {"enum": ["pgstream", "writer-driven"]},
     "slices": {
       "type": "object",
       "additionalProperties": false,

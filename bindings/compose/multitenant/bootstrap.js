@@ -40,7 +40,7 @@ function loginSQL(role,password) {
   return 'CREATE ROLE '+plan.quote(role)+" LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD '"+password+"'";
 }
 async function bootstrap(options) {
-  require('./pgstream').enabled();
+  const inputTransport=require('./input-transport').selection();
   const workers=require('./evaluator-workers'),evaluatorWorkers=workers.selection();
   if(evaluatorWorkers)workers.assertSeed(evaluatorWorkers);
   const {pg,bootstrapVault = options.vault,output,sourceCommit,deployCommit}=options;
@@ -81,6 +81,7 @@ async function bootstrap(options) {
     // An existing lab (a repeat up, or a restored fixture snapshot at another core or deploy
     // commit) is brought forward with migrate up; the roles' readiness checks decide the rest.
     const complete=JSON.parse(fs.readFileSync(completeFile,'utf8'));
+    if((complete.inputTransport ?? 'pgstream') !== inputTransport)throw fail('BOOTSTRAP_INPUT_TRANSPORT_CHANGED_RECREATE_DEMO');
     if(complete.evaluatorWorkers!==evaluatorWorkers?.workers)throw fail('BOOTSTRAP_EVALUATOR_ROSTER_CHANGED_RECREATE_DEMO');
     const l=plan.layout(),admin=new (require('pg').Client)({connectionString:pg.toString(),connectionTimeoutMillis:10000,statement_timeout:10000});
     await admin.connect();
@@ -121,12 +122,22 @@ async function bootstrap(options) {
     await migrate(admin,pg,l,allCatalogues,true);
     const managementGrants=require('../../lib/management-sessions/authority').grants({namespaces:{registry:l.namespaces.registry,authorization:l.namespaces.authorization,access:l.namespaces.access,control:l.namespaces.control},issuer:l.roles.management_issuer,authorityOwner:l.managementAuthorityOwner});
     for(const sql of [...managementGrants.authorityOwner,...managementGrants.issuer])await admin.query(sql);
-    const streamDescriptor=require('./pgstream').descriptor(l,evaluatorWorkers);
-    await require('./pgstream').init({admin,adminURL:pg.toString(),layout:l,config:streamDescriptor});
+    const stream = require('./pgstream');
+    if (inputTransport === 'pgstream') {
+      await stream.init({admin,adminURL:pg.toString(),layout:l,config:stream.descriptor(l,evaluatorWorkers)});
+    } else {
+      const settings = require('../../lib/server/serve/deployment-settings').evaluator({NS_PG_PREFIX:l.prefix});
+      await stream.outputGrants({admin,layout:l,consumer:settings.consumer});
+      // S1's ordinary API write-clock transaction updates the existing tenant-bound work row.
+      const namespace = q(l.namespaces.eval_checkpoint), writer = q(l.roles.api);
+      await admin.query('GRANT USAGE ON SCHEMA '+namespace+' TO '+writer);
+      await admin.query('GRANT SELECT(tenant_id,consumer,work_version,work_observed,work_pending_at), '+
+        'UPDATE(work_observed,work_observed_at,work_pending_at) ON '+namespace+'.tenant_consumer_checkpoint TO '+writer);
+    }
     // Registry completion runs before the admin client closes.
     const result=await require('./registry-bootstrap').finish({request,rootToken:initialization.root_token,layout:l,tokens:seeded.vault,admin});
     writePrivate(path.join(privateDirectory,'layout.json'),l);
-    writePrivate(completeFile,{version:2,sourceCommit,deployCommit,registryMode:true,evaluatorWorkers:evaluatorWorkers?.workers});
+    writePrivate(completeFile,{version:2,sourceCommit,deployCommit,registryMode:true,inputTransport,evaluatorWorkers:evaluatorWorkers?.workers});
     return {...result,sourceCommit};
   }finally{await admin.end();}
 }

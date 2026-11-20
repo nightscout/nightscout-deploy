@@ -90,6 +90,7 @@ function checks (all, inventory, composeDir, envMain) {
       if(Object.hasOwn(r,'workerProcesses'))projected=projected.replace('worker_processes auto;','worker_processes '+r.workerProcesses+';');
       if(Object.hasOwn(r,'workerConnections'))projected=projected.replace('worker_connections 1024;','worker_connections '+r.workerConnections+';');
     }
+    if (inventory.slices?.realtime > 1) projected = projected.replace('upstream realtime { server realtime:1339; }', 'upstream realtime { server socket-edge:1343; }');
     if(maps.length!==1 || !require('node:util').isDeepStrictEqual(maps[0].data,{'nginx.conf':projected}) || maps[0].binaryData)fail('EDGE_CONFIGMAP_CHANGED');
   });
 
@@ -156,6 +157,19 @@ function checks (all, inventory, composeDir, envMain) {
 
   run('independent-pgstream', fail => {
     const streams=workloads.filter(w=>(podSpec(w).containers||[]).some(c=>c.name==='pgstream'));
+    if (inventory.inputTransport === 'writer-driven') {
+      if (streams.length || inventory.documents.pgstream) fail('writer-driven input must omit pgstream');
+      const evaluator = services.find(v => v.metadata.name === 'evaluator');
+      if (evaluator?.spec.clusterIP !== 'None' || !evaluator.spec.ports.some(p => p.port === 19002 && p.targetPort === 'int-role')) fail('writer hints require the private ordinal evaluator Service');
+      const postgres = workloads.find(w => w.metadata.name === 'postgres');
+      if (podSpec(postgres).containers.find(c => c.name === 'postgres').args.some(x => /wal_level=logical|wal2json/.test(x))) fail('writer-driven input must omit logical decoding');
+      for (const role of ['api', 'evaluator', 'realtime', 'tenant-admin']) {
+        const workload = workloads.find(w => w.metadata.name === role);
+        const env = Object.fromEntries(podSpec(workload).containers.find(c => c.name === role).env.map(x => [x.name, x.value]));
+        if (env.NS_INPUT_TRANSPORT !== 'writer-driven' || env.NS_EVALUATOR_SLICES !== String(inventory.slices.evaluator) || env.NS_REALTIME_SLICES !== String(inventory.slices.realtime)) fail(role + ' writer target counts differ from the bound slices');
+      }
+      return;
+    }
     if(streams.length!==1)return fail('exactly one pgstream workload required');
     const stream=streams[0],spec=podSpec(stream),container=spec.containers.find(c=>c.name==='pgstream');
     if(stream.kind!=='Deployment'||stream.spec.replicas!==1||stream.spec.strategy?.type!=='Recreate')fail('pgstream must be a one-replica Recreate Deployment');
@@ -185,7 +199,7 @@ function checks (all, inventory, composeDir, envMain) {
     if (env.find(e => e.name === 'NS_EVALUATOR_SLICES')?.value !== String(k)) fail('NS_EVALUATOR_SLICES must equal slices.evaluator');
     if (env.some(e => ['NS_PGSTREAM_EVALUATOR_SLICE', 'NS_PGSTREAM_RECEIVER_URL', 'NS_SLICE_ORDINAL'].includes(e.name))) fail('the evaluator derives its slice and receiver from its hostname and K');
     if (JSON.stringify(container.command) !== JSON.stringify(['node', 'deploy/multitenant/entrypoint.js', 'evaluator'])) fail('the evaluator runs the entrypoint directly');
-    if (services.filter(v => v.spec.selector?.['app.kubernetes.io/component'] === 'evaluator' && v.spec.ports?.some(p => p.port === 19913)).length !== 1) fail('one intake Service for every evaluator ordinal');
+    if (inventory.inputTransport !== 'writer-driven' && services.filter(v => v.spec.selector?.['app.kubernetes.io/component'] === 'evaluator' && v.spec.ports?.some(p => p.port === 19913)).length !== 1) fail('one intake Service for every evaluator ordinal');
   });
 
   run('realtime-slices', fail => {
@@ -255,7 +269,7 @@ function checks (all, inventory, composeDir, envMain) {
     if(p.command)fail('postgres must retain its image entrypoint for initdb');
     const bootstrap=containersOf(podSpec(workloads.find(w=>w.metadata.name==='provision'))).find(c=>c.name==='bootstrap');
     const env=Object.fromEntries(bootstrap.env.map(e=>[e.name,e.value]));
-    if(env.NS_SOURCE_COMMIT!==inventory.sourceCommit || env.NS_DEPLOY_COMMIT!==inventory.imageDeployCommit || env.NS_PGSTREAM!=='1')fail('bootstrap source/producer identity is missing or wrong');
+    if(env.NS_SOURCE_COMMIT!==inventory.sourceCommit || env.NS_DEPLOY_COMMIT!==inventory.imageDeployCommit || (inventory.inputTransport === 'writer-driven' ? env.NS_INPUT_TRANSPORT !== 'writer-driven' : env.NS_PGSTREAM !== '1'))fail('bootstrap source/producer identity is missing or wrong');
   });
 
   run('container-budgets', fail => {

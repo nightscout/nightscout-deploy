@@ -19,6 +19,9 @@
   render(raw, c)::
     local lab = import 'lab-metrics.libsonnet';
     local roles = std.objectFields($.ports);
+    local writer = c.inputTransport == 'writer-driven';
+    assert std.member(['writer-driven', 'pgstream'], c.inputTransport) : 'unknown inputTransport';
+    assert std.isNumber(c.apiReplicas) && c.apiReplicas == std.floor(c.apiReplicas) && c.apiReplicas >= 1 && c.apiReplicas <= 16 : 'apiReplicas must be an integer 1..16';
     local k = c.slices.realtime;
     local e = c.slices.evaluator;
     assert std.length([r for r in std.objectFields(c.roleEnv) if !std.member(std.objectFields($.ports), r)]) == 0 : 'roleEnv names an unknown role';
@@ -29,6 +32,12 @@
     local source = raw.roleTemplate.spec;
     // Pod DNS names under the realtime governing (headless) Service.
     local realtimePod(i, port) = 'http://realtime-' + i + '.realtime-peers.' + c.namespace + '.svc:' + port + '/';
+    local targets(role) = if !writer then [] else [
+      { name: 'NS_INPUT_TRANSPORT', value: c.inputTransport },
+      { name: 'NS_REALTIME_SLICES', value: std.toString(k) },
+      { name: 'NS_EVALUATOR_SLICE_URL', value: 'http://evaluator-{i}.evaluator:19002/' },
+      { name: 'NS_REALTIME_SLICE_URL', value: 'http://realtime-{i}.realtime-peers:19003/' },
+    ] + (if role == 'evaluator' then [] else [{ name: 'NS_EVALUATOR_SLICES', value: std.toString(e) }]);
     local sliceEnv(role) =
       if role == 'realtime' then [
         { name: 'NS_SLICE_ORDINAL', valueFrom: { fieldRef: { fieldPath: "metadata.labels['apps.kubernetes.io/pod-index']" } } },
@@ -56,7 +65,7 @@
       source + {
         initContainers: if agent then [source.initContainers[0]] else [],
         containers: [x + {
-          env: x.env + env + sliceEnv(role) + lab.roleEnv(c) + (if std.objectHas(c.roleEnv, role) then c.roleEnv[role] else []),
+          env: x.env + env + targets(role) + sliceEnv(role) + lab.roleEnv(c) + (if std.objectHas(c.roleEnv, role) then c.roleEnv[role] else []),
           ports: x.ports + [{ name: 'int-role', containerPort: $.ports[role] }],
           // Core health endpoints on the role's private listener (lib/server/serve/role-health.js).
           // Startup budget 5 s x 180 = 900 s (Compose start_period) for a long tenant warm.
@@ -97,11 +106,11 @@
         },
       } else {
         apiVersion: 'apps/v1', kind: 'Deployment', metadata: meta(role, role),
-        spec: { replicas: 1, strategy: { type: 'Recreate' }, selector: { matchLabels: label(role) },
+        spec: { replicas: if role == 'api' then c.apiReplicas else 1, strategy: { type: 'Recreate' }, selector: { matchLabels: label(role) },
           template: { metadata: { labels: label(role) }, spec: spec(role) } },
       };
     local routed = k > 1;
-    { [key]: raw[key] for key in std.objectFields(raw) if key != 'networkPolicies' } + {
+    { [key]: raw[key] for key in std.objectFields(raw) if key != 'networkPolicies' && !(writer && key == 'pgstream') } + {
       postgres: lab.postgres(raw.postgres, c),
       [if lab.enabled(c) then 'labMetrics']: lab.render(c, c.namespace, label),
       // One API agent retains its existing policy/sink. Other roles use their
@@ -120,7 +129,7 @@
           public: service(role, role, [{ name: 'http', port: if role == 'api' then 1337 else 1339, targetPort: 'http-' + role }]),
         } else if role == 'evaluator' then {
           // Headless: a receiver is addressed per Pod, never load-balanced across slices.
-          intake: service('evaluator', role, [{ name: 'stream-intake', port: 19913, targetPort: 'stream-intake' }], true) + { spec+: { clusterIP: 'None' } },
+          intake: service('evaluator', role, if writer then [{ name: 'internal', port: $.ports.evaluator, targetPort: 'int-role' }] else [{ name: 'stream-intake', port: 19913, targetPort: 'stream-intake' }], true) + { spec+: { clusterIP: 'None' } },
         } else {}) for role in roles
       },
       [if routed then 'socketEdge']: {
@@ -156,8 +165,8 @@
       } + lab.policies(c, policy) + {
         apiPublic: policy('api-public', 'api', ['edge', 'operator'], [1337]),
         realtimePublic: policy('realtime-public', 'realtime', ['edge', 'operator'] + (if routed then ['socket-edge'] else []), [1339]),
-        evaluatorIntake: policy('evaluator-intake', 'evaluator', ['pgstream'], [19913]),
-        postgresFromApp: policy('postgres-from-app', 'postgres', roles + ['pgstream', 'admin', 'ui', 'provision'] + (if routed then ['socket-edge'] else []), [5432]),
+        [if !writer then 'evaluatorIntake']: policy('evaluator-intake', 'evaluator', ['pgstream'], [19913]),
+        postgresFromApp: policy('postgres-from-app', 'postgres', roles + (if writer then [] else ['pgstream']) + ['admin', 'ui', 'provision'] + (if routed then ['socket-edge'] else []), [5432]),
         vaultFromApp: policy('vault-from-app', 'vault', ['api', 'tenant-admin', 'admin', 'provision', 'vault'], [8200]),
       } + (if routed then {
         socketEdgeFromEdge: policy('socket-edge-from-edge', 'socket-edge', ['edge'], [$.socketEdgePort]),

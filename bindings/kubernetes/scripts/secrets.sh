@@ -54,6 +54,12 @@ if [ -n "${NS_EVALUATOR_WORKERS:-}" ]; then
   evaluator_env=(-e "NS_EVALUATOR_WORKERS=$NS_EVALUATOR_WORKERS")
 fi
 
+case "${NS_INPUT_TRANSPORT:-pgstream}" in
+  pgstream) ;;
+  writer-driven) evaluator_env+=(-e "NS_INPUT_TRANSPORT=writer-driven") ;;
+  *) echo 'REFUSED: unknown NS_INPUT_TRANSPORT' >&2; exit 64 ;;
+esac
+
 # Prepare per-role credentials offline in the application image.
 mkdir -m 700 "$work/seed"
 docker run --rm --network none --read-only --tmpfs /tmp --user "$(id -u):$(id -g)" -w /opt/app \
@@ -70,6 +76,8 @@ for role in api realtime evaluator tenant-admin ui admin primer; do
   mapfile -t args < <(from_dir "$docs/$role")
   secret "ns-config-$role" "${args[@]}"
 done
-secret ns-config-pgstream --from-file=pgstream.yaml="$docs/pgstream/pgstream.yaml"
+if [ "${NS_INPUT_TRANSPORT:-pgstream}" = pgstream ]; then
+  secret ns-config-pgstream --from-file=pgstream.yaml="$docs/pgstream/pgstream.yaml"
+fi
 k label secret "${created[@]}" "nightscout.org/run-id=$NS_RUN_ID" >/dev/null
 printf '{"state":"seeded","secrets":[%s]}\n' "$(printf '"%s",' "${created[@]}" | sed 's/,$//')"
