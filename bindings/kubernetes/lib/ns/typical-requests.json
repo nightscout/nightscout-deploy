@@ -49,10 +49,20 @@
     "memory": "132Mi",
     "ephemeral-storage": "16Mi"
   },
+  "postgres-exporter": {
+    "cpu": "20m",
+    "memory": "32Mi",
+    "ephemeral-storage": "16Mi"
+  },
   "primer": {
     "cpu": "31m",
     "memory": "16Mi",
     "ephemeral-storage": "16Mi"
+  },
+  "prometheus": {
+    "cpu": "100m",
+    "memory": "256Mi",
+    "ephemeral-storage": "1Gi"
   },
   "realtime": {
     "cpu": "143m",

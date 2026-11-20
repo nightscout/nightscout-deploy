@@ -82,6 +82,18 @@ directories. This includes extensionless source token files. The installer test 
 admin environment through the actual source environment reader and confirms it refuses group-readable
 input. No Secret or literal credential is rendered.
 
+## Lab metrics (opt-in)
+
+`labMetrics: {enabled: true}` adds, in the run namespace only: one Prometheus Deployment (pinned
+digest, admin API on for a TSDB snapshot before teardown, emptyDir storage), a `postgres_exporter`
+sidecar in the postgres Pod (Unix socket, local superuser, `pg_stat_statements` with query text,
+replication slots, and lab queries for walsender waits, slot lag, `pg_stat_io` and backends by
+`application_name`), and `NS_METRICS=true` on api, evaluator, realtime and tenant-admin. Prometheus
+discovers Pods through each `<role>-internal` Service's EndpointSlices, so every evaluator ordinal
+is its own target, under a namespace Role (get/list/watch Pods, Services, Endpoints,
+EndpointSlices). No cluster-scoped object, operator, kube-prometheus-stack or Grafana. Off (the
+default) renders byte-identically to a binding without the component (`check/lab-metrics.test.js`).
+
 ## Per-role contracts
 
 `lib/ns/components.libsonnet` renders one workload per role from the shared role Pod template

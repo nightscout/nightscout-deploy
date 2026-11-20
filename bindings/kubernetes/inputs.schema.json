@@ -371,6 +371,43 @@
           }
         }
       }
+    },
+    "labMetrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Opt-in lab metrics (lib/ns/lab-metrics.libsonnet): one Prometheus per run namespace, a postgres_exporter sidecar and NS_METRICS=true on the application roles. Off by default.",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "scrapeSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 60
+        },
+        "retention": {
+          "type": "string",
+          "pattern": "^[0-9]+[smhd]$"
+        },
+        "storage": {
+          "type": "string",
+          "pattern": "^[0-9]+(Mi|Gi)$"
+        },
+        "images": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "prometheus": {
+              "type": "string",
+              "pattern": "@sha256:[0-9a-f]{64}$"
+            },
+            "postgresExporter": {
+              "type": "string",
+              "pattern": "@sha256:[0-9a-f]{64}$"
+            }
+          }
+        }
+      }
     }
   }
 }

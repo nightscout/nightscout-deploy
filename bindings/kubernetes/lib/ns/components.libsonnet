@@ -17,6 +17,7 @@
   socketEdgePort:: 1343,
   ordinal:: ['realtime', 'evaluator'],
   render(raw, c)::
+    local lab = import 'lab-metrics.libsonnet';
     local roles = std.objectFields($.ports);
     local k = c.slices.realtime;
     local e = c.slices.evaluator;
@@ -55,7 +56,7 @@
       source + {
         initContainers: if agent then [source.initContainers[0]] else [],
         containers: [x + {
-          env: x.env + env + sliceEnv(role) + (if std.objectHas(c.roleEnv, role) then c.roleEnv[role] else []),
+          env: x.env + env + sliceEnv(role) + lab.roleEnv(c) + (if std.objectHas(c.roleEnv, role) then c.roleEnv[role] else []),
           ports: x.ports + [{ name: 'int-role', containerPort: $.ports[role] }],
           // Core health endpoints on the role's private listener (lib/server/serve/role-health.js).
           // Startup budget 5 s x 180 = 900 s (Compose start_period) for a long tenant warm.
@@ -101,6 +102,8 @@
       };
     local routed = k > 1;
     { [key]: raw[key] for key in std.objectFields(raw) if key != 'networkPolicies' } + {
+      postgres: lab.postgres(raw.postgres, c),
+      [if lab.enabled(c) then 'labMetrics']: lab.render(c, c.namespace, label),
       // One API agent retains its existing policy/sink. Other roles use their
       // own role-specific credential Secrets.
       roleAuth: { serviceAccount: raw.roleTemplate.serviceAccount, agentConfig: raw.roleTemplate.agentConfig },
@@ -149,8 +152,8 @@
         if !std.member(['postgresFromApp', 'vaultFromApp'], key)
       } + {
         // Private role contracts; no public/edge Pod reaches these ports.
-        [role + '-internal']: policy(role + '-internal', role, roles + ['operator'], [$.ports[role]]) for role in roles
-      } + {
+        [role + '-internal']: policy(role + '-internal', role, roles + ['operator'] + lab.callers(c), [$.ports[role]]) for role in roles
+      } + lab.policies(c, policy) + {
         apiPublic: policy('api-public', 'api', ['edge', 'operator'], [1337]),
         realtimePublic: policy('realtime-public', 'realtime', ['edge', 'operator'] + (if routed then ['socket-edge'] else []), [1339]),
         evaluatorIntake: policy('evaluator-intake', 'evaluator', ['pgstream'], [19913]),

@@ -66,12 +66,15 @@
     // Extra environment rows per application role (api, evaluator, realtime, tenant-admin),
     // appended after the binding's own rows: diagnostics and profiling switches only.
     roleEnv: {},
+    // Opt-in lab metrics (lab-metrics.libsonnet): per-namespace Prometheus, postgres_exporter
+    // sidecar and NS_METRICS=true on the roles. Off by default; off renders nothing extra.
+    labMetrics: (import 'lab-metrics.libsonnet').defaults,
     resources: {
       [name]: {
         requests: { cpu: '25m', memory: '32Mi', 'ephemeral-storage': '16Mi' },
         limits: { cpu: '500m', memory: '256Mi', 'ephemeral-storage': '128Mi' },
       }
-      for name in ['install-config', 'vault-agent', 'wait-stores', 'bootstrap', 'vault-kubernetes-auth', 'primer', 'api', 'realtime', 'evaluator', 'tenant-admin', 'admin', 'ui', 'pgstream', 'postgres', 'nginx', 'vault']
+      for name in ['install-config', 'vault-agent', 'wait-stores', 'bootstrap', 'vault-kubernetes-auth', 'primer', 'api', 'realtime', 'evaluator', 'tenant-admin', 'admin', 'ui', 'pgstream', 'postgres', 'nginx', 'vault', 'prometheus', 'postgres-exporter']
     },
     storage: { mode: 'dynamic', postgres: '1Gi', vault: '256Mi', provisionState: '64Mi', primerResults: '64Mi', claims: {} },
   },
