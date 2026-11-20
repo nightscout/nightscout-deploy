@@ -7,7 +7,13 @@ function main (env = process.env) {
   const app = process.cwd(), root = env.NS_SEED_ROOT || '/seed';
   process.umask(0o077);
   const credentials = path.join(root, 'credentials'), output = path.join(root, 'roles');
-  require(path.join(app, 'deploy/multitenant/credentials')).seed(credentials);
+  const binding = path.join(app, 'deploy/multitenant');
+  const seed = require(path.join(binding, 'credentials')).seed;
+  if (env.NS_INPUT_TRANSPORT === 'writer-driven') {
+    const transport = require(path.join(binding, 'input-transport')).selection(env);
+    const roles = require(path.join(binding, 'config')).layout(undefined, transport).roles;
+    seed(credentials, Object.keys(roles));
+  } else seed(credentials);
   const render = require(path.join(app, 'deploy/multitenant/render'));
   return render.render(render.input({ ...env, NS_CREDENTIALS_DIR: credentials, NS_RENDER_OUTPUT: output, NS_API_VAULT_TOKEN_FILE: '/run/ns-vault/token' }));
 }

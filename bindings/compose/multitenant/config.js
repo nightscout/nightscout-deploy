@@ -32,10 +32,10 @@ function catalogues() {
     subject_policy:require('../../lib/subject-policy/postgres-candidate.json'),
     owner_configuration:require('../../lib/tenant-settings/owner-authority-candidate.json')};
 }
-function layout(prefix = 'nsdemo') {
+function layout(prefix = 'nsdemo', inputTransport = require('./input-transport').selection()) {
   quote(prefix);
   if (prefix.length > 24) throw new TypeError('Deployment prefix too long');
-  const names = ['pgstream','api','readiness','realtime','evaluator','alarm','suppression','outbox','owner_writer','owner_reader','owner_credentials','owner_settings','root_writer','operator','provisioner','display_reader','activity_reader','ownership_operator','connector_writer','management_issuer','ui_registry',
+  const names = [...(inputTransport === 'pgstream' ? ['pgstream'] : []),'api','readiness','realtime','evaluator','alarm','suppression','outbox','owner_writer','owner_reader','owner_credentials','owner_settings','root_writer','operator','provisioner','display_reader','activity_reader','ownership_operator','connector_writer','management_issuer','ui_registry',
     ...serviceRoles.map(name=>'lifetime_'+name.replace('-','_'))];
   return {prefix,owner:prefix+'_owner',managementAuthorityOwner:prefix+'_management_authority',namespaces:Object.fromEntries(Object.keys(catalogues()).map(name=>[name,prefix+'_'+name])),
     roles:Object.fromEntries(names.map(name=>[name,prefix+'_'+name])),mount:prefix+'_transit'};

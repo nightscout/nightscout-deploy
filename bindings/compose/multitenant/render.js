@@ -58,7 +58,7 @@ function streamGeneration (output) {
 }
 
 function render ({ output, credentials, postgres, useAgent, sourceCommit, inputTransport = require('./input-transport').selection() }) {
-  const plan = require('./config'), l = plan.layout();
+  const plan = require('./config'), l = plan.layout(undefined, inputTransport);
   const seeded = require('./credentials').read(credentials, Object.keys(l.roles));
   const roleURLs = require('./credentials').urls(l, seeded.postgres, postgres);
   const tokens = seeded.vault;
