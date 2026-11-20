@@ -142,8 +142,9 @@ acceptance run. No source-only check promotes those boundaries.
 
 The canonical registry API selects `localDataAuthentication: "node"` with its
 explicit existing issuer and audience. Fresh provisioning installs one-way root
-verifiers and a dedicated Node data-signing key. The primer creates subjects
-through root administration, which prepares their verifiers. The API has SELECT
+verifiers and a dedicated Node data-signing key. Provisioning's bootstrap block
+creates the lab subjects in the tenant's provisioning transaction and prepares their verifiers
+from the root secret it holds; the primer makes no root-administration call. The API has SELECT
 on the legacy key table; it has no key mutation grant. Owner subject management
 uses a separate `owner_credentials` SQL identity and a decrypt-only Vault token.
 Its existing secret and legacy-authority pools each have maximum four connections

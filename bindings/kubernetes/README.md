@@ -226,9 +226,11 @@ authority oracles.
 
 For a storage-backed run, keep the four PVCs used by PostgreSQL, Vault, the provision Job
 and the primer Job together with the matching `ns-config-*`, `ns-credentials-*`,
-`ns-postgres-password`, `ns-ca` and `ns-vault-tls` Secrets. The primer Job runs both
-provision and DATA priming. Its claim contains private client credentials in `tenants.json`.
-The optional top-level `primerConcurrency` input defaults to 1.
+`ns-postgres-password`, `ns-ca` and `ns-vault-tls` Secrets. The primer Job makes one bulk
+provisioning call per 100 tenants with a bootstrap block and writes the roster from the
+responses; it makes no DATA API call. Its claim contains private client credentials in
+`tenants.json`. The optional top-level `primerConcurrency` input (batch calls in flight)
+defaults to 4.
 
 Quiesce every workload that can write these claims, terminate its Pods, then render
 `fixture.snapshots(namespace, snapshotClass, sourceClaims, snapshotNames)` from

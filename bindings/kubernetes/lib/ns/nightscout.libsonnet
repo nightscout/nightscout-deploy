@@ -677,10 +677,10 @@
         },
       },
     } + std.get(extra, 'objects', {}),
-    primer: clientJob('primer', ['sh', '-euc', 'node deploy/multitenant/prime.js provision --tenant-count "$NS_DEMO_TENANTS" && exec node deploy/multitenant/prime.js prime --concurrency "$NS_PRIMER_CONCURRENCY"'], {
+    primer: clientJob('primer', ['sh', '-euc', 'exec node deploy/multitenant/prime.js provision --tenant-count "$NS_DEMO_TENANTS" --concurrency "$NS_PRIMER_CONCURRENCY"'], {
       container: {
         env: [{ name: 'NS_DEMO_TENANTS', value: std.toString(c.tenantCount) },
-              { name: 'NS_PRIMER_CONCURRENCY', value: std.toString(std.get(c, 'primerConcurrency', 1)) },
+              { name: 'NS_PRIMER_CONCURRENCY', value: std.toString(std.get(c, 'primerConcurrency', 4)) },
               { name: 'NS_PRIMER_STATE', value: '/run/ns-client' }, { name: 'NS_PRIMER_CONFIG', value: '/run/ns-primer/config.json' }],
       },
       mounts: [{ name: 'client-state', mountPath: '/run/ns-client' }],

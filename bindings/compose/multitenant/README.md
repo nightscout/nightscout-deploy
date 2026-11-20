@@ -155,73 +155,38 @@ Every other service joins only the backend. Container loopback is
 private to that container; other services communicate over the internal Docker
 network or the fixed private Unix socket paths.
 
-## Bounded lab priming
+## Lab priming: one bulk call per batch
 
-The primer keeps each tenant's existing authorized API sequence serial. Its
-optional worker count overlaps independent tenants; the default remains one.
-It receives no PostgreSQL or Vault credentials and does not bypass public DATA
-or private ownership/session authorization.
-
-Primer failures retain an allowlisted connection cause and request class.
-They omit request URLs, tenant identities, headers and bodies. The first
-successful role-list read emits one `first-useful-response` event with a wall
-clock timestamp; full priming emits a separate `completed` event. Process
-readiness, first useful service and completed lab priming therefore remain
-separate observations. Only the existing explicit `TENANT_WARMING` read retry
-is automatic; an uncertain entry write keeps its reconciliation fence.
-
-Within the existing primer environment, a bounded chunk is:
+The primer makes tenants usable with one private admin call per 100 tenants
+(decision `one-call-usable-provisioning`): `POST /v1/tenants/batch` with a
+bootstrap block per tenant. Provisioning writes the role, owner, data subject
+and its credential rows in each tenant's transaction and returns the data
+subject's access token on `created`. The primer writes the roster from the
+responses. It makes no tenant DATA API call, receives no PostgreSQL or Vault
+credential, and loads no data (synthetic data belongs to the bench harness).
 
 ```bash
-node deploy/multitenant/prime.js prime --concurrency 4 --max-tenants 100
+node deploy/multitenant/prime.js provision --tenant-count 1000 --concurrency 4
 ```
 
-`prime` and `add` accept these options. `--concurrency` is an integer from 1 to
-32; `--max-tenants` is an integer from 1 to 10000 and limits new commissioning in
-this invocation. The values are operational bounds, not measured capacity.
-A partial chunk returns `synthetic-data-prime-partial` with completed and
-remaining counts and exits 2. An explicit next invocation skips completed
-tenants without API traffic, credential renewal or another entry upload.
-Existing `primed.json` describes its prior completed seed until all newly
-provisioned tenants finish.
+`--concurrency` (1 to 32, default 4) bounds batch calls in flight;
+`--max-tenants` limits new tenants in this invocation (a partial run returns
+`synthetic-tenants-partial` and exits 2). `prime` is the same idempotent call,
+kept for callers that run `provision` then `prime`.
 
-One process owns the directory through `prime.lock` across `provision`, `prime`
-and `add`. Shared custody updates are synchronous, atomically renamed and
-flushed, including the parent directory. Parallel workers cannot overwrite a
-peer's completed tenant or management request identity. On a tenant failure or
-SIGINT/SIGTERM, dispatch stops and already-started tenants drain under their
-existing request and warming timeouts. Hard process termination can interrupt
-that drain. A retained lock is never silently stolen: first confirm its process
-is absent and review pending outcomes before removing it.
+The only state is `tenants.json` (0600, rewritten atomically after every batch):
+`{"version":1,"tenants":[{id,host,hosts,subject,dataToken,ownerSubject,rootSecret?}]}`.
+A tenant already in it is not sent again, so a completed run re-runs with no
+traffic. Management sessions are not in the roster: they live at most 600 s;
+issue one from `ownerSubject` at `POST /v1/tenants/{id}/management-sessions`
+when a test needs it.
 
-Set `NS_PRIMER_STALL_SECONDS` to the maximum interval between durable
-checkpoints (default 3600 seconds). Each saved provisioning batch or completed
-DATA tenant with a higher count renews this window. A stall aborts outstanding
-requests and reports `PRIMER_STALLED` with the saved tenant count. Retry on
-the same private state after resolving the cause.
-
-Before an entry POST, `entry-requests.json` records an `outcome-uncertain` phase.
-The record is cleared only after a definite client refusal or after the tenant's
-completed custody is flushed. Transport loss, server errors or failed local
-completion writes retain the phase. Resume then refuses with
-`PRIMER_ENTRY_OUTCOME_UNCERTAIN` before any API traffic. Reconcile through the
-authorized API and retained request evidence; do not clear the phase to force a
-retry. The primer recomputes entry time on retry and does not establish identical
-replay or read-back semantics; the entry label alone does not resolve an
-uncertain completion. Completed tenants are reusable, but ambiguous entry outcomes
-are not automatically replayed.
-
-The existing `add` operation remains limited to 100 explicit tenant specs per
-addition. It provisions through the private tenant API and commissions only
-unfinished tenants. Reusing a cohort does not authorize resetting its stream,
-changing source/image pins, replacing credentials or changing its observation
-window. Higher worker counts can increase database contention and custody I/O;
-measure their effects before choosing later scale points.
-
-This primer change needs a new deployment pin and canonical image qualification
-before adoption. Focused loopback tests establish scheduling and custody
-behavior; they do not establish live throughput, power-loss behavior of the
-filesystem or clinical correctness.
+A token is returned once. If a batch response is lost before the roster write,
+a retry answers `existing` for those tenants and the primer refuses with
+`PRIMER_CREDENTIAL_NOT_RETURNED` and their count; it never asks for a second
+credential. Use a fresh fixture, or an explicit credential operation. One
+process owns the directory through `prime.lock`. Diagnostics carry codes and
+counts only.
 
 ## Credentials and initialization
 
@@ -437,27 +402,14 @@ unselected native runs are skipped, never evidence that a deployment passed.
 
 ### Explicit synthetic incremental commissioning
 
-The lab/qualification primer can commission additional synthetic tenants through
-existing private provisioning, ownership and management-session issuance APIs.
-It has no database or Vault credential. This adapter is separate from the
-shipping operator authority APIs. Registry mode already sets runtime/UI tenant
-ceilings to 10,000 independently of the seed count; no reserve flag is needed.
-
 Write a private `primer/add.json` in the prepared state directory with
 `{"version":1,"tenants":[...]}`. Each tenant is an ordinary provisioning request
-(`id`, `hosts`, `issueRootSecret: true`); at most 100 requests are admitted. Run
-`node deploy/multitenant/prime.js add` in the existing Compose primer service,
-using the same prepared overlay selection. Output contains counts only. Keep
-this file and all primer custody private (0600).
-
-A refused batch preserves successfully issued roots before stopping. Correct
-only the refused request and explicitly retry; reuse the same tenant IDs.
-An ambiguous response without locally retained root custody refuses rather than
-replacing the credential. Commissioning resumes unfinished tenants with their
-persisted management request IDs. Previously completed tenants are skipped:
-no clinical re-upload, implicit credential renewal or ownership reassignment.
-A global `primed.json` marker never suppresses new-tenant commissioning.
-Pause/suspend qualification is a separate deferred stage.
+(`id`, `hosts`, `issueRootSecret: true`); at most 100. Run
+`node deploy/multitenant/prime.js add` in the existing Compose primer service.
+New tenants are provisioned with the same bootstrap and appended to
+`tenants.json`; tenants already in it are not touched. A refused tenant stops
+the run with its code after its peers are saved; correct only that request and
+retry with the same tenant ids.
 
 `shipping-live-add.integration.test.js` is an opt-in, mutating synthetic
 qualification on a fresh disposable project, never an existing benchmark or

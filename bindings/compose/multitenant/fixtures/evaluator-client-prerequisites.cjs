@@ -4,7 +4,7 @@ const fs=require('node:fs'),path=require('node:path'),http=require('node:http'),
 async function main(){
  const [core,state,rawPort,...extra]=process.argv.slice(2),port=Number(rawPort);
  if(extra.length||!path.isAbsolute(core||'')||!path.isAbsolute(state||'')||!Number.isInteger(port)||port<1024||port>65535)throw new Error('CLIENT_PREREQUISITE_ARGUMENTS_REFUSED');
- const tenants=JSON.parse(fs.readFileSync(path.join(state,'primer/tenants.json'))).tenants,roots=JSON.parse(fs.readFileSync(path.join(state,'primer/provisioned.json')));if(tenants.length!==2)throw new Error('CLIENT_PREREQUISITE_TENANTS_REFUSED');
+ const tenants=JSON.parse(fs.readFileSync(path.join(state,'primer/tenants.json'))).tenants,roots=tenants;if(tenants.length!==2)throw new Error('CLIENT_PREREQUISITE_TENANTS_REFUSED');
  const {io}=require(path.join(core,'node_modules/socket.io-client')),clients=[],agents=[],start=performance.now();
  try{
   for(const [index,namespace]of[[0,'/alarm'],[1,'/alarm'],[1,'/']]){

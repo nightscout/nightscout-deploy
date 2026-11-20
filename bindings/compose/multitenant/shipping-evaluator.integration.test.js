@@ -8,7 +8,7 @@ const execute=promisify(execFile),selected=process.env.NS_EVALUATOR_BINDING_STAT
 test('actual evaluator two-to-three membership preserves clinical alarm effects, checkpoints and B socket progress',{skip:!selected,timeout:120000},async()=>{
  const core=process.env.NS_UI_TEST_CORE,state=path.resolve(selected),project=process.env.NS_EVALUATOR_BINDING_PROJECT,port=Number(process.env.NS_EVALUATOR_BINDING_PORT);
  assert(core);assert.match(project||'',/^ns-evaluator-binding-proof-[0-9]{8}(?:-[a-z][a-z0-9]{0,15})?$/);assert.ok(port>=1024&&port<=65535);
- const tenants=JSON.parse(fs.readFileSync(path.join(state,'primer/tenants.json'),'utf8')).tenants,roots=JSON.parse(fs.readFileSync(path.join(state,'primer/provisioned.json'),'utf8'));
+ const tenants=JSON.parse(fs.readFileSync(path.join(state,'primer/tenants.json'),'utf8')).tenants,roots=tenants;
  const [a,b]=tenants;assert.equal(tenants.length,2);
  const {io}=require(path.join(core,'node_modules/socket.io-client')),bucket=require(path.join(core,'lib/pool-membership/slice')).bucket,notification=require(path.join(core,'lib/tenant-notifications/contract'));
  const completion=require('./fixtures/clinical-effect-observation.cjs'),clientDiagnostics=require('./fixtures/evaluator-client-diagnostics.cjs');

@@ -1,7 +1,7 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),os=require('node:os'),vm=require('node:vm');
 test('actual shipping fixture holds all socket/JWT/HTTP setup until exact-tuple readiness, and refuses a cold barrier',async()=>{
- const state=fs.mkdtempSync(path.join(os.tmpdir(),'api-readiness-sequence-'));fs.mkdirSync(path.join(state,'primer'));fs.mkdirSync(path.join(state,'artifacts'));fs.writeFileSync(path.join(state,'primer/tenants.json'),JSON.stringify({tenants:[{id:'A'},{id:'B'}]}));fs.writeFileSync(path.join(state,'primer/provisioned.json'),'[]');let callback,release,clients=0,http=0,barriers=0;
+ const state=fs.mkdtempSync(path.join(os.tmpdir(),'api-readiness-sequence-'));fs.mkdirSync(path.join(state,'primer'));fs.mkdirSync(path.join(state,'artifacts'));fs.writeFileSync(path.join(state,'primer/tenants.json'),JSON.stringify({tenants:[{id:'A'},{id:'B'}]}));let callback,release,clients=0,http=0,barriers=0;
  const barrier=new Promise((resolve,reject)=>{release=reject;});
  const sandbox={process:{env:{NS_COMPOSE_SHARDING_STATE:state,NS_UI_TEST_CORE:'/synthetic-core',NS_COMPOSE_SHARDING_PROJECT:'ns-evaluator-binding-proof-20261112-control',NS_COMPOSE_SHARDING_PORT:'18383',NS_COMPOSE_SHARDING_PROFILE:'evaluator'}},console,setTimeout,clearTimeout,Buffer,require:id=>{
   if(id==='node:test')return{test:(name,options,fn)=>callback=fn};if(id==='/synthetic-core/node_modules/socket.io-client')return{io:()=>{clients++;throw new Error('APPLICATION_REACHED');}};
