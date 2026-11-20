@@ -112,7 +112,8 @@ test('bootstrap resolves the sealed Vault separately from the serving address', 
   const { vault, provision } = fixture.value;
   const probe = vault.statefulset.spec.template.spec.containers[0].readinessProbe.httpGet;
   assert.deepEqual(probe, { scheme: 'HTTPS', port: 'vault', path: '/v1/sys/health?uninitcode=200' });
-  assert.equal(vault.bootstrapService.spec.clusterIP, 'None');
+  // Not headless: its name must resolve before and while the Vault Pod address is published.
+  assert.equal(vault.bootstrapService.spec.clusterIP, undefined);
   assert.equal(vault.bootstrapService.spec.publishNotReadyAddresses, true);
   assert.deepEqual(vault.bootstrapService.spec.selector, vault.service.spec.selector);
   assert.equal(vault.service.spec.publishNotReadyAddresses, undefined);
