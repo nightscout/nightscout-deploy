@@ -602,11 +602,13 @@
                 ] else []),
               },
               initContainers: [
-                // Bootstrap checks the Vault API itself, including when the store is sealed.
+                // Bootstrap checks the Vault API itself, including when the store is sealed, but
+                // retries only its first call: wait until both stores accept connections, so a
+                // Vault Pod that starts after bootstrap (late volume attach) is not a terminal error.
                 step('wait-stores', ['node', '-e', |||
                   const net=require('node:net');
                   const up=(host,port)=>new Promise(r=>{const s=net.connect({host,port});s.setTimeout(1500);s.once('connect',()=>{s.end();r(true)});s.once('timeout',()=>{s.destroy();r(false)});s.once('error',()=>r(false));});
-                  (async()=>{for(let i=0;i<120;i++){if(await up('postgres',5432))return;await new Promise(r=>setTimeout(r,2000));}process.exit(1);})();
+                  (async()=>{for(let i=0;i<120;i++){if(await up('postgres',5432)&&await up('vault-bootstrap',8200))return;await new Promise(r=>setTimeout(r,2000));}process.exit(1);})();
                 |||], []),
                 step('bootstrap', ['node', 'deploy/multitenant/bootstrap.js'], [
                   { name: 'NS_COMPOSE_BOOTSTRAP', value: '1' },
