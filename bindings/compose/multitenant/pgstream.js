@@ -40,6 +40,7 @@ async function init({admin,adminURL,layout,config,binary='/usr/local/bin/pgstrea
  const product=()=>require('../../lib/pgstream/evaluator');
  const selected=routes||product().routes(normalized);
  const q=require('./config').quote,role=q(layout.roles.pgstream),evaluator=q(layout.roles.evaluator);
+ const installOutput=outputGrants({layout,consumer:config.consumer,workColumns,realtimeColumns,realtimeConsumers});
  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'ns-pgstream-dba-'));
  try{
   const connection=new URL(adminURL);connection.searchParams.set('sslmode','disable');
@@ -57,12 +58,13 @@ async function init({admin,adminURL,layout,config,binary='/usr/local/bin/pgstrea
  await admin.query('GRANT SELECT ON pgstream.webhook_subscriptions TO '+role);
  await admin.query('GRANT USAGE ON SCHEMA pgstream TO '+evaluator);
  await admin.query('GRANT SELECT ON pgstream.webhook_subscriptions TO '+evaluator);
- await outputGrants({admin,layout,consumer:config.consumer,workColumns,realtimeColumns,realtimeConsumers});
+ await installOutput(admin);
  const subscribed=[...selected,{schema:'',table:'',kind:'schema'}];
  for(const target of targets)for(const route of subscribed)await admin.query('INSERT INTO pgstream.webhook_subscriptions VALUES($1,$2,$3,$4)',[
    target,route.schema,route.table,route.kind==='schema'?['B','C','M']:['I','U','D']]);
 }
-async function outputGrants({admin,layout,consumer:producer,workColumns,realtimeColumns,realtimeConsumers=['realtime-compose-demo']}){
+// Validate the whole grant set before CDC initialization can change the database.
+function outputGrants({layout,consumer:producer,workColumns,realtimeColumns,realtimeConsumers=['realtime-compose-demo']}){
  const q=require('./config').quote,evaluator=q(layout.roles.evaluator),table=q(layout.namespaces.eval_checkpoint)+'.tenant_consumer_checkpoint';
  const columns=workColumns||require('../../lib/pgstream/checkpoint').WORK_COLUMNS;
  if(!Array.isArray(columns)||!columns.length||columns.some(name=>!/^[a-z][a-z0-9_]*$/.test(name)))throw new TypeError('Explicit typed work columns required');
@@ -72,20 +74,22 @@ async function outputGrants({admin,layout,consumer:producer,workColumns,realtime
  if(delivery.some(name=>!/^[a-z][a-z0-9_]*$/.test(name)))throw new TypeError('Explicit typed delivery columns required');
  const consumer=producer+'-completed';
  if(!/^evaluator-[A-Za-z0-9_-]{1,100}-completed$/.test(consumer))throw new TypeError('Explicit completed evaluator consumer required');
- await admin.query('CREATE POLICY pgstream_evaluator_metadata ON '+table+' TO '+evaluator+" USING (consumer IN ('"+producer+"','"+consumer+"')) WITH CHECK (consumer IN ('"+producer+"','"+consumer+"'))");
- await admin.query('GRANT UPDATE('+columns.join(',')+') ON '+table+' TO '+evaluator);
- if(hasRealtime){
-  const realtime=q(layout.roles.realtime),realtimeTable=q(layout.namespaces.rt_checkpoint)+'.tenant_consumer_checkpoint';
-  await require('../../lib/pgstream/realtime-obligation').install(admin,{
-    source:layout.namespaces.eval_checkpoint,target:layout.namespaces.rt_checkpoint,producer:producer,consumers:realtimeConsumers
-  });
-  const selectedConsumers=realtimeConsumers.map(value=>"'"+value+"'").join(',');
-  await admin.query('GRANT USAGE ON SCHEMA '+q(layout.namespaces.eval_checkpoint)+' TO '+realtime);
-  await admin.query('GRANT SELECT ON '+table+' TO '+realtime);
-  await admin.query('CREATE POLICY pgstream_realtime_output ON '+table+' FOR SELECT TO '+realtime+" USING (consumer='"+consumer+"')");
-  await admin.query('GRANT UPDATE('+delivery.join(',')+') ON '+realtimeTable+' TO '+realtime);
-  await admin.query('CREATE POLICY pgstream_realtime_metadata ON '+realtimeTable+' FOR SELECT TO '+realtime+' USING (consumer IN ('+selectedConsumers+'))');
-  await admin.query('CREATE POLICY pgstream_realtime_delivery_update ON '+realtimeTable+' FOR UPDATE TO '+realtime+' USING (consumer IN ('+selectedConsumers+')) WITH CHECK (consumer IN ('+selectedConsumers+'))');
- }
+ return async function installOutput(admin) {
+  await admin.query('CREATE POLICY pgstream_evaluator_metadata ON '+table+' TO '+evaluator+" USING (consumer IN ('"+producer+"','"+consumer+"')) WITH CHECK (consumer IN ('"+producer+"','"+consumer+"'))");
+  await admin.query('GRANT UPDATE('+columns.join(',')+') ON '+table+' TO '+evaluator);
+  if(hasRealtime){
+   const realtime=q(layout.roles.realtime),realtimeTable=q(layout.namespaces.rt_checkpoint)+'.tenant_consumer_checkpoint';
+   await require('../../lib/pgstream/realtime-obligation').install(admin,{
+     source:layout.namespaces.eval_checkpoint,target:layout.namespaces.rt_checkpoint,producer:producer,consumers:realtimeConsumers
+   });
+   const selectedConsumers=realtimeConsumers.map(value=>"'"+value+"'").join(',');
+   await admin.query('GRANT USAGE ON SCHEMA '+q(layout.namespaces.eval_checkpoint)+' TO '+realtime);
+   await admin.query('GRANT SELECT ON '+table+' TO '+realtime);
+   await admin.query('CREATE POLICY pgstream_realtime_output ON '+table+' FOR SELECT TO '+realtime+" USING (consumer='"+consumer+"')");
+   await admin.query('GRANT UPDATE('+delivery.join(',')+') ON '+realtimeTable+' TO '+realtime);
+   await admin.query('CREATE POLICY pgstream_realtime_metadata ON '+realtimeTable+' FOR SELECT TO '+realtime+' USING (consumer IN ('+selectedConsumers+'))');
+   await admin.query('CREATE POLICY pgstream_realtime_delivery_update ON '+realtimeTable+' FOR UPDATE TO '+realtime+' USING (consumer IN ('+selectedConsumers+')) WITH CHECK (consumer IN ('+selectedConsumers+'))');
+  }
+ };
 }
 module.exports={outputGrants,enabled,descriptor,receiverURL,wire,init};

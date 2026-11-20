@@ -127,7 +127,8 @@ async function bootstrap(options) {
       await stream.init({admin,adminURL:pg.toString(),layout:l,config:stream.descriptor(l,evaluatorWorkers)});
     } else {
       const settings = require('../../lib/server/serve/deployment-settings').evaluator({NS_PG_PREFIX:l.prefix});
-      await stream.outputGrants({admin,layout:l,consumer:settings.consumer});
+      const installOutput = stream.outputGrants({layout:l,consumer:settings.consumer});
+      await installOutput(admin);
       // S1's ordinary API write-clock transaction updates the existing tenant-bound work row.
       const namespace = q(l.namespaces.eval_checkpoint), writer = q(l.roles.api);
       await admin.query('GRANT USAGE ON SCHEMA '+namespace+' TO '+writer);

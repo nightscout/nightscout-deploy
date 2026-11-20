@@ -20,6 +20,14 @@ test('control: old loopback subscription target fails the external intake oracle
  await criterion(text=>text);
 });
 
+test('invalid output columns refuse before CDC initialization',async()=>{
+ const f=fixture();
+ try{
+  f.options.workColumns=['invalid-column'];
+  await assert.rejects(f.binding.init(f.options), /work columns/);
+  assert.equal(f.commands.length,0); assert.equal(f.sql.length,0);
+ }finally{f.close();}
+});
 test('invalid receiver contract refuses before the privileged initializer or SQL',async()=>{const f=fixture();try{f.options.config.pgstream.receiver.url='http://synthetic-intake:19913/not-the-root';await assert.rejects(f.binding.init(f.options));assert.equal(f.commands.length,0);assert.equal(f.sql.length,0);}finally{f.close();}});
 
 test('synthetic heartbeat creation and serving grants stay retired; reinstatement control is red',async()=>{
