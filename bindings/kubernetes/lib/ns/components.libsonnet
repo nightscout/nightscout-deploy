@@ -15,6 +15,7 @@
   render(raw, c)::
     local roles = std.objectFields($.ports);
     local k = c.slices.realtime;
+    assert std.length([r for r in std.objectFields(c.roleEnv) if !std.member(std.objectFields($.ports), r)]) == 0 : 'roleEnv names an unknown role';
     assert c.slices.evaluator == 1 : 'evaluator K>1 is not supported: pgstream delivers to one receiver';
     assert std.isNumber(k) && k == std.floor(k) && k >= 1 && k <= 8 : 'slices.realtime must be an integer 1..8';
     local label(role) = { 'app.kubernetes.io/name': 'nightscout', 'app.kubernetes.io/part-of': 'nightscout-multitenant', 'app.kubernetes.io/component': role };
@@ -49,7 +50,7 @@
       source + {
         initContainers: if agent then [source.initContainers[0]] else [],
         containers: [x + {
-          env: x.env + env + sliceEnv(role),
+          env: x.env + env + sliceEnv(role) + (if std.objectHas(c.roleEnv, role) then c.roleEnv[role] else []),
           ports: x.ports + [{ name: 'int-role', containerPort: $.ports[role] }],
           // Core health endpoints on the role's private listener (lib/server/serve/role-health.js).
           // Startup budget 5 s x 180 = 900 s (Compose start_period) for a long tenant warm.

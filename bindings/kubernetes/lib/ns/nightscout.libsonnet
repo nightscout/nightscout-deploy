@@ -62,6 +62,9 @@
     imagePullSecrets: [],
     placement: {},
     placementByWorkload: {},
+    // Extra environment rows per application role (api, evaluator, realtime, tenant-admin),
+    // appended after the binding's own rows: diagnostics and profiling switches only.
+    roleEnv: {},
     resources: {
       [name]: {
         requests: { cpu: '25m', memory: '32Mi', 'ephemeral-storage': '16Mi' },

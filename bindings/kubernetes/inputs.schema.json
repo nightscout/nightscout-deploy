@@ -282,6 +282,93 @@
           "description": "Evaluator K>1 is not supported (one pgstream receiver)."
         }
       }
+    },
+    "roleEnv": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Extra environment rows per application role, appended after the binding's own rows (diagnostics and profiling switches).",
+      "properties": {
+        "api": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "value"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[A-Z_][A-Z0-9_]*$"
+              },
+              "value": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "evaluator": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "value"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[A-Z_][A-Z0-9_]*$"
+              },
+              "value": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "realtime": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "value"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[A-Z_][A-Z0-9_]*$"
+              },
+              "value": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "tenant-admin": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "value"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[A-Z_][A-Z0-9_]*$"
+              },
+              "value": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
     }
   }
 }
