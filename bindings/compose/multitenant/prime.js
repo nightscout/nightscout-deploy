@@ -8,15 +8,18 @@
 // back from provisioning. Synthetic data loading belongs to the bench harness.
 //
 // Roster: tenants.json { version: 1, tenants: [{ id, host, hosts, subject,
-// dataToken, ownerSubject, rootSecret? }] }, rewritten atomically after every
-// batch. A tenant already in the roster is not sent again, so a completed run
-// re-runs with no traffic. Provisioning returns a data token only on 'created';
-// a tenant answered 'existing' that is not in the roster (a response lost before
-// the roster write) is reported, never re-issued: the remedy is a fresh fixture
-// or an explicit credential operation.
+// dataToken?, jwt?, jwtExpiresAt?, ownerSubject, rootSecret? }] }, rewritten
+// atomically after every batch. A tenant already in the roster is not sent
+// again, so a completed run re-runs with no traffic. Provisioning returns the
+// legacy subject token (dataToken) only on 'created', and an 8-hour data JWT on
+// both 'created' and 'existing' (signed in process, decision
+// deployment-signing-secret). A tenant answered 'existing' that is not in the
+// roster (a response lost before the roster write) is saved from its JWT; one
+// answered with no credential at all is reported, never re-issued.
 const fs = require('node:fs'), path = require('node:path'), http = require('node:http'), crypto = require('node:crypto');
 const fail = code => Object.assign(new Error(code), { code });
 const BATCH = 100;
+const credential = value => typeof value === 'string' && value.length > 0;
 const DEMO_PERMISSIONS = Object.freeze(['api:*:read', 'api:*:create,update,delete', 'notifications:*:ack']);
 
 function load(file) {
@@ -101,7 +104,7 @@ function readRoster(file) {
   if (!fs.existsSync(file)) return { version: 1, tenants: [] };
   const roster = JSON.parse(fs.readFileSync(file, 'utf8'));
   if (roster.version !== 1 || !Array.isArray(roster.tenants) || new Set(roster.tenants.map(row => row.id)).size !== roster.tenants.length ||
-      roster.tenants.some(row => typeof row.id !== 'string' || typeof row.host !== 'string' || typeof row.dataToken !== 'string' || !row.dataToken)) throw fail('PRIMER_ROSTER_INVALID');
+      roster.tenants.some(row => typeof row.id !== 'string' || typeof row.host !== 'string' || !credential(row.dataToken) && !credential(row.jwt))) throw fail('PRIMER_ROSTER_INVALID');
   return roster;
 }
 
@@ -135,10 +138,13 @@ async function provisionOwned(config, directory, seed, { concurrency, maxTenants
         response.body.results.forEach((row, index) => {
           const spec = rows[index];
           if (row.id !== spec.id) { refused.PRIMER_RESULT_ORDER = (refused.PRIMER_RESULT_ORDER || 0) + 1; return; }
-          if (row.outcome === 'created' && typeof row.bootstrap?.accessToken === 'string') {
-            known.set(spec.id, { id: spec.id, host: spec.hosts[0], hosts: spec.hosts, subject: row.bootstrap.subject, dataToken: row.bootstrap.accessToken,
-              ownerSubject: row.bootstrap.ownerSubject, ...(row.rootSecret ? { rootSecret: row.rootSecret } : {}) });
-          } else if (row.outcome === 'existing') missing.push(spec.id);
+          const b = row.bootstrap, token = row.outcome === 'created' && credential(b?.accessToken) ? b.accessToken : undefined,
+            signed = ['created', 'existing'].includes(row.outcome) && credential(b?.jwt) && Number.isSafeInteger(b.jwtExpiresAt) ? b.jwt : undefined;
+          if (token || signed) {
+            known.set(spec.id, { id: spec.id, host: spec.hosts[0], hosts: spec.hosts, subject: b.subject, ...(token ? { dataToken: token } : {}),
+              ...(signed ? { jwt: signed, jwtExpiresAt: b.jwtExpiresAt } : {}),
+              ownerSubject: b.ownerSubject, ...(row.rootSecret ? { rootSecret: row.rootSecret } : {}) });
+          } else if (row.outcome === 'existing' || row.outcome === 'created') missing.push(spec.id);
           else { const code = /^[A-Z_]{1,80}$/.test(row.code || '') ? row.code : 'UNCLASSIFIED'; refused[code] = (refused[code] || 0) + 1; }
         });
         save();

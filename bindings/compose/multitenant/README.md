@@ -175,16 +175,18 @@ node deploy/multitenant/prime.js provision --tenant-count 1000 --concurrency 4
 kept for callers that run `provision` then `prime`.
 
 The only state is `tenants.json` (0600, rewritten atomically after every batch):
-`{"version":1,"tenants":[{id,host,hosts,subject,dataToken,ownerSubject,rootSecret?}]}`.
+`{"version":1,"tenants":[{id,host,hosts,subject,dataToken?,jwt?,jwtExpiresAt?,ownerSubject,rootSecret?}]}`.
 A tenant already in it is not sent again, so a completed run re-runs with no
 traffic. Management sessions are not in the roster: they live at most 600 s;
 issue one from `ownerSubject` at `POST /v1/tenants/{id}/management-sessions`
 when a test needs it.
 
-A token is returned once. If a batch response is lost before the roster write,
-a retry answers `existing` for those tenants and the primer refuses with
-`PRIMER_CREDENTIAL_NOT_RETURNED` and their count; it never asks for a second
-credential. Use a fresh fixture, or an explicit credential operation. One
+The legacy subject token (`dataToken`) is returned once, on `created`. Each result
+also carries an 8-hour data JWT (`jwt`, `jwtExpiresAt`), signed in process from the
+deployment signing secret on both `created` and `existing`. If a batch response is
+lost before the roster write, the retry's `existing` answers are saved from their JWT
+(no `dataToken`); only a tenant answered with no credential at all refuses with
+`PRIMER_CREDENTIAL_NOT_RETURNED` and their count. One
 process owns the directory through `prime.lock`. Diagnostics carry codes and
 counts only.
 
