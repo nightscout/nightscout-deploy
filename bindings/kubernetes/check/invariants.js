@@ -244,7 +244,9 @@ function checks (all, inventory, composeDir, envMain) {
 
   run('source-command-identity', fail => {
     for (const w of workloads) {
-      for (const c of containersOf(podSpec(w))) if (!['postgres','vault','vault-agent','nginx'].includes(c.name) && c.image!==inventory.images.app) fail(c.name+' image differs from declared immutable application image');
+      // Opt-in lab metrics: exactly its two containers, at exactly the digests the inventory declares.
+      const lab = inventory.labMetrics?.enabled ? { prometheus: inventory.labMetrics.images.prometheus, 'postgres-exporter': inventory.labMetrics.images.postgresExporter } : {};
+      for (const c of containersOf(podSpec(w))) if (Object.hasOwn(lab, c.name) ? c.image!==lab[c.name] : !['postgres','vault','vault-agent','nginx'].includes(c.name) && c.image!==inventory.images.app) fail(c.name+' image differs from declared immutable application image');
       const a=w.metadata.annotations||{};
       if (a['nightscout.org/source-commit']!==inventory.sourceCommit || a['nightscout.org/image-deploy-commit']!==inventory.imageDeployCommit || a['nightscout.org/binding-identity']!==inventory.bindingIdentity) fail(id(w)+' provenance annotations differ from inventory');
     }

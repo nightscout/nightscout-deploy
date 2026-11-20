@@ -6,13 +6,13 @@
 // because the `<role>-internal` Service selects every Pod of the role.
 const test = require('node:test'), assert = require('node:assert/strict'), fs = require('node:fs'), os = require('node:os'), path = require('node:path'), { spawnSync } = require('node:child_process');
 const root = path.resolve(__dirname, '..'), inputs = JSON.parse(fs.readFileSync(path.join(root, 'environments/synthetic/inputs.json')));
-function render (overrides) {
+function render (overrides, suffix = '') {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ns-k8s-labmetrics-'));
   try {
     fs.mkdirSync(path.join(dir, 'environments/test'), { recursive: true });
     fs.writeFileSync(path.join(dir, 'jsonnetfile.json'), '{"version":1,"dependencies":[],"legacyImports":true}');
     fs.copyFileSync(path.join(root, 'environments/synthetic/spec.json'), path.join(dir, 'environments/test/spec.json'));
-    fs.writeFileSync(path.join(dir, 'environments/test/main.jsonnet'), `local ns=import ${JSON.stringify(path.join(root, 'lib/ns/nightscout.libsonnet'))};ns.new(std.mergePatch(${JSON.stringify(inputs)},${JSON.stringify(overrides)}))`);
+    fs.writeFileSync(path.join(dir, 'environments/test/main.jsonnet'), `local ns=import ${JSON.stringify(path.join(root, 'lib/ns/nightscout.libsonnet'))};ns.new(std.mergePatch(${JSON.stringify(inputs)},${JSON.stringify(overrides)}))${suffix}`);
     const r = spawnSync('tk', ['eval', 'environments/test'], { cwd: dir, encoding: 'utf8' });
     return { status: r.status, error: r.stderr, value: r.status === 0 ? JSON.parse(r.stdout) : null };
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
@@ -65,4 +65,16 @@ test('on: Prometheus, exporter sidecar, NS_METRICS on every role, namespace-only
   assert.ok(pg.containers[1].args.includes('--collector.stat_statements'));
   assert.match(pg.containers[0].lifecycle.postStart.exec.command[2], /-d postgres -c "CREATE EXTENSION IF NOT EXISTS pg_stat_statements"/);
   assert.ok(find(v, 'NetworkPolicy', 'postgres-metrics'));
+});
+
+test('on: every binding invariant holds, and a lab container at another digest is refused', () => {
+  const check = require('./invariants.js');
+  const overrides = { labMetrics: { enabled: true }, slices: { evaluator: 2 } };
+  const all = objects(render(overrides).value), inventory = render(overrides, '.inventory').value;
+  assert.equal(inventory.labMetrics.enabled, true);
+  const failures = rows => rows.filter(r => r.failures.length).map(r => r.name);
+  assert.deepEqual(failures(check.checks(all, inventory)), []);
+  const wrong = JSON.parse(JSON.stringify(all));
+  wrong.find(o => o.kind === 'Deployment' && o.metadata.name === 'prometheus').spec.template.spec.containers[0].image = 'prom/prometheus@sha256:' + '0'.repeat(64);
+  assert.deepEqual(failures(check.checks(wrong, inventory)), ['source-command-identity']);
 });

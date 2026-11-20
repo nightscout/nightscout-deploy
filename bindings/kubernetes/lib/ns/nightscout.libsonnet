@@ -794,6 +794,7 @@
         bindingIdentity: c.bindingIdentity,
         imageDeployCommit: if c.imageDeployCommit == null then c.sourceCommit else c.imageDeployCommit,
         images: c.images,
+        [if (import 'lab-metrics.libsonnet').enabled(c) then 'labMetrics']: { enabled: true, images: (import 'lab-metrics.libsonnet').settings(c).images },
         profile: c.profile,
         [if (import 'edge-configuration.libsonnet').selected(c.edge) then 'edgeConfiguration']: (import 'edge-configuration.libsonnet').record(c.edge),
         resourceAccounting: c.resourceAccounting,
