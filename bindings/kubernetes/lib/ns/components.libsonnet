@@ -40,7 +40,8 @@
     local spec(role) =
       local agent = role == 'api';
       local keep = ['secret-' + role, 'ns-ca', 'tmp'] +
-                   (if agent then ['ns-vault', 'vault-token', 'vault-agent-config'] else []);
+                   (if agent then ['ns-vault', 'vault-token', 'vault-agent-config'] else []) +
+                   (if std.member(['api', 'tenant-admin'], role) then ['ns-signing'] else []);
       local key = std.asciiUpper(std.strReplace(role, '-', '_'));
       local publicPorts = { api: '1337', realtime: '1339', 'tenant-admin': '1341' };
       local env = [
@@ -53,10 +54,9 @@
            ] else [])
         + (if std.member(['api', 'tenant-admin'], role) then [{ name: 'NS_VAULT_ADDR', value: 'https://vault:8200' }] else [])
         + (if agent then [{ name: 'NS_VAULT_TOKEN_FILE', value: '/run/ns-vault/token' }] else [])
-        // Deployment signing secret (decision deployment-signing-secret): the api reads the Vault
-        // Agent template's file; tenant-admin (OIDC human sessions) reads its role Secret.
-        + (if agent then [{ name: 'NS_SIGNING_SECRET_FILE', value: '/run/ns-vault/signing-secret' }]
-           else if role == 'tenant-admin' then [{ name: 'NS_SIGNING_SECRET_FILE', value: '/run/ns-config/signing-secret' }] else []);
+        // Deployment signing secret (decision deployment-signing-secret): the one Secret
+        // ns-signing-secret, mounted into the roles that issue tokens.
+        + (if std.member(['api', 'tenant-admin'], role) then [{ name: 'NS_SIGNING_SECRET_FILE', value: '/run/ns-signing/signing-secret' }] else []);
       source + {
         initContainers: if agent then [source.initContainers[0]] else [],
         containers: [x + {

@@ -154,6 +154,27 @@ function checks (all, inventory, composeDir, envMain) {
     }
   });
 
+  // Decision deployment-signing-secret: the deployment signing secret is one Secret, mounted as
+  // a file into exactly the roles that issue tokens; Vault holds no copy and the Agent renders
+  // only its token.
+  run('signing-secret-one-object', fail => {
+    const ISSUERS = ['admin', 'api', 'tenant-admin'], mounted = [];
+    for (const w of workloads) {
+      const spec = podSpec(w), volumes = (spec.volumes || []).filter(v => v.secret?.secretName === 'ns-signing-secret');
+      for (const c of [...(spec.initContainers || []), ...(spec.containers || [])]) {
+        const mounts = (c.volumeMounts || []).filter(m => volumes.some(v => v.name === m.name));
+        const env = (c.env || []).find(e => e.name === 'NS_SIGNING_SECRET_FILE');
+        if (!mounts.length) { if (env) fail(id(w) + ' container ' + c.name + ' names the signing secret file without mounting it'); continue; }
+        mounted.push(c.name);
+        if (mounts.some(m => m.mountPath !== '/run/ns-signing' || !m.readOnly)) fail(id(w) + ' container ' + c.name + ' must mount the signing Secret read-only at /run/ns-signing');
+        if (env?.value !== '/run/ns-signing/signing-secret') fail(id(w) + ' container ' + c.name + ' must read NS_SIGNING_SECRET_FILE from the mounted Secret');
+      }
+    }
+    if (JSON.stringify([...mounted].sort()) !== JSON.stringify(ISSUERS)) fail('the signing Secret must be mounted by exactly ' + ISSUERS.join(', ') + '; found ' + (mounted.sort().join(', ') || 'none'));
+    const agent = all.find(m => m.kind === 'ConfigMap' && m.metadata.name === 'vault-agent-config');
+    if (agent && /\btemplate\s*\{|_kv\//.test(agent.data?.['agent.hcl'] || '')) fail('the Vault Agent must render only its token; the signing secret is not in Vault');
+  });
+
   run('independent-pgstream', fail => {
     const streams=workloads.filter(w=>(podSpec(w).containers||[]).some(c=>c.name==='pgstream'));
     if(streams.length!==1)return fail('exactly one pgstream workload required');

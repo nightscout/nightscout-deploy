@@ -62,6 +62,7 @@ function render ({ output, credentials, postgres, useAgent, sourceCommit }) {
   const seeded = require('./credentials').read(credentials, Object.keys(l.roles));
   const roleURLs = require('./credentials').urls(l, seeded.postgres, postgres);
   const tokens = seeded.vault;
+  const signing = useAgent ? null : require('./credentials').signing(credentials);
   const replicas = require('./replicas'), workers = require('./evaluator-workers'), realtime = require('./realtime-workers');
   const apis = replicas.instances(replicas.count()), generation = streamGeneration(output);
   const services = {
@@ -72,22 +73,20 @@ function render ({ output, credentials, postgres, useAgent, sourceCommit }) {
     for (const name of instances) {
       const dir = path.join(output, name);
       for (const [setting, login] of Object.entries(connections[role])) token(path.join(dir, setting.toLowerCase()), roleURLs[login]);
+      // With the Vault Agent (Kubernetes) the api reads its token from the Agent's sink, not from
+      // this document. On Kubernetes the signing secret is one Secret (ns-signing-secret) mounted
+      // into api, admin and tenant-admin, so no role document carries a copy.
+      const signingFile = path.join(dir, 'signing-secret');
       if (role === 'api') {
-        // With the Vault Agent (Kubernetes) the api reads its token and the signing secret from
-        // the Agent's sink and template, not from this document.
-        for (const [file, value] of [['vault-token', tokens.api], ['signing-secret', seeded.signing]]) {
-          if (useAgent) fs.rmSync(path.join(dir, file), { force: true });
-          else token(path.join(dir, file), value);
-        }
+        if (useAgent) fs.rmSync(path.join(dir, 'vault-token'), { force: true });
+        else token(path.join(dir, 'vault-token'), tokens.api);
       }
       if (role === 'evaluator' && name !== 'evaluator') token(path.join(dir, 'ns_pgstream_generation'), generation);
-      if (role === 'tenant-admin') {
-        token(path.join(dir, 'vault-token'), tokens['owner-credentials']);
-        token(path.join(dir, 'signing-secret'), seeded.signing);
-      }
-      if (role === 'admin') {
-        token(path.join(dir, 'vault-token'), tokens.provisioner);
-        token(path.join(dir, 'signing-secret'), seeded.signing);
+      if (role === 'tenant-admin') token(path.join(dir, 'vault-token'), tokens['owner-credentials']);
+      if (role === 'admin') token(path.join(dir, 'vault-token'), tokens.provisioner);
+      if (['api', 'tenant-admin', 'admin'].includes(role)) {
+        if (useAgent) fs.rmSync(signingFile, { force: true });
+        else token(signingFile, signing);
       }
       // A seeded project may have been rendered by the earlier JSON binding; management sessions
       // no longer sign through Vault (decision deployment-signing-secret).

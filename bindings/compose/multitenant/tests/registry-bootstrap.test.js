@@ -7,11 +7,10 @@ const { finish } = require('../registry-bootstrap');
 
 const layout = { prefix: 'synthetic', mount: 'synthetic_transit' };
 const tokens = { api: '1'.repeat(64), 'owner-credentials': '2'.repeat(64), provisioner: '3'.repeat(64) };
-const signing = 'a'.repeat(64);
 async function run (input = {}) {
   const calls = [];
   const request = async (resource, body) => { calls.push({ resource, body }); return {}; };
-  await finish({ request, rootToken: 'synthetic-root', layout, tokens, signing, ...input });
+  await finish({ request, rootToken: 'synthetic-root', layout, tokens, ...input });
   return calls;
 }
 
@@ -27,9 +26,8 @@ test('policies hold only the data key; no Transit sign, HMAC or verify capabilit
   assert.equal(calls.filter(c => c.resource === 'auth/token/create').length, 3);
 });
 
-test('the deployment signing secret is written once to the KV path the Agent template reads', async () => {
+test('the deployment signing secret never enters Vault: no KV mount, no secret write', async () => {
   const calls = await run();
-  assert.deepStrictEqual(calls.find(c => c.resource === 'sys/mounts/synthetic_kv').body, { type: 'kv', options: { version: '2' } });
-  assert.deepStrictEqual(calls.find(c => c.resource === 'synthetic_kv/data/signing').body, { data: { secret: signing } });
-  await assert.rejects(run({ signing: 'short' }), { code: 'BOOTSTRAP_SIGNING_SECRET_INVALID' });
+  assert.deepStrictEqual(calls.filter(c => /_kv\b|_kv\/|signing/.test(c.resource)), []);
+  assert.deepStrictEqual(calls.filter(c => c.resource.startsWith('sys/mounts/')).map(c => c.resource), ['sys/mounts/synthetic_transit']);
 });

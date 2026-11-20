@@ -104,11 +104,18 @@ readiness so lifecycle and intake readiness cannot deadlock startup. Core still 
 storage admission on each contract.
 
 Each role receives its private HTTP listener and peer Service addresses in the Pod environment.
-The API receives the Vault Agent token sink at `/run/ns-vault/token` and, through the Agent's
-template, the deployment signing secret at `/run/ns-vault/signing-secret` (`NS_SIGNING_SECRET_FILE`;
-written to `<prefix>_kv/data/signing` once by the registry bootstrap, decision
-`deployment-signing-secret`). Tenant-admin and admin read their own scoped token files and the same
-signing secret (`/run/ns-config/signing-secret`) directly from projected Secrets.
+The API receives the Vault Agent token sink at `/run/ns-vault/token`. Tenant-admin and admin read
+their own scoped token files directly from projected Secrets.
+
+The deployment signing secret (decision `deployment-signing-secret`) is one Secret,
+`ns-signing-secret`, seeded once by `scripts/secrets.sh seed` and mounted read-only at
+`/run/ns-signing/signing-secret` (`NS_SIGNING_SECRET_FILE`) into exactly the roles that issue tokens:
+api, admin and tenant-admin (checked by `check/invariants.js` `signing-secret-one-object`). Vault
+holds no copy and the Agent renders only its token. Production may fill that Secret from Vault with
+an operator; there is no per-role Agent path. A fixture carries that one object: a
+restore re-creates the seed run's Secrets, `ns-signing-secret` among them, because the restored
+PostgreSQL holds public keys derived from it and issuers refuse a key they cannot derive
+(`SIGNING_KEY_MISMATCH`).
 
 Default deny ingress and directed policies admit the four roles and the operator to private role
 ports, edge/operator to consumer API/realtime ports, and only pgstream to stream intake. Public
