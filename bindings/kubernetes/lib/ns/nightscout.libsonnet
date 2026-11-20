@@ -268,11 +268,15 @@
         metadata: meta('vault', 'vault'),
         spec: { selector: labels('vault'), ports: [{ name: 'vault', port: 8200, targetPort: 'vault' }] },
       },
+      // Bootstrap reaches the sealed (not ready) Vault here. A ClusterIP name resolves from the
+      // moment the Service exists. A headless name resolves only once the Pod address is
+      // published, and for a few seconds the CoreDNS replicas can disagree: bootstrap retries only
+      // its first Vault call, so a later NXDOMAIN left Vault sealed (fixture-restore fault 1).
       bootstrapService: {
         apiVersion: 'v1',
         kind: 'Service',
         metadata: meta('vault-bootstrap', 'vault'),
-        spec: { clusterIP: 'None', publishNotReadyAddresses: true, selector: labels('vault'), ports: [{ name: 'vault', port: 8200, targetPort: 'vault' }] },
+        spec: { publishNotReadyAddresses: true, selector: labels('vault'), ports: [{ name: 'vault', port: 8200, targetPort: 'vault' }] },
       },
       statefulset: {
         apiVersion: 'apps/v1',
