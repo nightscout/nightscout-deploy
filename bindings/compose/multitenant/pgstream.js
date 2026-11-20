@@ -11,8 +11,10 @@ function receiverURL(config){
 }
 function descriptor(layout,selected){
  const workers=selected&&require('./evaluator-workers').roster(selected);
- const processAssignment=workers&&{count:workers.length,ordinal:workers.findIndex(worker=>worker.service==='evaluator'),receivers:workers.map(worker=>worker.url)};
- const settings=require('../../lib/server/serve/deployment-settings').evaluator({NS_PG_PREFIX:layout.prefix});
+ // K=1 is unsliced: one receiver, no slice envelope (core hostAssignment).
+ const processAssignment=workers&&workers.length>1?{count:workers.length,ordinal:workers.findIndex(worker=>worker.service==='evaluator'),receivers:workers.map(worker=>worker.url)}:undefined;
+ // Ordinal 0's receiver is the descriptor's own (Compose: http://evaluator:19913/, the default).
+ const settings=require('../../lib/server/serve/deployment-settings').evaluator({NS_PG_PREFIX:layout.prefix,...(processAssignment?{NS_PGSTREAM_RECEIVER_URL:workers[0].url}:{})});
  return {...settings,namespaces:settings.postgres.namespaces,...(processAssignment?{processAssignment}:{})};
 }
 

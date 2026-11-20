@@ -54,28 +54,25 @@ evaluator receives `NS_REALTIME_SLICE_PEERS` in ordinal order. At K=1 none of th
 
 ## Evaluator K
 
-`slices.evaluator` (default 1, at most 8) sets the evaluator StatefulSet's `replicas`. At K=1 the
-render is unchanged: one Pod behind the `evaluator` intake Service on 19913.
+`slices.evaluator` (default 1, at most 8) sets the evaluator StatefulSet's `replicas` and its
+one environment value `NS_EVALUATOR_SLICES` (decision `statefulset-ordinal-scaling`). The
+StatefulSet is governed by the headless `evaluator` Service on 19913, so Pod `evaluator-<i>` is
+`evaluator-<i>.evaluator`. At K=1 the one Pod is the unsliced receiver `http://evaluator:19913/`.
 
-At K>1 the binding mirrors the Compose roster (`NS_EVALUATOR_WORKERS`,
-`../compose/multitenant/evaluator-workers.js`), because the image's seed render and bootstrap
-derive the receiver addresses from it:
+At K>1 each Pod derives everything from its hostname and K (core `hostAssignment` in
+`lib/pgstream/assigned-worker.js`): ordinal i, its slice, its owner key, its own receiver
+`http://evaluator-<i>.evaluator:19913/` and the roster of K receivers. There is no shell shim, no
+downward-API field and no per-ordinal Service. A Pod whose ordinal is K or more owns nothing and is
+not refused; keeping `replicas` equal to K is the binding's job. Compose takes the same path by
+giving each evaluator service `hostname: evaluator-<i>` and the alias `evaluator-<i>.evaluator`.
 
-- Receiver i is `http://evaluator:19913/` for i=0 and `http://evaluator-<i+1>:19913/` otherwise.
-  The binding renders one ClusterIP intake Service per ordinal under exactly those names, each
-  selecting one Pod by its `statefulset.kubernetes.io/pod-name` label (`evaluator-<i>`).
-- Core reads the ordinal only inside `NS_PGSTREAM_EVALUATOR_SLICE` JSON. The evaluator container
-  runs `sh -euc`: it maps the pod-index label (`NS_EVALUATOR_POD_INDEX`, downward API) to the
-  receiver URL, builds `NS_PGSTREAM_EVALUATOR_SLICE` byte-equal to Compose, and execs the
-  unchanged `node deploy/multitenant/entrypoint.js evaluator`. An index outside 0..K-1 exits 64.
 - The provision Job's bootstrap step gets `NS_EVALUATOR_WORKERS=K`, so it installs
-  `pgstream.webhook_subscriptions` for every receiver. PostgreSQL gets
-  `max_wal_senders = max(4, K+2)` as Compose `prepare.js` sets it; one replication slot either way.
+  `pgstream.webhook_subscriptions` for the same DNS roster. PostgreSQL gets
+  `max_wal_senders = max(4, K+2)`; one replication slot either way.
 - **Seed with the same K:** `NS_EVALUATOR_WORKERS=K scripts/secrets.sh seed ...` (the inventory's
   `seed.environment` names it). The image then renders `pgstream.yaml` with the patched pgstream's
-  `transaction_batch.slice_receivers` for those Services. A mismatch fails loudly at startup:
-  the receivers refuse an unsliced envelope, or the evaluator's source check finds subscriptions
-  that do not match its roster.
+  `transaction_batch.slice_receivers` for that roster. A mismatch fails loudly at startup.
+  K is still fixed when a fixture is seeded; making it a property of the render alone is open.
 - The patched pgstream advances the one slot only after every slice accepts, so a slow or failed
   evaluator slice pauses intake for all slices. Bootstrap records K; changing K needs a fresh
   namespace. Live admission, populated-slot rebootstrap and restore at K>1 are not qualified here.

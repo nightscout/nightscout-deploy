@@ -49,7 +49,8 @@ head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$work/postgres-password"
 # unset for K=1.
 evaluator_env=()
 if [ -n "${NS_EVALUATOR_WORKERS:-}" ]; then
-  [[ "$NS_EVALUATOR_WORKERS" =~ ^[2-8]$ ]] || { echo 'REFUSED: NS_EVALUATOR_WORKERS must be 2..8, or unset for evaluator K=1' >&2; exit 64; }
+  # The upper bound is the image's (evaluator-workers.js MAX_WORKERS); its seed render refuses above it.
+  [[ "$NS_EVALUATOR_WORKERS" =~ ^[1-9][0-9]*$ ]] && [ "$NS_EVALUATOR_WORKERS" -ge 2 ] || { echo 'REFUSED: NS_EVALUATOR_WORKERS must be 2 or more, or unset for evaluator K=1' >&2; exit 64; }
   evaluator_env=(-e "NS_EVALUATOR_WORKERS=$NS_EVALUATOR_WORKERS")
 fi
 

@@ -4,14 +4,12 @@
 // through the downward API) and K is NS_SLICE_COUNT, rendered from the same value that sets the
 // replica count (c.slices.<role>). A K change is an ordinary rolling update triggered by that
 // env change. A Pod whose ordinal is at or above K owns no tenant (core hashes tenant mod K).
-// Evaluator K>1 (c.slices.evaluator) mirrors the Compose roster (NS_EVALUATOR_WORKERS,
-// bindings/compose/multitenant/evaluator-workers.js): the image's seed render and bootstrap
-// address receiver i as http://evaluator:19913/ (i=0) or http://evaluator-<i+1>:19913/, so the
-// binding renders one ClusterIP Service per ordinal under exactly those names, each selecting
-// one Pod by its statefulset.kubernetes.io/pod-name label. Core reads the ordinal only inside
-// NS_PGSTREAM_EVALUATOR_SLICE; the container composes it and NS_PGSTREAM_RECEIVER_URL from the
-// pod-index label in sh, then execs the unchanged entrypoint. The patched pgstream delivers each
-// slice to its receiver from one slot, and the slot advances only when every slice accepts.
+// The evaluator reads its ordinal from its hostname (Pod evaluator-<i>) and K from
+// NS_EVALUATOR_SLICES (core lib/pgstream/assigned-worker.js hostAssignment). Its governing
+// Service `evaluator` is headless, so receiver i is evaluator-<i>.evaluator:19913, the name the
+// image's seed render and bootstrap use for the pgstream roster at K>1; at K=1 `evaluator`
+// resolves to the one Pod. The patched pgstream delivers each slice to its receiver from one
+// slot, and the slot advances only when every slice accepts.
 {
   ports:: { api: 19001, evaluator: 19002, realtime: 19003, 'tenant-admin': 19004 },
   // The routing proxy that sends a tenant's realtime connections to its owning Pod
@@ -30,22 +28,6 @@
     local source = raw.roleTemplate.spec;
     // Pod DNS names under the realtime governing (headless) Service.
     local realtimePod(i, port) = 'http://realtime-' + i + '.realtime-peers.' + c.namespace + '.svc:' + port + '/';
-    // Compose evaluator-workers.js serviceOf/roster: the receiver names the image already uses.
-    local evaluatorService(i) = if i == 0 then 'evaluator' else 'evaluator-' + (i + 1);
-    local evaluatorReceivers = ['http://' + evaluatorService(i) + ':19913/' for i in std.range(0, e - 1)];
-    // NS_PGSTREAM_EVALUATOR_SLICE as Compose renders it, with the ordinal spliced in by sh.
-    // Key order count, ordinal, receivers: JSON.stringify order in Compose (core sorts keys).
-    local evaluatorShim =
-      local parts = ['{"count":' + e + ',', ',"receivers":' + std.manifestJsonMinified(evaluatorReceivers) + '}'];
-      std.join('\n', [
-        'case "$NS_EVALUATOR_POD_INDEX" in',
-      ] + ["  %d) NS_PGSTREAM_RECEIVER_URL='%s' ;;" % [i, evaluatorReceivers[i]] for i in std.range(0, e - 1)] + [
-        '  *) echo "evaluator pod index outside slices.evaluator" >&2; exit 64 ;;',
-        'esac',
-        "NS_PGSTREAM_EVALUATOR_SLICE='" + parts[0] + '"ordinal":' + "'\"$NS_EVALUATOR_POD_INDEX\"'" + parts[1] + "'",
-        'export NS_PGSTREAM_RECEIVER_URL NS_PGSTREAM_EVALUATOR_SLICE',
-        'exec node deploy/multitenant/entrypoint.js evaluator',
-      ]);
     local sliceEnv(role) =
       if role == 'realtime' then [
         { name: 'NS_SLICE_ORDINAL', valueFrom: { fieldRef: { fieldPath: "metadata.labels['apps.kubernetes.io/pod-index']" } } },
@@ -53,10 +35,7 @@
       ] else if role == 'evaluator' then (if k > 1 then [
         // The evaluator hints each realtime owner directly, in ordinal order.
         { name: 'NS_REALTIME_SLICE_PEERS', value: std.manifestJsonMinified([{ url: realtimePod(i, $.ports.realtime) } for i in std.range(0, k - 1)]) },
-      ] else []) + (if e > 1 then [
-        // Read only by the command shim below; core does not read it.
-        { name: 'NS_EVALUATOR_POD_INDEX', valueFrom: { fieldRef: { fieldPath: "metadata.labels['apps.kubernetes.io/pod-index']" } } },
-      ] else []) else [];
+      ] else []) + [{ name: 'NS_EVALUATOR_SLICES', value: std.toString(e) }] else [];
     local spec(role) =
       local agent = role == 'api';
       local keep = ['secret-' + role, 'ns-ca', 'tmp'] +
@@ -75,7 +54,7 @@
         + (if agent then [{ name: 'NS_VAULT_TOKEN_FILE', value: '/run/ns-vault/token' }] else []);
       source + {
         initContainers: if agent then [source.initContainers[0]] else [],
-        containers: [x + (if role == 'evaluator' && e > 1 then { command: ['sh', '-euc', evaluatorShim] } else {}) + {
+        containers: [x + {
           env: x.env + env + sliceEnv(role) + (if std.objectHas(c.roleEnv, role) then c.roleEnv[role] else []),
           ports: x.ports + [{ name: 'int-role', containerPort: $.ports[role] }],
           // Core health endpoints on the role's private listener (lib/server/serve/role-health.js).
@@ -107,7 +86,8 @@
         apiVersion: 'apps/v1', kind: 'StatefulSet', metadata: meta(role, role),
         spec: {
           replicas: if role == 'realtime' then k else e,
-          serviceName: role + '-peers',
+          // The evaluator's intake Service governs its Pods (evaluator-<i>.evaluator).
+          serviceName: if role == 'evaluator' then 'evaluator' else role + '-peers',
           // Slices carry no start order; Pods start and stop independently.
           podManagementPolicy: 'Parallel',
           updateStrategy: { type: 'RollingUpdate' },
@@ -128,7 +108,7 @@
         [role]: {
           [if std.member($.ordinal, role) then 'statefulset' else 'deployment']: workload(role),
           internal: service(role + '-internal', role, [{ name: 'internal', port: $.ports[role], targetPort: 'int-role' }], true),
-        } + (if std.member($.ordinal, role) then {
+        } + (if role == 'realtime' then {
           peers: {
             apiVersion: 'v1', kind: 'Service', metadata: meta(role + '-peers', role),
             spec: { clusterIP: 'None', publishNotReadyAddresses: true, selector: label(role) },
@@ -136,11 +116,8 @@
         } else {}) + (if std.member(['api', 'realtime'], role) then {
           public: service(role, role, [{ name: 'http', port: if role == 'api' then 1337 else 1339, targetPort: 'http-' + role }]),
         } else if role == 'evaluator' then {
-          local intake(i) = service(evaluatorService(i), role, [{ name: 'stream-intake', port: 19913, targetPort: 'stream-intake' }], true) +
-            (if e > 1 then { spec+: { selector+: { 'statefulset.kubernetes.io/pod-name': 'evaluator-' + i } } } else {}),
-          intake: intake(0),
-          // One receiver Service per further ordinal, under the Compose service name.
-          [if e > 1 then 'sliceIntakes']: { [evaluatorService(i)]: intake(i) for i in std.range(1, e - 1) },
+          // Headless: a receiver is addressed per Pod, never load-balanced across slices.
+          intake: service('evaluator', role, [{ name: 'stream-intake', port: 19913, targetPort: 'stream-intake' }], true) + { spec+: { clusterIP: 'None' } },
         } else {}) for role in roles
       },
       [if routed then 'socketEdge']: {

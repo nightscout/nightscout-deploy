@@ -52,11 +52,6 @@ function podLabels (m) {
   const labels=(m.spec.template.metadata || {}).labels || {};
   return m.kind==='StatefulSet'&&m.spec.replicas===1?{...labels,'statefulset.kubernetes.io/pod-name':m.metadata.name+'-0'}:labels;
 }
-// One label set per Pod: a StatefulSet's Pods also carry their own pod-name and pod-index labels.
-function podLabelSets (m) {
-  if (m.kind !== 'StatefulSet' || m.spec.replicas === 1) return [podLabels(m)];
-  return Array.from({ length: m.spec.replicas }, (_, i) => ({ ...podLabels(m), 'statefulset.kubernetes.io/pod-name': m.metadata.name + '-' + i, 'apps.kubernetes.io/pod-index': String(i) }));
-}
 const containersOf = spec => [...(spec.initContainers || []), ...(spec.containers || [])];
 const id = m => m.kind + '/' + m.metadata.name;
 const selects = (selector, labels) => !!selector && Object.keys(selector).length > 0 && Object.entries(selector).every(([k, v]) => labels[k] === v);
@@ -74,7 +69,7 @@ function checks (all, inventory, composeDir, envMain) {
   const targets = svc => {
     const out = [];
     for (const w of workloads) {
-      if (!podLabelSets(w).some(labels => selects(svc.spec.selector, labels))) continue;
+      if (!selects(svc.spec.selector, podLabels(w))) continue;
       for (const c of containersOf(podSpec(w))) for (const p of c.ports || []) out.push({ workload: w, container: c.name, port: p });
     }
     return out;
@@ -171,33 +166,26 @@ function checks (all, inventory, composeDir, envMain) {
     const intake=services.find(v=>v.metadata.name==='evaluator');
     if(!intake||intake.spec.type!=='ClusterIP'||intake.spec.selector?.['app.kubernetes.io/component']!=='evaluator')fail('intake Service must select the evaluator');
     if(intake?.spec.publishNotReadyAddresses!==true)fail('intake routing must bypass pod-wide clinical readiness to avoid a stream startup cycle');
+    if(intake&&intake.spec.clusterIP!=='None')fail('intake Service must be headless: each receiver is one Pod, never load-balanced across slices');
     if(intake&&!intake.spec.ports?.some(p=>p.port===19913&&p.targetPort==='stream-intake'))fail('intake Service must target the declared receiver port');
     const postgres=workloads.find(w=>w.metadata.name==='postgres'),command=(podSpec(postgres).containers.find(c=>c.name==='postgres').args||[]);
     for(const setting of ['wal_level=logical','max_replication_slots=4','max_wal_senders='+Math.max(4,inventory.slices.evaluator+2),'max_slot_wal_keep_size=-1','output_plugin_libraries=wal2json'])if(!command.includes(setting))fail('PostgreSQL is missing maintained streaming setting '+setting);
   });
 
   run('evaluator-statefulset', fail => {
-    // Decision statefulset-ordinal-scaling: the evaluator is a StatefulSet of slices.evaluator
-    // Pods. At K>1 receiver i is the Compose service name (evaluator, evaluator-2, ...), one
-    // intake Service per ordinal selecting exactly that Pod.
+    // Decision statefulset-ordinal-scaling: a StatefulSet of slices.evaluator Pods governed by the
+    // headless `evaluator` Service. Each Pod reads its ordinal from its hostname (evaluator-<i>)
+    // and K from NS_EVALUATOR_SLICES; receiver i is evaluator-<i>.evaluator.
     const hosts = workloads.filter(w => (podSpec(w).containers || []).some(c => c.name === 'evaluator'));
     if (hosts.length !== 1) return fail('the evaluator must run in exactly one workload, found ' + hosts.length);
     const w = hosts[0], k = inventory.slices.evaluator;
     if (w.kind !== 'StatefulSet' || w.spec.replicas !== k) fail(id(w) + ' must be a StatefulSet of slices.evaluator replicas');
-    const container = podSpec(w).containers.find(c => c.name === 'evaluator');
-    const index = (container.env || []).find(e => e.name === 'NS_EVALUATOR_POD_INDEX');
-    if (k === 1) {
-      if (index || JSON.stringify(container.command) !== JSON.stringify(['node', 'deploy/multitenant/entrypoint.js', 'evaluator'])) fail('evaluator K=1 runs the entrypoint directly');
-      if (services.some(v => /^evaluator-[0-9]+$/.test(v.metadata.name))) fail('evaluator K=1 renders no per-ordinal intake Service');
-      return;
-    }
-    if (index?.valueFrom?.fieldRef?.fieldPath !== "metadata.labels['apps.kubernetes.io/pod-index']") fail('NS_EVALUATOR_POD_INDEX must come from the pod-index label');
-    if (container.command?.[0] !== 'sh' || !/exec node deploy\/multitenant\/entrypoint\.js evaluator$/.test(container.command[2] || '')) fail('evaluator K>1 composes its slice in sh, then execs the entrypoint');
-    for (let i = 0; i < k; i++) {
-      const name = i === 0 ? 'evaluator' : 'evaluator-' + (i + 1), svc = services.find(v => v.metadata.name === name);
-      const pods = svc ? podLabelSets(w).filter(labels => selects(svc.spec.selector, labels)) : [];
-      if (pods.length !== 1 || pods[0]['statefulset.kubernetes.io/pod-name'] !== 'evaluator-' + i) fail('intake Service ' + name + ' must select exactly Pod evaluator-' + i);
-    }
+    if (w.metadata.name !== 'evaluator' || w.spec.serviceName !== 'evaluator') fail('the evaluator StatefulSet must be governed by the evaluator Service (Pod DNS evaluator-<i>.evaluator)');
+    const container = podSpec(w).containers.find(c => c.name === 'evaluator'), env = container.env || [];
+    if (env.find(e => e.name === 'NS_EVALUATOR_SLICES')?.value !== String(k)) fail('NS_EVALUATOR_SLICES must equal slices.evaluator');
+    if (env.some(e => ['NS_PGSTREAM_EVALUATOR_SLICE', 'NS_PGSTREAM_RECEIVER_URL', 'NS_SLICE_ORDINAL'].includes(e.name))) fail('the evaluator derives its slice and receiver from its hostname and K');
+    if (JSON.stringify(container.command) !== JSON.stringify(['node', 'deploy/multitenant/entrypoint.js', 'evaluator'])) fail('the evaluator runs the entrypoint directly');
+    if (services.filter(v => v.spec.selector?.['app.kubernetes.io/component'] === 'evaluator' && v.spec.ports?.some(p => p.port === 19913)).length !== 1) fail('one intake Service for every evaluator ordinal');
   });
 
   run('realtime-slices', fail => {

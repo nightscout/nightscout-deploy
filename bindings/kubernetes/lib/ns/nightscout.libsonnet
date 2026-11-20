@@ -35,8 +35,8 @@
       nginx: 'nginx@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10',
     },
     // Decision statefulset-ordinal-scaling: K per sliced role. The same value sets the
-    // StatefulSet replicas and the slice count. Evaluator K>1 mirrors Compose NS_EVALUATOR_WORKERS:
-    // patched pgstream slice_receivers on one slot (components.libsonnet).
+    // StatefulSet replicas and the slice count. Evaluator K>1: hostname ordinal, NS_EVALUATOR_SLICES,
+    // DNS receivers evaluator-<i>.evaluator, patched pgstream slice_receivers on one slot (components.libsonnet).
     slices: { realtime: 1, evaluator: 1 },
     // Above the serve.internal drain deadline (NS_SERVE_INTERNAL_SHUTDOWN_TIMEOUT_MS, default
     // 5000 ms, at most 60000 ms; decision internal-listener-graceful-shutdown).
@@ -615,7 +615,7 @@
                   { name: 'NS_BOOTSTRAP_VAULT_ADDR', value: 'https://vault-bootstrap:8200' },
                   { name: 'NS_PGSTREAM', value: '1' },
                 ] + (if c.slices.evaluator > 1 then [
-                  // Compose roster: one subscriptions row set per receiver (pgstream.js init).
+                  // The DNS receiver roster: one subscriptions row set per receiver (pgstream.js init).
                   { name: 'NS_EVALUATOR_WORKERS', value: std.toString(c.slices.evaluator) },
                 ] else []) + [
                   { name: 'NS_API_REPLICAS', value: '1' },
