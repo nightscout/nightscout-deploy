@@ -52,8 +52,33 @@ against `slice.js`) that routes each tenant's realtime connections to its owning
 DNS name `realtime-<n>.realtime-peers`; the edge nginx `realtime` upstream points at it, and the
 evaluator receives `NS_REALTIME_SLICE_PEERS` in ordinal order. At K=1 none of this is rendered.
 
-The evaluator is a StatefulSet held at K=1 (`slices.evaluator` must be 1): pgstream delivers to
-one receiver, and evaluator K>1 is not supported by this binding.
+## Evaluator K
+
+`slices.evaluator` (default 1, at most 8) sets the evaluator StatefulSet's `replicas`. At K=1 the
+render is unchanged: one Pod behind the `evaluator` intake Service on 19913.
+
+At K>1 the binding mirrors the Compose roster (`NS_EVALUATOR_WORKERS`,
+`../compose/multitenant/evaluator-workers.js`), because the image's seed render and bootstrap
+derive the receiver addresses from it:
+
+- Receiver i is `http://evaluator:19913/` for i=0 and `http://evaluator-<i+1>:19913/` otherwise.
+  The binding renders one ClusterIP intake Service per ordinal under exactly those names, each
+  selecting one Pod by its `statefulset.kubernetes.io/pod-name` label (`evaluator-<i>`).
+- Core reads the ordinal only inside `NS_PGSTREAM_EVALUATOR_SLICE` JSON. The evaluator container
+  runs `sh -euc`: it maps the pod-index label (`NS_EVALUATOR_POD_INDEX`, downward API) to the
+  receiver URL, builds `NS_PGSTREAM_EVALUATOR_SLICE` byte-equal to Compose, and execs the
+  unchanged `node deploy/multitenant/entrypoint.js evaluator`. An index outside 0..K-1 exits 64.
+- The provision Job's bootstrap step gets `NS_EVALUATOR_WORKERS=K`, so it installs
+  `pgstream.webhook_subscriptions` for every receiver. PostgreSQL gets
+  `max_wal_senders = max(4, K+2)` as Compose `prepare.js` sets it; one replication slot either way.
+- **Seed with the same K:** `NS_EVALUATOR_WORKERS=K scripts/secrets.sh seed ...` (the inventory's
+  `seed.environment` names it). The image then renders `pgstream.yaml` with the patched pgstream's
+  `transaction_batch.slice_receivers` for those Services. A mismatch fails loudly at startup:
+  the receivers refuse an unsliced envelope, or the evaluator's source check finds subscriptions
+  that do not match its roster.
+- The patched pgstream advances the one slot only after every slice accepts, so a slow or failed
+  evaluator slice pauses intake for all slices. Bootstrap records K; changing K needs a fresh
+  namespace. Live admission, populated-slot rebootstrap and restore at K>1 are not qualified here.
 
 Role Secret files are copied from Kubernetes symlinks into regular 0400 files inside private 0700
 directories. This includes extensionless source token files. The installer test passes the copied
@@ -131,7 +156,7 @@ tk eval environments/synthetic > /tmp/synthetic-resources.json
 tk eval environments/synthetic -e inventory > /tmp/synthetic-inventory.json
 tk show --dangerous-allow-redirect environments/synthetic > /tmp/synthetic.yaml
 node check/invariants.js
-NS_TEST_CORE=/path/to/core node --test check/slices.test.js check/profiles.test.js
+NS_TEST_CORE=/path/to/core node --test check/slices.test.js check/evaluator-slices.test.js check/profiles.test.js
 node check/invariants.js --env environments/separate-k1
 node --test check/vault-kubernetes-auth.test.js check/installer.test.js
 bash check/golden.sh

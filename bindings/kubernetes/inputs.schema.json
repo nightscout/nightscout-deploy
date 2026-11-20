@@ -278,8 +278,10 @@
           "description": "Realtime K: StatefulSet replicas and NS_SLICE_COUNT."
         },
         "evaluator": {
-          "const": 1,
-          "description": "Evaluator K>1 is not supported (one pgstream receiver)."
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8,
+          "description": "Evaluator K: StatefulSet replicas. K>1 also renders the Compose NS_EVALUATOR_WORKERS roster (patched pgstream slice_receivers, one slot); scripts/secrets.sh seed must then run with the same NS_EVALUATOR_WORKERS."
         }
       }
     },

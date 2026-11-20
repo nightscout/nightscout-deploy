@@ -8,6 +8,8 @@
 #   NS_KUBE_CONTEXT=<explicit> NS_RUN_ID=<rendered> \
 #     scripts/secrets.sh seed <namespace> <app image>
 #
+# For evaluator K>1 also set NS_EVALUATOR_WORKERS=<slices.evaluator>.
+#
 # Creates ns-postgres-password, ns-vault-tls, ns-ca (CA signing key discarded),
 # ns-credentials-postgres and ns-credentials-vault (one PostgreSQL password per deployment role
 # and the Vault token ids; mounted only by the provision Job), and ns-config-<role> (each role's
@@ -42,10 +44,19 @@ head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$work/postgres-password"
   rm -f ca.key ca.srl server.csr server.ext
 )
 
+# Evaluator K>1: NS_EVALUATOR_WORKERS must equal the rendered slices.evaluator (inventory
+# seed.environment). The image renders pgstream.yaml slice_receivers for that roster; leave it
+# unset for K=1.
+evaluator_env=()
+if [ -n "${NS_EVALUATOR_WORKERS:-}" ]; then
+  [[ "$NS_EVALUATOR_WORKERS" =~ ^[2-8]$ ]] || { echo 'REFUSED: NS_EVALUATOR_WORKERS must be 2..8, or unset for evaluator K=1' >&2; exit 64; }
+  evaluator_env=(-e "NS_EVALUATOR_WORKERS=$NS_EVALUATOR_WORKERS")
+fi
+
 # Prepare per-role credentials offline in the application image.
 mkdir -m 700 "$work/seed"
 docker run --rm --network none --read-only --tmpfs /tmp --user "$(id -u):$(id -g)" -w /opt/app \
-  -v "$work/seed:/seed" -v "$here/ops:/run/ns-overlay:ro" \
+  -v "$work/seed:/seed" -v "$here/ops:/run/ns-overlay:ro" ${evaluator_env[@]+"${evaluator_env[@]}"} \
   --entrypoint node "$image" /run/ns-overlay/seed.cjs >/dev/null
 docs=$work/seed/roles
 

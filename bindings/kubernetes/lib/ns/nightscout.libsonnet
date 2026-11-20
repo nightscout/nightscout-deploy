@@ -5,8 +5,8 @@
 //
 //   api, tenant-admin (Deployments) one replica each, Recreate; the api Pod carries the Vault
 //                                  Agent as a native sidecar (Kubernetes auth)
-//   evaluator, realtime (StatefulSets) slice = Pod ordinal, K = NS_SLICE_COUNT from `slices`
-//                                  (components.libsonnet); evaluator K is 1
+//   evaluator, realtime (StatefulSets) slice = Pod ordinal, K from `slices`
+//                                  (components.libsonnet); evaluator K>1 uses the Compose roster
 //   admin (Deployment)             the ownership-operations plane on its own Pod address and port;
 //                                  ClusterIP only, NetworkPolicy admits operator Pods only
 //   ui, edge (Deployments)         the shipped pages and the reference nginx (consumer entry)
@@ -35,7 +35,8 @@
       nginx: 'nginx@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10',
     },
     // Decision statefulset-ordinal-scaling: K per sliced role. The same value sets the
-    // StatefulSet replicas and NS_SLICE_COUNT. Evaluator K>1 is not supported (one pgstream receiver).
+    // StatefulSet replicas and the slice count. Evaluator K>1 mirrors Compose NS_EVALUATOR_WORKERS:
+    // patched pgstream slice_receivers on one slot (components.libsonnet).
     slices: { realtime: 1, evaluator: 1 },
     // Above the serve.internal drain deadline (NS_SERVE_INTERNAL_SHUTDOWN_TIMEOUT_MS, default
     // 5000 ms, at most 60000 ms; decision internal-listener-graceful-shutdown).
@@ -222,7 +223,7 @@
                 name: 'postgres',
                 image: c.images.postgres,
                 // Preserve docker-entrypoint.sh: it owns initdb before postgres starts.
-                args: ['postgres', '-c', 'wal_level=logical', '-c', 'max_replication_slots=4', '-c', 'max_wal_senders=4', '-c', 'max_slot_wal_keep_size=-1', '-c', 'output_plugin_libraries=wal2json', '-c', 'max_connections=140', '-c', 'reserved_connections=40'],
+                args: ['postgres', '-c', 'wal_level=logical', '-c', 'max_replication_slots=4', '-c', 'max_wal_senders=' + std.max(4, c.slices.evaluator + 2), '-c', 'max_slot_wal_keep_size=-1', '-c', 'output_plugin_libraries=wal2json', '-c', 'max_connections=140', '-c', 'reserved_connections=40'],
                 env: [
                   { name: 'POSTGRES_DB', value: 'nightscout_compose_test' },
                   { name: 'POSTGRES_PASSWORD_FILE', value: '/run/secrets/postgres-password' },
@@ -611,6 +612,10 @@
                   { name: 'NS_COMPOSE_BOOTSTRAP', value: '1' },
                   { name: 'NS_BOOTSTRAP_VAULT_ADDR', value: 'https://vault-bootstrap:8200' },
                   { name: 'NS_PGSTREAM', value: '1' },
+                ] + (if c.slices.evaluator > 1 then [
+                  // Compose roster: one subscriptions row set per receiver (pgstream.js init).
+                  { name: 'NS_EVALUATOR_WORKERS', value: std.toString(c.slices.evaluator) },
+                ] else []) + [
                   { name: 'NS_API_REPLICAS', value: '1' },
                   { name: 'NS_POSTGRES_HOST', value: 'postgres' },
                   { name: 'NS_POSTGRES_DATABASE', value: 'nightscout_compose_test' },
@@ -800,7 +805,7 @@
         imagePullSecrets: c.imagePullSecrets,
         placement: c.placement,
         placementByWorkload: c.placementByWorkload,
-        seed: { script: 'scripts/secrets.sh seed', credentials: ['ns-credentials-postgres', 'ns-credentials-vault'], mountedBy: ['provision'] },
+        seed: { script: 'scripts/secrets.sh seed', [if c.slices.evaluator > 1 then 'environment']: { NS_EVALUATOR_WORKERS: std.toString(c.slices.evaluator) }, credentials: ['ns-credentials-postgres', 'ns-credentials-vault'], mountedBy: ['provision'] },
         results: { primer: { claim: if c.storage.mode == 'existing-claim' then std.get(c.storage.claims, 'primerResults', null) else if c.storage.mode == 'dynamic' then 'primer-results' else null, file: 'tenants.json' } },
         order: ['seed role Secrets', 'apply', 'run optional lab client; its private results stay on its claim', 'observe correctness', 'delete only owned namespace and tokenreview binding'],
         workloads: {

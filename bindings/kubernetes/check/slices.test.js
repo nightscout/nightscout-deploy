@@ -95,7 +95,4 @@ test('realtime K=2: every internal caller addresses the tenant owner Pod', { ski
   assert.deepEqual([...new Set(hinted.map(row => row[1]))].sort(), [0, 1], 'both Pods are addressed');
 });
 
-test('evaluator K>1 refuses to render', () => {
-  const r = render({ slices: { evaluator: 2 } });
-  assert.notEqual(r.status, 0); assert.match(r.error, /evaluator K>1 is not supported/);
-});
+// Evaluator K>1: check/evaluator-slices.test.js.
