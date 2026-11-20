@@ -52,20 +52,13 @@ head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$work/postgres-password"
 )
 
 # Evaluator K>1: NS_EVALUATOR_WORKERS must equal the rendered slices.evaluator (inventory
-# seed.environment). The image renders pgstream.yaml slice_receivers for that roster; leave it
-# unset for K=1.
+# seed.environment); leave it unset for K=1.
 evaluator_env=()
 if [ -n "${NS_EVALUATOR_WORKERS:-}" ]; then
   # The upper bound is the image's (evaluator-workers.js MAX_WORKERS); its seed render refuses above it.
   [[ "$NS_EVALUATOR_WORKERS" =~ ^[1-9][0-9]*$ ]] && [ "$NS_EVALUATOR_WORKERS" -ge 2 ] || { echo 'REFUSED: NS_EVALUATOR_WORKERS must be 2 or more, or unset for evaluator K=1' >&2; exit 64; }
   evaluator_env=(-e "NS_EVALUATOR_WORKERS=$NS_EVALUATOR_WORKERS")
 fi
-
-case "${NS_INPUT_TRANSPORT:-pgstream}" in
-  pgstream) ;;
-  writer-driven) evaluator_env+=(-e "NS_INPUT_TRANSPORT=writer-driven") ;;
-  *) echo 'REFUSED: unknown NS_INPUT_TRANSPORT' >&2; exit 64 ;;
-esac
 
 # Prepare per-role credentials offline in the application image.
 mkdir -m 700 "$work/seed"
@@ -85,8 +78,5 @@ for role in api realtime evaluator tenant-admin ui admin primer; do
   mapfile -t args < <(from_dir "$docs/$role")
   secret "ns-config-$role" "${args[@]}"
 done
-if [ "${NS_INPUT_TRANSPORT:-pgstream}" = pgstream ]; then
-  secret ns-config-pgstream --from-file=pgstream.yaml="$docs/pgstream/pgstream.yaml"
-fi
 k label secret "${created[@]}" "nightscout.org/run-id=$NS_RUN_ID" >/dev/null
 printf '{"state":"seeded","secrets":[%s]}\n' "$(printf '"%s",' "${created[@]}" | sed 's/,$//')"

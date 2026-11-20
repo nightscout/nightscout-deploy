@@ -17,13 +17,9 @@ test('generated maintained role files pass actual product parsers without constr
     // compose.yaml sets NS_SIGNING_SECRET_FILE for the roles that issue tokens (decision deployment-signing-secret).
     const secret=path.join(state,role,'signing-secret');
     if(['api','admin','tenant-admin'].includes(role))assert(fs.existsSync(secret),role+' has a rendered signing secret');
-    const settings=configure([role],{NS_SECRETS_DIR:path.join(state,role),NS_VAULT_ADDR:'https://vault:8200',...(fs.existsSync(secret)?{NS_SIGNING_SECRET_FILE:secret}:{})});
+    const settings=configure([role],{NS_SECRETS_DIR:path.join(state,role),NS_VAULT_ADDR:'https://vault:8200',NS_INPUT_TRANSPORT:'writer-driven',...(fs.existsSync(secret)?{NS_SIGNING_SECRET_FILE:secret}:{})});
     if(role!=='admin')assert.equal(settings.operationConfig.namespace,layout.namespaces.control);
   }
   assert.equal(constructed,0);
  }finally{Module._load=load;fs.rmSync(root,{recursive:true,force:true});}
-});
-test('legacy capture disable refuses before product preparation',()=>{
- assert.throws(()=>require('../pgstream').enabled({NS_PGSTREAM:'0'}),/PGSTREAM_LEGACY_MODE_RETIRED/);
- assert.equal(require('../pgstream').enabled({}),true);
 });

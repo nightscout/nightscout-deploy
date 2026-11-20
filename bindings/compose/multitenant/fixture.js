@@ -10,8 +10,8 @@
 // `snapshot` copies the PostgreSQL data volume, the Vault storage volume and the private state
 // directory (bootstrap custody, seeded credentials, TLS, primer results) of this checkout's
 // prepared project, with every container stopped (`demo.sh snapshot` stops them first). The
-// physical copy keeps the database system identifier, the replication slot, each tenant's
-// pgstream checkpoints and the matching Vault keys. The only record beyond the copied files is
+// physical copy keeps the database system identifier, each tenant's checkpoints and the
+// matching Vault keys. The only record beyond the copied files is
 // snapshot.json: the image id and the core and deploy commits the snapshot came from.
 //
 // `restore` writes those copies into a fresh project's volumes and a fresh state directory and

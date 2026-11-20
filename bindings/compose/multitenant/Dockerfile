@@ -1,18 +1,3 @@
-# Native framed intake source afd492f57af5c3633d48ee6310fbc680e4fb125f.
-# Maintained upstream plus cumulative patch; pgstream-source.json records provenance.
-FROM golang:1.26.11-alpine@sha256:f496f8c537ed506626ee1a6913afb32c45068a48697163c088f604cc775a0c38 AS pgstream-build
-RUN apk add --no-cache git
-WORKDIR /src/pgstream
-RUN git init \
-    && git remote add origin https://github.com/xataio/pgstream.git \
-    && git fetch --depth=1 origin 97d7ab464f0accf6cf1373b3c3f7b328debae4b9 \
-    && git checkout --detach FETCH_HEAD \
-    && test "$(git rev-parse HEAD)" = 97d7ab464f0accf6cf1373b3c3f7b328debae4b9
-COPY deploy/multitenant/pgstream-exact-handover.patch /tmp/pgstream-exact-handover.patch
-RUN git apply --check /tmp/pgstream-exact-handover.patch \
-    && git apply /tmp/pgstream-exact-handover.patch \
-    && CGO_ENABLED=0 GOTOOLCHAIN=local GOMAXPROCS=2 GOOS=linux GOARCH=amd64 go build -p 2 -trimpath -buildvcs=false -o /out/pgstream .
-
 FROM node:24.22.1-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS build
 WORKDIR /opt/app
 COPY package.json package-lock.json .babelrc ./
@@ -34,7 +19,6 @@ RUN npm ci --include=dev --omit=optional --force \
 COPY deploy/multitenant/ ./deploy/multitenant/
 
 FROM node:24.22.1-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53
-COPY --from=pgstream-build --chmod=0555 /out/pgstream /usr/local/bin/pgstream
 WORKDIR /opt/app
 ENV NODE_ENV=production
 ARG NS_SOURCE_COMMIT

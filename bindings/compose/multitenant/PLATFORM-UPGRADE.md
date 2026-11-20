@@ -10,7 +10,7 @@ Floors are written inside the provisioning, restore and migration transactions.
 For an existing ordinary deployment, stop writers and serving roles before the recovery schema
 upgrade. Use the elevated migration connection and the generated evaluator and realtime role
 configurations from that deployment. Fresh bootstrap runs the same migration catalogues, grants
-and realtime binding during pgstream setup.
+and realtime binding.
 
 1. Obtain `layout` and `catalogues` from the selected deployment's
    `deploy/multitenant/config.js`. For each of `eval_checkpoint`, `outbox` and `rt_checkpoint`,
@@ -23,7 +23,7 @@ and realtime binding during pgstream setup.
    `outboxRole: layout.roles.outbox` and `ackRole: layout.roles.alarm`. The outbox tables
    must already belong to the deployment's non-login schema owner. Grant the evaluator
    `UPDATE` on the columns in `lib/pgstream/checkpoint.WORK_COLUMNS` on its
-   `tenant_consumer_checkpoint` relation, as in `deploy/multitenant/pgstream.js`.
+   `tenant_consumer_checkpoint` relation, as in `deploy/multitenant/output-grants.js`.
 3. On the existing DBA client, call `lib/pgstream/realtime-obligation.install(client,
    { source, target, producer, consumers })` once for the unbound pair. Use
    `layout.namespaces.eval_checkpoint` for `source`, `layout.namespaces.rt_checkpoint` for

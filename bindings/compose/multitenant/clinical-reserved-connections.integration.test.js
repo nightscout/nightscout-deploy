@@ -42,7 +42,7 @@ test('REST-side roles at the general-slot limit cannot take the clinical reserve
     assert.equal(api.length, GENERAL - 1, 'api role fills the general slots left after the admin session');
     assert.equal(refusal?.code, '53300', 'api role refused at the general-slot limit: ' + refusal?.message);
     // Clinical roles still connect and query from the reserve.
-    for (const kind of ['evaluator', 'realtime', 'pgstream']) {
+    for (const kind of ['evaluator', 'realtime']) {
       const client = await connect(layout.roles[kind], rolePassword);
       assert.deepEqual((await client.query('SELECT 1 AS ok')).rows, [{ok: 1}], kind + ' queries while the api role is at its limit');
     }
@@ -52,7 +52,7 @@ test('REST-side roles at the general-slot limit cannot take the clinical reserve
     await admin.query('GRANT pg_use_reserved_connections TO ' + plan.quote(layout.roles.outbox));
     const restored = await connect(layout.roles.outbox, rolePassword);
     assert.deepEqual((await restored.query('SELECT 1 AS ok')).rows, [{ok: 1}]);
-    console.log('CLINICAL_RESERVE general=' + GENERAL + ' apiAdmitted=' + api.length + ' apiRefused=53300 clinicalConnected=evaluator,realtime,pgstream revokedRefused=53300 restoredConnected');
+    console.log('CLINICAL_RESERVE general=' + GENERAL + ' apiAdmitted=' + api.length + ' apiRefused=53300 clinicalConnected=evaluator,realtime revokedRefused=53300 restoredConnected');
   } finally {
     await Promise.allSettled(opened.map(c => c.end()));
     docker(['rm', '--force', '--volumes', id]);

@@ -39,17 +39,14 @@ function loginSQL(role,password) {
   if(!/^[a-f0-9]{64}$/.test(password))throw fail('SEEDED_CREDENTIAL_INVALID');
   return 'CREATE ROLE '+plan.quote(role)+" LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD '"+password+"'";
 }
-// A restored or repeated lab must keep its input transport. Under pgstream the database carries
-// one subscription per evaluator, so K must match too; writer-driven fixtures carry no
-// subscriptions and are K-free (decision statefulset-ordinal-scaling, amended 2026-11-20).
-function restoreCheck(complete,inputTransport,workers){
-  if((complete.inputTransport ?? 'pgstream') !== inputTransport)throw fail('BOOTSTRAP_INPUT_TRANSPORT_CHANGED_RECREATE_DEMO');
-  if(inputTransport==='pgstream'&&complete.evaluatorWorkers!==workers)throw fail('BOOTSTRAP_EVALUATOR_ROSTER_CHANGED_RECREATE_DEMO');
+// A restored or repeated lab must be writer-driven, the only input transport. Writer-driven
+// fixtures carry no subscriptions, so they are K-free: one seed serves any evaluator K (decision
+// statefulset-ordinal-scaling, amended 2026-11-20). A pgstream or unmarked fixture is refused.
+function restoreCheck(complete){
+  if(complete.inputTransport!=='writer-driven')throw fail('BOOTSTRAP_INPUT_TRANSPORT_CHANGED_RECREATE_DEMO');
 }
 async function bootstrap(options) {
-  const inputTransport=require('./input-transport').selection();
   const workers=require('./evaluator-workers'),evaluatorWorkers=workers.selection();
-  if(evaluatorWorkers)workers.assertSeed(evaluatorWorkers);
   const {pg,bootstrapVault = options.vault,output,sourceCommit,deployCommit}=options;
   const privateDirectory=path.join(output,'bootstrap');fs.mkdirSync(privateDirectory,{recursive:true,mode:0o700});
   const initFile=path.join(privateDirectory,'vault-init.json'),completeFile=path.join(privateDirectory,'complete.json'),startedFile=path.join(privateDirectory,'started.json');
@@ -88,7 +85,7 @@ async function bootstrap(options) {
     // An existing lab (a repeat up, or a restored fixture snapshot at another core or deploy
     // commit) is brought forward with migrate up; the roles' readiness checks decide the rest.
     const complete=JSON.parse(fs.readFileSync(completeFile,'utf8'));
-    restoreCheck(complete,inputTransport,evaluatorWorkers?.workers);
+    restoreCheck(complete);
     const l=plan.layout(),admin=new (require('pg').Client)({connectionString:pg.toString(),connectionTimeoutMillis:10000,statement_timeout:10000});
     await admin.connect();
     try{
@@ -128,23 +125,18 @@ async function bootstrap(options) {
     await migrate(admin,pg,l,allCatalogues,true);
     const managementGrants=require('../../lib/management-sessions/authority').grants({namespaces:{registry:l.namespaces.registry,authorization:l.namespaces.authorization,access:l.namespaces.access,control:l.namespaces.control},issuer:l.roles.management_issuer,authorityOwner:l.managementAuthorityOwner});
     for(const sql of [...managementGrants.authorityOwner,...managementGrants.issuer])await admin.query(sql);
-    const stream = require('./pgstream');
-    if (inputTransport === 'pgstream') {
-      await stream.init({admin,adminURL:pg.toString(),layout:l,config:stream.descriptor(l,evaluatorWorkers)});
-    } else {
-      const settings = require('../../lib/server/serve/deployment-settings').evaluator({NS_PG_PREFIX:l.prefix});
-      const installOutput = stream.outputGrants({layout:l,consumer:settings.consumer});
-      await installOutput(admin);
-      // S1's ordinary API write-clock transaction updates the existing tenant-bound work row.
-      const namespace = q(l.namespaces.eval_checkpoint), writer = q(l.roles.api);
-      await admin.query('GRANT USAGE ON SCHEMA '+namespace+' TO '+writer);
-      await admin.query('GRANT SELECT(tenant_id,consumer,work_version,work_observed,work_pending_at), '+
-        'UPDATE(work_observed,work_observed_at,work_pending_at) ON '+namespace+'.tenant_consumer_checkpoint TO '+writer);
-    }
+    const settings = require('../../lib/server/serve/deployment-settings').evaluator({NS_PG_PREFIX:l.prefix});
+    const installOutput = require('./output-grants').outputGrants({layout:l,consumer:settings.consumer});
+    await installOutput(admin);
+    // S1's ordinary API write-clock transaction updates the existing tenant-bound work row.
+    const namespace = q(l.namespaces.eval_checkpoint), writer = q(l.roles.api);
+    await admin.query('GRANT USAGE ON SCHEMA '+namespace+' TO '+writer);
+    await admin.query('GRANT SELECT(tenant_id,consumer,work_version,work_observed,work_pending_at), '+
+      'UPDATE(work_observed,work_observed_at,work_pending_at) ON '+namespace+'.tenant_consumer_checkpoint TO '+writer);
     // Registry completion runs before the admin client closes.
     const result=await require('./registry-bootstrap').finish({request,rootToken:initialization.root_token,layout:l,tokens:seeded.vault,admin});
     writePrivate(path.join(privateDirectory,'layout.json'),l);
-    writePrivate(completeFile,{version:2,sourceCommit,deployCommit,registryMode:true,inputTransport,evaluatorWorkers:evaluatorWorkers?.workers});
+    writePrivate(completeFile,{version:2,sourceCommit,deployCommit,registryMode:true,inputTransport:'writer-driven',evaluatorWorkers:evaluatorWorkers?.workers});
     return {...result,sourceCommit};
   }finally{await admin.end();}
 }

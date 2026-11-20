@@ -96,9 +96,7 @@ function render(k, n, composeFile, nginxTemplate) {
         '      org.nightscout.static-ownership.count: "' + worker.count + '"');
     }
   }
-  lines.push('  pgstream:', '    profiles: [' + PROFILE + ']', '    depends_on:',
-    ...selected.evaluator.map(worker => '      ' + worker.service + ': {condition: service_started}'),
-    '  socket-edge:', '    profiles: [' + PROFILE + ']',
+  lines.push('  socket-edge:', '    profiles: [' + PROFILE + ']',
     '    extends: {file: ' + JSON.stringify(composeFile) + ', service: ui}',
     '    command: [node, -r, ./deploy/multitenant/load-env.js, deploy/multitenant/socket-edge.js]',
     '    environment:', '      NS_REALTIME_STATIC_COUNT: "' + k + '"',

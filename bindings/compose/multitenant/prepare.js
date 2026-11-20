@@ -9,7 +9,6 @@ const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 const base = __dirname;
 function prepare (args) {
-  const transport = require('./input-transport'), mode = transport.selection();
   const project = require('./project');
   const options = {project:project.DEFAULT, bind: '127.0.0.1', port: '18080', state: path.join(base, '.state')};
   for (let i = 0; i < args.length; i += 2) {
@@ -38,7 +37,6 @@ function prepare (args) {
   const diagnostics = require('./diagnostics').selection();
   const evaluator = require('./evaluator-workers'), selectedEvaluator = evaluator.selection();
   if (selectedRealtime && selectedEvaluator && selectedRealtime.workers !== selectedEvaluator.workers) throw new TypeError('Static role counts must agree');
-  if (selectedEvaluator) evaluator.assertSeed(selectedEvaluator);
   require('./edge').policy();
   const isolation = require('./clinical-isolation');
   const clinicalIsolation = isolation.selection(process.env, { budget: isolation.connectionBudget({ apiReplicas,
@@ -48,7 +46,7 @@ function prepare (args) {
   if (!/^[a-f0-9]{40}$/.test(source)) throw new Error('Source commit unavailable');
   fs.mkdirSync(state, {mode: 0o700});
   const write = (file, value) => fs.writeFileSync(file, value, {mode: 0o600, flag: 'wx'});
-  for (const name of ['bootstrap', 'tls', 'vault', 'ipc', 'artifacts', 'api', 'realtime', 'evaluator', 'pgstream', 'tenant-admin', 'ui', 'ops', 'edge', 'admin', 'primer']) {
+  for (const name of ['bootstrap', 'tls', 'vault', 'ipc', 'artifacts', 'api', 'realtime', 'evaluator', 'tenant-admin', 'ui', 'ops', 'edge', 'admin', 'primer']) {
     fs.mkdirSync(path.join(state, name), {mode: 0o700});
   }
   write(path.join(state, 'bootstrap/postgres-password'), crypto.randomBytes(32).toString('hex') + '\n');
@@ -76,15 +74,15 @@ function prepare (args) {
   }
   write(path.join(state, 'edge/nginx.conf'), require('./edge').render(fs.readFileSync(path.join(base, 'nginx.compose.conf'), 'utf8'), { replicas: apiReplicas, realtime: !!selectedRealtime }));
   write(path.join(state, 'compose.replicas.yaml'), replicas.compose(apiReplicas, 'compose.yaml')+require('./networks').render(selectedNetworks));
-  if (mode === 'writer-driven') write(path.join(state, 'compose.writer.yaml'), transport.compose(apiReplicas, selectedEvaluator, selectedRealtime));
-  write(path.join(base, '.env'), (mode === 'writer-driven' ? 'NS_INPUT_TRANSPORT=writer-driven' : 'NS_PGSTREAM=1')+'\nNS_DEPLOY_COMMIT=' + deployCommit + '\nNS_DEMO_PROJECT=' + options.project + '\nNS_API_REPLICAS=' + apiReplicas + '\n' +
+  write(path.join(state, 'compose.writer.yaml'), require('./writer-driven').compose(apiReplicas, selectedEvaluator, selectedRealtime));
+  write(path.join(base, '.env'), 'NS_DEPLOY_COMMIT=' + deployCommit + '\nNS_DEMO_PROJECT=' + options.project + '\nNS_API_REPLICAS=' + apiReplicas + '\n' +
     (selectedRealtime ? 'NS_REALTIME_WORKERS=' + selectedRealtime.workers + '\n' : '') +
-    (selectedEvaluator ? 'NS_EVALUATOR_WORKERS=' + selectedEvaluator.workers + '\nNS_PGSTREAM_WAL_SENDERS=' + Math.max(4, selectedEvaluator.workers + 2) + '\n' : '') +
+    (selectedEvaluator ? 'NS_EVALUATOR_WORKERS=' + selectedEvaluator.workers + '\n' : '') +
     'NS_M7_DIAGNOSTICS=' + diagnostics.enabled + '\nNS_M7_DIAGNOSTICS_INTERVAL_MS=' + diagnostics.interval + '\n' +
     require('./clinical-isolation').envLines(clinicalIsolation) +
     'NS_DEMO_STATE=' + state + '\nNS_DEMO_BIND=' + options.bind + '\nNS_DEMO_PORT=' + options.port + '\nNS_SOURCE_COMMIT=' + source + '\n');
   process.stdout.write('Prepared private synthetic deployment state. Start it with one up.\n');
-  process.stdout.write(JSON.stringify({ inputTransport: mode, apiReplicas, evaluatorSlices: selectedEvaluator?.workers ?? 1, realtimeSlices: selectedRealtime?.workers ?? 1, coreCommit: source, deployCommit, fixture: 'fresh' }) + '\n');
+  process.stdout.write(JSON.stringify({ inputTransport: 'writer-driven', apiReplicas, evaluatorSlices: selectedEvaluator?.workers ?? 1, realtimeSlices: selectedRealtime?.workers ?? 1, coreCommit: source, deployCommit, fixture: 'fresh' }) + '\n');
   return {state, source};
 }
 if (require.main === module) {

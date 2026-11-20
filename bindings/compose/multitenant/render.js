@@ -2,8 +2,8 @@
 'use strict';
 
 // Materialize only the credentials each role may read. The platform supplies
-// the ordinary settings in its container environment. The standalone pgstream,
-// UI and lab/operator programs still consume their own configuration formats.
+// the ordinary settings in its container environment. The standalone UI and
+// lab/operator programs still consume their own configuration formats.
 const fs = require('node:fs'), path = require('node:path'), crypto = require('node:crypto');
 const fail = code => Object.assign(new Error(code), { code });
 
@@ -18,7 +18,7 @@ function input (env = process.env) {
   if (!/^[a-z0-9.-]{1,253}$/.test(postgres.host) || postgres.database !== 'nightscout_compose_test') throw fail('RENDER_POSTGRES_ADDRESS_INVALID');
   if (env.NS_SOURCE_COMMIT !== undefined && !/^[a-f0-9]{40}$/.test(env.NS_SOURCE_COMMIT)) throw fail('RENDER_SOURCE_IDENTITY_INVALID');
   return { credentials: path.resolve(env.NS_CREDENTIALS_DIR), output: path.resolve(env.NS_RENDER_OUTPUT), vault, postgres,
-    useAgent: !!env.NS_API_VAULT_TOKEN_FILE, inputTransport: require('./input-transport').selection(env), sourceCommit: env.NS_SOURCE_COMMIT };
+    useAgent: !!env.NS_API_VAULT_TOKEN_FILE, sourceCommit: env.NS_SOURCE_COMMIT };
 }
 
 // Replace one private file whole: written beside the target and renamed, 0600 in a 0700 directory.
@@ -35,36 +35,19 @@ const token = (file, value) => write(file, value + '\n');
 const connections = {
   api: { NS_API_PG: 'api', NS_READINESS_PG: 'readiness', NS_API_ROOT_WRITER_PG: 'root_writer', NS_ALARM_PG: 'alarm', NS_DISPLAY_PG: 'display_reader', NS_LIFETIME_PG: 'lifetime_api' },
   realtime: { NS_REALTIME_PG: 'realtime', NS_DISPLAY_PG: 'display_reader', NS_LIFETIME_PG: 'lifetime_realtime' },
-  evaluator: { NS_EVALUATOR_PG: 'evaluator', NS_OUTBOX_PG: 'outbox', NS_SUPPRESSION_PG: 'suppression', NS_ACTIVITY_PG: 'activity_reader', NS_DISPLAY_PG: 'display_reader', NS_STREAM_RECOVERY_PG: 'pgstream', NS_LIFETIME_PG: 'lifetime_evaluator' },
+  evaluator: { NS_EVALUATOR_PG: 'evaluator', NS_OUTBOX_PG: 'outbox', NS_SUPPRESSION_PG: 'suppression', NS_ACTIVITY_PG: 'activity_reader', NS_DISPLAY_PG: 'display_reader', NS_LIFETIME_PG: 'lifetime_evaluator' },
   'tenant-admin': { NS_OWNER_WRITER_PG: 'owner_writer', NS_OWNER_READER_PG: 'owner_reader', NS_OWNER_CREDENTIALS_PG: 'owner_credentials', NS_OWNER_SETTINGS_PG: 'owner_settings', NS_LIFETIME_PG: 'lifetime_tenant_admin' },
   admin: { NS_PROVISIONER_PG: 'provisioner', NS_OWNERSHIP_PG: 'ownership_operator', NS_CONNECTOR_SOURCES_PG: 'connector_writer', NS_MANAGEMENT_SESSIONS_PG: 'management_issuer' },
 };
 
-// This is the one incarnation of the physical replication slot. On a binding
-// upgrade preserve the generation recorded by the previous evaluator document.
-function streamGeneration (output) {
-  const dir = path.join(output, 'evaluator'), file = path.join(dir, 'ns_pgstream_generation');
-  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  if (!fs.existsSync(file)) {
-    const prior = path.join(dir, 'config.json');
-    const value = fs.existsSync(prior) ? JSON.parse(fs.readFileSync(prior, 'utf8')).pgstream.generation : crypto.randomBytes(16).toString('hex');
-    if (!/^[a-f0-9]{32}$/.test(value)) throw fail('STREAM_GENERATION_INVALID');
-    try { fs.writeFileSync(file, value + '\n', { mode: 0o600, flag: 'wx' }); }
-    catch (error) { if (error.code !== 'EEXIST') throw error; }
-  }
-  const value = fs.readFileSync(file, 'utf8').trim();
-  if (!/^[a-f0-9]{32}$/.test(value)) throw fail('STREAM_GENERATION_INVALID');
-  return value;
-}
-
-function render ({ output, credentials, postgres, useAgent, sourceCommit, inputTransport = require('./input-transport').selection() }) {
-  const plan = require('./config'), l = plan.layout(undefined, inputTransport);
+function render ({ output, credentials, postgres, useAgent, sourceCommit }) {
+  const plan = require('./config'), l = plan.layout();
   const seeded = require('./credentials').read(credentials, Object.keys(l.roles));
   const roleURLs = require('./credentials').urls(l, seeded.postgres, postgres);
   const tokens = seeded.vault;
   const signing = useAgent ? null : require('./credentials').signing(credentials);
   const replicas = require('./replicas'), workers = require('./evaluator-workers'), realtime = require('./realtime-workers');
-  const apis = replicas.instances(replicas.count()), generation = inputTransport === 'pgstream' ? streamGeneration(output) : null;
+  const apis = replicas.instances(replicas.count());
   const services = {
     api: apis.map(instance => instance.service), evaluator: workers.services(workers.selection()),
     realtime: realtime.services(realtime.selection()).filter(name => name !== 'socket-edge'), 'tenant-admin': ['tenant-admin'], admin: ['admin']
@@ -72,7 +55,7 @@ function render ({ output, credentials, postgres, useAgent, sourceCommit, inputT
   for (const [role, instances] of Object.entries(services)) {
     for (const name of instances) {
       const dir = path.join(output, name);
-      for (const [setting, login] of Object.entries(connections[role])) if (generation || setting !== 'NS_STREAM_RECOVERY_PG') token(path.join(dir, setting.toLowerCase()), roleURLs[login]);
+      for (const [setting, login] of Object.entries(connections[role])) token(path.join(dir, setting.toLowerCase()), roleURLs[login]);
       // With the Vault Agent (Kubernetes) the api reads its token from the Agent's sink, not from
       // this document. On Kubernetes the signing secret is one Secret (ns-signing-secret) mounted
       // into api, admin and tenant-admin, so no role document carries a copy.
@@ -81,7 +64,6 @@ function render ({ output, credentials, postgres, useAgent, sourceCommit, inputT
         if (useAgent) fs.rmSync(path.join(dir, 'vault-token'), { force: true });
         else token(path.join(dir, 'vault-token'), tokens.api);
       }
-      if (generation && role === 'evaluator' && name !== 'evaluator') token(path.join(dir, 'ns_pgstream_generation'), generation);
       if (role === 'tenant-admin') token(path.join(dir, 'vault-token'), tokens['owner-credentials']);
       if (role === 'admin') token(path.join(dir, 'vault-token'), tokens.provisioner);
       if (['api', 'tenant-admin', 'admin'].includes(role)) {
@@ -93,8 +75,6 @@ function render ({ output, credentials, postgres, useAgent, sourceCommit, inputT
       for (const retired of ['env.json', 'config.json', 'operation.json', 'evaluator-metadata.json', 'management-vault-token']) fs.rmSync(path.join(dir, retired), { force: true });
     }
   }
-  const stream = require('./pgstream');
-  if (generation) json(path.join(output, 'pgstream', 'pgstream.yaml'), stream.wire(stream.descriptor(l, workers.selection()), roleURLs.pgstream));
   json(path.join(output, 'ui', 'config.json'), { version: 2, registry: { connectionEnv: 'NS_UI_REGISTRY_PG', namespace: l.namespaces.registry, refreshMs: 2000 }, theme: 'default' });
   json(path.join(output, 'ui', 'env.json'), { NS_UI_REGISTRY_PG: roleURLs.ui_registry });
   const apiOrigin = apis.length > 1 ? 'http://api-internal:1337' : 'http://api:1337';

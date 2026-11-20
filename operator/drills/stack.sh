@@ -19,6 +19,7 @@ prepared_project=$(sed -n 's/^NS_DEMO_PROJECT=//p' "$folder/.env")
 export NS_DEMO_IMAGE="$NS_DRILL_IMAGE"
 compose=(docker compose --project-name "$NS_DRILL_PROJECT" --project-directory "$folder" --env-file "$folder/.env" -f "$folder/compose.yaml")
 [ -f "$state/compose.replicas.yaml" ] && compose+=(-f "$state/compose.replicas.yaml")
+compose+=(-f "$state/compose.writer.yaml")
 if [ -n "${NS_DRILL_BACKEND_SUBNET:-}${NS_DRILL_EDGE_SUBNET:-}" ]; then
   cidr='^[0-9]{1,3}(\.[0-9]{1,3}){3}/[0-9]{1,2}$'
   [[ "${NS_DRILL_BACKEND_SUBNET:-}" =~ $cidr && "${NS_DRILL_EDGE_SUBNET:-}" =~ $cidr ]] || { echo 'DRILL_SUBNET_REFUSED' >&2; exit 64; }
@@ -48,7 +49,7 @@ case "$command" in
     check_image
     "${compose[@]}" --profile ops run --rm bootstrap
     "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 90 admin
-    "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 300 api realtime evaluator pgstream tenant-admin ui nginx
+    "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 300 api realtime evaluator tenant-admin ui nginx
     "${compose[@]}" --profile ops run --rm --no-deps primer node deploy/multitenant/prime.js provision
     "${compose[@]}" --profile ops run --rm --no-deps bootstrap node deploy/multitenant/commission-restore.js
     "${compose[@]}" --profile ops run --rm --no-deps primer node deploy/multitenant/prime.js prime
@@ -61,12 +62,12 @@ case "$command" in
     "${compose[@]}" --profile ops run --rm bootstrap
     "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 90 admin
     "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 300 api
-    exec "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 300 realtime evaluator pgstream tenant-admin ui nginx
+    exec "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 300 realtime evaluator tenant-admin ui nginx
     ;;
   roles-restart)
     ordinary_profile
     # Every application role gets a new process (after a database or host event); data services stay up.
-    "${compose[@]}" stop nginx ui tenant-admin pgstream evaluator realtime api admin
+    "${compose[@]}" stop nginx ui tenant-admin evaluator realtime api admin
     exec "$0" roles-up
     ;;
   ops)

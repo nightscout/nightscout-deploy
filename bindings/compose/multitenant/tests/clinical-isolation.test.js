@@ -32,7 +32,7 @@ test('reserved-connection grants name clinical roles and never a REST-serving or
   const layout = plan.layout(), grants = isolation.grants(layout);
   const named = grants.map(sql => /^GRANT pg_use_reserved_connections TO "([a-z_]+)"$/.exec(sql)?.[1]);
   assert(named.every(Boolean), 'one fixed statement shape');
-  assert.deepEqual(named.sort(), ['evaluator', 'lifetime_evaluator', 'lifetime_realtime', 'outbox', 'pgstream', 'realtime', 'suppression'].map(kind => layout.roles[kind]).sort());
+  assert.deepEqual(named.sort(), ['evaluator', 'lifetime_evaluator', 'lifetime_realtime', 'outbox', 'realtime', 'suppression'].map(kind => layout.roles[kind]).sort());
   for (const kind of ['api', 'readiness', 'root_writer', 'alarm', 'display_reader', 'activity_reader', 'owner_writer', 'owner_reader', 'operator', 'provisioner', 'ui_registry', 'lifetime_api', 'lifetime_tenant_admin']) {
     assert(!named.includes(layout.roles[kind]), kind + ' must not use the clinical reserve');
   }

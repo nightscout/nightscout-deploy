@@ -39,10 +39,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.postgres
-    # max_connections/reserved_connections: clinical roles (evaluator, realtime, pgstream and their
+    # max_connections/reserved_connections: clinical roles (evaluator, realtime and their
     # consumers) may use the reserved slots; REST-serving roles may not (clinical-isolation.js).
-    command: [postgres, -c, wal_level=logical, -c, max_replication_slots=4, -c, "max_wal_senders=${NS_PGSTREAM_WAL_SENDERS:-4}", -c, max_slot_wal_keep_size=-1, -c, output_plugin_libraries=wal2json,
-      -c, "max_connections=${NS_POSTGRES_MAX_CONNECTIONS:-140}", -c, "reserved_connections=${NS_POSTGRES_CLINICAL_RESERVED_CONNECTIONS:-40}"]
+    command: [postgres, -c, "max_connections=${NS_POSTGRES_MAX_CONNECTIONS:-140}", -c, "reserved_connections=${NS_POSTGRES_CLINICAL_RESERVED_CONNECTIONS:-40}"]
     environment:
       POSTGRES_DB: nightscout_compose_test
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password
@@ -97,7 +96,6 @@ services:
       NODE_EXTRA_CA_CERTS: /run/ns-ca/ca.crt
       VAULT_ADDR: https://vault:8200
       NS_COMPOSE_BOOTSTRAP: "1"
-      NS_PGSTREAM: ${NS_PGSTREAM:-1}
       NS_SOURCE_COMMIT: ${NS_SOURCE_COMMIT:?Run prepare.js first}
       NS_DEPLOY_COMMIT: ${NS_DEPLOY_COMMIT:?Run prepare.js first}
       # Fixed service instances; maintenance still addresses every exact instance.
@@ -160,7 +158,7 @@ services:
   # Start order: every role waits for the one-shot bootstrap to complete and for the stores it
   # uses, then the roles start together. Realtime retries a not-ready api within
   # NS_TENANT_WARM_RETRY_MS; the evaluator's wake to realtime is best effort and realtime
-  # reconciles. pgstream waits for its receiver process to start. nginx waits for the roles it
+  # reconciles. nginx waits for the roles it
   # serves (api, realtime, ui) only, so an unhealthy evaluator or tenant-admin never keeps the
   # site down.
   api:
@@ -223,19 +221,6 @@ services:
       - ${NS_DEMO_STATE}/realtime:/run/ns-config:ro
       - ${NS_DEMO_STATE}/ipc:/run/ns-ipc
       - ${NS_DEMO_STATE}/tls/ca.crt:/run/ns-ca/ca.crt:ro
-
-  # The platform owns one consumer of the precreated logical slot. Its restart
-  # never replaces the evaluator, which retains durable intake and due work.
-  pgstream:
-    <<: *app
-    command: [/usr/local/bin/pgstream, run, -c, /run/ns-stream/pgstream.yaml, --log-level, info]
-    restart: unless-stopped
-    depends_on:
-      bootstrap: {condition: service_completed_successfully}
-      postgres: {condition: service_healthy}
-      evaluator: {condition: service_started}
-    volumes:
-      - ${NS_DEMO_STATE}/pgstream:/run/ns-stream:ro
 
   evaluator:
     <<: *app

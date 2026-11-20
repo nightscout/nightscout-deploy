@@ -19,7 +19,7 @@ test('selected launcher applies the same two fixed-roster overlays and starts ev
     execFileSync('bash',['demo.sh','up'],options);
     const calls=fs.readFileSync(record,'utf8').trim().split('\n').map(JSON.parse);
     for(const call of calls){assert.equal(call[call.indexOf('--project-name')+1],'nightscout-multitenant-demo');assert.ok(call.includes(path.join(state,'compose.replicas.yaml')));assert.ok(call.includes(path.join(state,'compose.realtime.yaml')));assert.ok(call.includes(path.join(state,'compose.evaluator.yaml')));}
-    const final=calls.find(call=>call.includes('up')&&call.includes('nginx'));for(const service of ['realtime','realtime-2','socket-edge','evaluator','evaluator-2','pgstream','tenant-admin','ui','nginx'])assert.ok(final.includes(service),service);
+    const final=calls.find(call=>call.includes('up')&&call.includes('nginx'));for(const service of ['realtime','realtime-2','socket-edge','evaluator','evaluator-2','tenant-admin','ui','nginx'])assert.ok(final.includes(service),service);
     assert.ok(calls.find(call=>call.includes('api')&&call.includes('api-2')),'both API instances start before final roles');
     assert(!calls.some(call=>call.some(argument=>argument.endsWith('evaluator-pool.js'))),'native launch never configures pool membership');
     // Platform verification is retired; the one-shot bootstrap runs as part of up (provisioning-secrets-in).

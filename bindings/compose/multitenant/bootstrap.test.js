@@ -30,13 +30,11 @@ test('synthetic tenant count is validated',()=>{
   assert.equal(plan.tenantCount({NS_DEMO_TENANTS:'10001'}),10001);
   for(const raw of ['0','-1','1.5','9007199254740993'])assert.throws(()=>plan.tenantCount({NS_DEMO_TENANTS:raw}),/NS_DEMO_TENANTS must be a positive integer/);
 });
-test('a restore keeps its input transport; only pgstream fixtures are bound to evaluator K',()=>{
+test('a restore must be writer-driven and is K-free',()=>{
   // Writer-driven: one seed serves K=1 and K=2 (K-free).
-  for(const [seeded,now] of [[undefined,2],[2,undefined],[2,4]])
-    assert.doesNotThrow(()=>bootstrap.restoreCheck({inputTransport:'writer-driven',evaluatorWorkers:seeded},'writer-driven',now));
-  // pgstream: another K is refused, the same K is admitted; legacy markers are pgstream.
-  assert.throws(()=>bootstrap.restoreCheck({inputTransport:'pgstream',evaluatorWorkers:undefined},'pgstream',2),/BOOTSTRAP_EVALUATOR_ROSTER_CHANGED_RECREATE_DEMO/);
-  assert.throws(()=>bootstrap.restoreCheck({evaluatorWorkers:2},'pgstream',undefined),/BOOTSTRAP_EVALUATOR_ROSTER_CHANGED_RECREATE_DEMO/);
-  assert.doesNotThrow(()=>bootstrap.restoreCheck({evaluatorWorkers:2},'pgstream',2));
-  assert.throws(()=>bootstrap.restoreCheck({inputTransport:'pgstream'},'writer-driven',undefined),/BOOTSTRAP_INPUT_TRANSPORT_CHANGED_RECREATE_DEMO/);
+  for(const seeded of [undefined,2,4])
+    assert.doesNotThrow(()=>bootstrap.restoreCheck({inputTransport:'writer-driven',evaluatorWorkers:seeded}));
+  // pgstream and unmarked (legacy, pgstream) fixtures are refused.
+  for(const complete of [{inputTransport:'pgstream'},{evaluatorWorkers:2},{}])
+    assert.throws(()=>bootstrap.restoreCheck(complete),/BOOTSTRAP_INPUT_TRANSPORT_CHANGED_RECREATE_DEMO/);
 });

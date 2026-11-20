@@ -47,7 +47,6 @@ test('control: a source table absent from the admitted restore inventory refuses
 test('maintained capture and typed completed delivery replace the retired feed roles and configuration',()=>{
   const {layout,docs}=generated(),evaluator=docs.configs.evaluator,realtime=docs.configs.realtime;
   assert.equal(layout.roles.feed_reader,undefined);assert.equal(layout.roles.feed_listener,undefined);
-  assert.equal(evaluator.pgstream.streamRole,layout.roles.pgstream);
   assert.equal(realtime.completedOutput.namespace,layout.namespaces.eval_checkpoint);
   assert.equal(realtime.completedOutput.consumer,evaluator.consumer);
   assert.deepEqual(Object.keys(realtime.postgres.namespaces).sort(),['checkpoint','clock']);
@@ -58,11 +57,6 @@ test('maintained capture and typed completed delivery replace the retired feed r
     assert.equal(Object.keys(docs.environments[role]).some(key=>key.startsWith('NS_FEED_')),false);
   }
   assert.equal(Object.hasOwn(realtime,'pageSize'),false);assert.equal(Object.hasOwn(realtime,'socketOrderDomains'),false);
-  const routes=require('../../lib/pgstream/evaluator').routes({...evaluator,namespaces:evaluator.postgres.namespaces});
-  assert.deepEqual(routes.filter(row=>row.kind!=='clinical').map(row=>row.kind).sort(),['activity','lifecycle','policy','settings']);
-  assert.deepEqual(routes.filter(row=>row.kind==='clinical').map(row=>row.table).sort(),['activity','devicestatus','entries','food','profile','treatments']);
-  assert.equal(routes.some(row=>row.table==='tenant_write_clock'),false,'INTERNAL_CLOCK_ROUTE_RETIRED');
-  assert.equal(routes.some(row=>row.table==='tenant_consumer_checkpoint'),false,'completed output is handed off after commit rather than recaptured');
   const typed=docs.admin.config.provisioning.checkpoints.find(row=>row.consumer===evaluator.consumer+'-completed');
   const receipt=docs.admin.config.provisioning.checkpoints.find(row=>row.consumer===realtime.consumer);
   assert.equal(typed.namespace,realtime.completedOutput.namespace);

@@ -8,8 +8,6 @@ project=$(node project.js)
 compose=(docker compose --project-name "$project" --env-file .env -f compose.yaml)
 realtime_services="realtime"
 evaluator_services="evaluator"
-input_transport=pgstream
-stream_services=(pgstream)
 if [ -f .env ]; then
   replica_file=$(node -e 'const fs=require("node:fs"),path=require("node:path");const lines=fs.readFileSync(".env","utf8").split("\n");const line=lines.find(x=>x.startsWith("NS_DEMO_STATE="));if(!line)process.exit(1);process.stdout.write(path.join(line.slice(14),"compose.replicas.yaml"));')
   [ -f "$replica_file" ] && compose+=(-f "$replica_file")
@@ -25,11 +23,7 @@ if [ -f .env ]; then
     [ -f "$realtime_file" ] || { echo 'Selected realtime placement overlay missing' >&2; exit 1; }
     compose+=(-f "$realtime_file")
   fi
-  if grep -qx NS_INPUT_TRANSPORT=writer-driven .env; then
-    compose+=(-f "$(dirname "$replica_file")/compose.writer.yaml")
-    input_transport=writer-driven
-    stream_services=()
-  fi
+  compose+=(-f "$(dirname "$replica_file")/compose.writer.yaml")
 fi
 case "${1:-}" in
   snapshot)
@@ -59,17 +53,17 @@ case "${1:-}" in
     ;;
   bootstrap)
     node build.js --check-image
-    NS_INPUT_TRANSPORT="$input_transport" node credentials.js add-owner-settings "$(dirname "$replica_file")/credentials"
+    node credentials.js add-owner-settings "$(dirname "$replica_file")/credentials"
     exec "${compose[@]}" run --rm bootstrap
     ;;
   up)
     node build.js --check-image
     [ "$#" -eq 1 ] || exit 64
-    NS_INPUT_TRANSPORT="$input_transport" node credentials.js add-owner-settings "$(dirname "$replica_file")/credentials"
+    node credentials.js add-owner-settings "$(dirname "$replica_file")/credentials"
     # admin and every role wait for the one-shot bootstrap (render, then provision) to complete.
     "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 90 admin
     replicas=$(node -e 'const fs=require("node:fs"),lines=fs.readFileSync(".env","utf8").split("\n");const n=Number((lines.find(x=>x.startsWith("NS_API_REPLICAS="))||"NS_API_REPLICAS=1").slice(16));if(!Number.isSafeInteger(n)||n<1||n>16)process.exit(1);console.log(Array.from({length:n},(_,i)=>i?"api-"+(i+1):"api").join(" "));')
-    "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 900 $replicas $realtime_services $evaluator_services "${stream_services[@]}" tenant-admin ui nginx
+    "${compose[@]}" up -d --no-build --pull never --wait --wait-timeout 900 $replicas $realtime_services $evaluator_services tenant-admin ui nginx
     ;;
   prime|demo)
     node build.js --check-image
@@ -90,10 +84,6 @@ case "${1:-}" in
       exec "${compose[@]}" --profile ops run --rm --no-deps demo
     fi
     ;;
-  pgstream-rebootstrap)
-    [ "$#" -eq 2 ] || { echo "Usage: demo.sh pgstream-rebootstrap /absolute/private-plan.json" >&2; exit 64; }
-    exec node pgstream-rebootstrap.js "$2"
-    ;;
   status)
     exec "${compose[@]}" ps -a
     ;;
@@ -106,7 +96,7 @@ case "${1:-}" in
     exec "${compose[@]}" down
     ;;
   *)
-    echo 'Usage: demo.sh prepare [--bind 169.254.1.1] | config | build [--image local-tag] | bootstrap | up | prime | snapshot /new/directory | restore-fixture /snapshot --project NAME --state /new/state | patch /absolute/prepared/.env local-image | demo | pgstream-rebootstrap /absolute/private-plan.json | status | stop | down' >&2
+    echo 'Usage: demo.sh prepare [--bind 169.254.1.1] | config | build [--image local-tag] | bootstrap | up | prime | snapshot /new/directory | restore-fixture /snapshot --project NAME --state /new/state | patch /absolute/prepared/.env local-image | demo | status | stop | down' >&2
     exit 64
     ;;
 esac

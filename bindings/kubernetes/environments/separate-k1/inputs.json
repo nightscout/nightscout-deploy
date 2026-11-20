@@ -69,13 +69,6 @@
         "ephemeral-storage": "64Mi"
       }
     },
-    "pgstream": {
-      "requests": {
-        "cpu": "100m",
-        "memory": "192Mi",
-        "ephemeral-storage": "64Mi"
-      }
-    },
     "admin": {
       "requests": {
         "cpu": "100m",

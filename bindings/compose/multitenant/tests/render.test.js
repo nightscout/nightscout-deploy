@@ -47,7 +47,7 @@ test('mounts only the declared database credentials and tokens for each role',t=
   assert.equal(render.render(render.input(env)).state,'credentials-rendered');
   for(const [role,logins] of Object.entries(render.connections)){
     const roleDir=path.join(output,role);
-    const extra={api:['vault-token','signing-secret'],evaluator:['ns_pgstream_generation'],'tenant-admin':['vault-token','signing-secret'],admin:['vault-token','signing-secret']};
+    const extra={api:['vault-token','signing-secret'],'tenant-admin':['vault-token','signing-secret'],admin:['vault-token','signing-secret']};
     assert.deepEqual(fs.readdirSync(roleDir).sort(),[...Object.keys(logins).map(name=>name.toLowerCase()),...(extra[role]||[])].sort());
     for(const [name,login] of Object.entries(logins)){
       const file=path.join(roleDir,name.toLowerCase()),url=new URL(fs.readFileSync(file,'utf8').trim());
@@ -59,11 +59,9 @@ test('mounts only the declared database credentials and tokens for each role',t=
   assert.equal(read(output,'admin/vault-token').trim(),values.vault.provisioner);
   for(const role of ['api','tenant-admin','admin'])assert.equal(read(output,role+'/signing-secret').trim(),signing);
   for(const role of ['realtime','evaluator'])assert(!fs.existsSync(path.join(output,role,'signing-secret')));
-  const generation=read(output,'evaluator/ns_pgstream_generation');
   render.render(render.input({...env,NS_API_VAULT_TOKEN_FILE:'/run/ns-vault/token'}));
   assert(!fs.existsSync(path.join(output,'api/vault-token')));
   // Kubernetes (Agent): the signing secret is the one Secret ns-signing-secret, so no role document carries a copy.
   for(const role of ['api','tenant-admin','admin'])assert(!fs.existsSync(path.join(output,role,'signing-secret')),role);
-  assert.equal(read(output,'evaluator/ns_pgstream_generation'),generation);
   assert.throws(()=>render.input({...env,VAULT_ADDR:'http://vault:8200'}),/RENDER_VAULT_HTTPS_REQUIRED/);
 });

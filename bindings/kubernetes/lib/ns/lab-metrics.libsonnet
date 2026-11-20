@@ -8,8 +8,7 @@
 //     target, and the postgres_exporter sidecar through Pod discovery;
 //   - a postgres_exporter sidecar in the postgres Pod connects over the shared Unix socket as the
 //     local superuser (local trust, no password file), with pg_stat_statements (query text, top
-//     100 by time), replication slots and the lab queries below (walsender waits, slot lag,
-//     pg_stat_io, backends by state and wait per source-owned application_name);
+//     100 by time) and the lab queries below (pg_stat_io, backends by state and wait per source-owned application_name);
 //   - a postStart hook creates the pg_stat_statements extension in database `postgres` (never the
 //     application database) once the server answers; the binding already preloads the module.
 // Namespace-scoped only: one Role (get/list/watch Pods, Services, EndpointSlices) and its
@@ -45,20 +44,6 @@
   // Lab queries: names are <query>_<column>. application_name is reported only when it is a
   // source-owned nightscout-* name (core's metrics allow-list), else 'other'.
   queries:: |||
-    ns_walsender:
-      query: "SELECT coalesce(state, 'none') AS state, coalesce(wait_event_type, 'CPU') AS wait_event_type, coalesce(wait_event, 'CPU') AS wait_event, count(*)::float8 AS senders FROM pg_stat_activity WHERE backend_type = 'walsender' GROUP BY 1, 2, 3"
-      metrics:
-        - state: {usage: LABEL, description: "walsender state"}
-        - wait_event_type: {usage: LABEL, description: "wait event type, CPU when none"}
-        - wait_event: {usage: LABEL, description: "wait event, CPU when none"}
-        - senders: {usage: GAUGE, description: "walsenders in this state and wait at scrape time"}
-    ns_slot:
-      query: "SELECT slot_name, active::int::float8 AS active, pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn)::float8 AS confirmed_lag_bytes, pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)::float8 AS retained_wal_bytes FROM pg_replication_slots WHERE NOT temporary"
-      metrics:
-        - slot_name: {usage: LABEL, description: "replication slot"}
-        - active: {usage: GAUGE, description: "1 when a consumer is attached"}
-        - confirmed_lag_bytes: {usage: GAUGE, description: "current WAL position minus the slot's confirmed flush position"}
-        - retained_wal_bytes: {usage: GAUGE, description: "current WAL position minus the slot's restart position"}
     ns_activity:
       query: "SELECT coalesce(backend_type, 'unknown') AS backend_type, CASE WHEN application_name ~ '^nightscout-[a-z][a-z0-9-]{0,47}$' THEN application_name WHEN application_name = '' THEN 'none' ELSE 'other' END AS application_name, coalesce(state, 'none') AS state, coalesce(wait_event_type, 'CPU') AS wait_event_type, count(*)::float8 AS backends FROM pg_stat_activity WHERE pid <> pg_backend_pid() GROUP BY 1, 2, 3, 4"
       metrics:
