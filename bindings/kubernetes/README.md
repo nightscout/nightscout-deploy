@@ -128,6 +128,12 @@ termination or fencing.
 
 ## Inputs and storage
 
+Set the optional integer `postgresMaxConnections` in the binding inputs to change the PostgreSQL
+connection limit for a run. The default is 140. PostgreSQL reserves 40 slots for clinical roles
+and three for superusers, so the allowed range is 44 through 10,000. For example,
+`{"postgresMaxConnections": 240}` allows 197 ordinary connections. The PostgreSQL StatefulSet
+arguments record the selected value. In a running database, read it with `SHOW max_connections`.
+
 All init containers, Vault sidecars and serving/provisioning containers have explicit CPU, memory
 and ephemeral-storage requests. The namespace quota allows two copies of each
 declared workload so a controller can replace its Pod. It accounts CPU, memory,

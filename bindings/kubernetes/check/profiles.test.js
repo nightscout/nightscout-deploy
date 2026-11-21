@@ -26,6 +26,31 @@ test('request defaults and authored overrides reach the rendered container', () 
   assert.deepEqual(actual.resources, { requests: { ...profile.postgres, cpu: '42m' } });
 });
 
+test('PostgreSQL sizing changes only the total connection limit', () => {
+  const baseline = render({});
+  assert.equal(baseline.status, 0, baseline.error);
+  const args = manifests => manifests.postgres.statefulset.spec.template.spec.containers.find(c => c.name === 'postgres').args;
+  assert.ok(args(baseline.value).includes('max_connections=140'));
+  assert.ok(args(baseline.value).includes('reserved_connections=40'));
+  for (const max of [44, 240, 400, 10000]) {
+    const tuned = render({ postgresMaxConnections: max });
+    assert.equal(tuned.status, 0, tuned.error);
+    const argv = args(tuned.value);
+    const index = argv.indexOf('max_connections=' + max);
+    assert.notEqual(index, -1);
+    argv[index] = 'max_connections=140';
+    assert.deepEqual(tuned.value, baseline.value);
+  }
+});
+
+test('PostgreSQL sizing requires an integer and leaves room for ordinary connections', () => {
+  for (const max of [43, 10001, 140.5, '240', false]) {
+    const r = render({ postgresMaxConnections: max });
+    assert.notEqual(r.status, 0);
+    assert.match(r.error, /postgresMaxConnections/);
+  }
+});
+
 test('separated roles start without a tenant Job gate and have independent probes', () => {
   const result = render({});
   assert.equal(result.status, 0, result.error);

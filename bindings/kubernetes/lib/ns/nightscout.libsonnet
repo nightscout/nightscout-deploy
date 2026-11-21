@@ -38,6 +38,7 @@
     // StatefulSet replicas and the slice count. Evaluator K>1: hostname ordinal, NS_EVALUATOR_SLICES,
     // private addresses evaluator-<i>.evaluator (components.libsonnet).
     apiReplicas: 1,
+    postgresMaxConnections: 140,
     // Writer-driven is the only input transport; the field is kept for existing binding inputs.
     inputTransport: 'writer-driven',
     slices: { realtime: 1, evaluator: 1 },
@@ -85,6 +86,12 @@
   raw(overrides):: {
     local c = std.mergePatch($.defaults, overrides),
     local ns = c.namespace,
+    local clinicalReserved = 40,
+    local superuserReserved = 3,  // PostgreSQL default, left at its image setting.
+    local maxConnections = c.postgresMaxConnections,
+    assert std.isNumber(maxConnections) && maxConnections == std.floor(maxConnections) &&
+           maxConnections > clinicalReserved + superuserReserved && maxConnections <= 10000 :
+           'postgresMaxConnections must be an integer from 44 to 10000, leaving at least one ordinary connection',
     assert std.isString(c.sourceCommit) && std.length(c.sourceCommit) == 40 && std.length([x for x in std.stringChars(c.sourceCommit) if !std.member(std.stringChars('0123456789abcdef'),x)]) == 0 : 'sourceCommit must be the full 40-hex commit',
     assert std.isString(c.images.app) && std.length(std.split(c.images.app, '@')) == 2 && std.startsWith(std.split(c.images.app, '@')[1], 'sha256:') && std.length(std.split(c.images.app, '@')[1]) == 71 : 'images.app requires an immutable manifest digest',
     assert std.isString(c.images.postgres) && std.length(std.split(c.images.postgres, '@')) == 2 && std.startsWith(std.split(c.images.postgres, '@')[1], 'sha256:') && std.length(std.split(c.images.postgres, '@')[1]) == 71 : 'images.postgres requires an explicit maintained PostgreSQL image digest',
@@ -235,7 +242,7 @@
                 name: 'postgres',
                 image: c.images.postgres,
                 // Preserve docker-entrypoint.sh: it owns initdb before postgres starts.
-                args: ['postgres', '-c', 'max_connections=140', '-c', 'reserved_connections=40',
+                args: ['postgres', '-c', 'max_connections=' + maxConnections, '-c', 'reserved_connections=' + clinicalReserved,
                   // Statement statistics and I/O timing for capacity runs (the observer snapshots
                   // pg_stat_statements around steady state); the image ships the contrib module.
                   '-c', 'shared_preload_libraries=pg_stat_statements', '-c', 'track_io_timing=on'],
