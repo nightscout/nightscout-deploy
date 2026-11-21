@@ -13,7 +13,7 @@ test('selected launcher applies the same two fixed-roster overlays and starts ev
     const record=path.join(dir,'argv.jsonl');
     fs.writeFileSync(path.join(bin,'docker'),'#!/bin/sh\nexec '+process.execPath+' '+JSON.stringify(path.join(dir,'record.js'))+' "$@"\n',{mode:0o700});
     fs.writeFileSync(path.join(dir,'record.js'),'const args=process.argv.slice(2);require("node:fs").appendFileSync('+JSON.stringify(record)+',JSON.stringify(args)+"\\n");if(process.env.NS_CONTROL_SEALED==="1"&&args.includes("sealedcode=200"))console.log("true");if(process.env.NS_CONTROL_REFUSE_PLATFORM==="1"&&args.includes("deploy/multitenant/platform-verify.js"))process.exit(23);');
-    fs.writeFileSync(path.join(bin,'node'),'#!/bin/sh\ncase "$1" in build.js|publish-primer.js) exit 0;; esac\nexec '+process.execPath+' "$@"\n',{mode:0o700});
+    fs.writeFileSync(path.join(bin,'node'),'#!/bin/sh\ncase "$1" in build.js|publish-primer.js|credentials.js) exit 0;; esac\nexec '+process.execPath+' "$@"\n',{mode:0o700});
     const options={cwd:dir,env:{...process.env,PATH:bin+':'+process.env.PATH},stdio:'pipe'};
     options.env.COMPOSE_PROJECT_NAME='foreign';options.env.NS_DEMO_PROJECT='foreign';
     execFileSync('bash',['demo.sh','up'],options);
