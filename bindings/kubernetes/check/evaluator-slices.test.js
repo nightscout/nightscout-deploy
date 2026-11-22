@@ -54,10 +54,10 @@ test('evaluator K bound: the render assert and the input schema agree with the i
   }
 });
 
-test('evaluator K=2,3: hostname ordinal and one K; the slices cover every tenant once', { skip: !core && 'NS_TEST_CORE unset' }, () => {
+test('evaluator K=2,3,9,16,20,32: hostname ordinal and one K; the slices cover every tenant once', { skip: !core && 'NS_TEST_CORE unset' }, () => {
   const slice = require(path.join(core, 'lib/pool-membership/slice'));
   {
-    for (const k of [2, 3]) {
+    for (const k of [2, 3, 9, 16, 20, 32]) {
       const r = render({ slices: { evaluator: k } });
       assert.equal(r.status, 0, r.error);
       const set = r.value.components.evaluator.statefulset, container = evaluatorOf(r.value);
@@ -68,6 +68,8 @@ test('evaluator K=2,3: hostname ordinal and one K; the slices cover every tenant
       assert.equal(tenants.filter(slice.predicate(k, k)).length, 0, 'ordinal K owns nothing and is not refused');
       const owners = tenants.map(tenant => Array.from({ length: k }, (_, ordinal) => ordinal).filter(ordinal => slice.predicate(k, ordinal)(tenant)));
       assert(owners.every(list => list.length === 1), 'K=' + k + ': every tenant has exactly one owning Pod');
+      assert.equal(new Set(owners.map(list => list[0])).size, k, 'K=' + k + ': every rendered Pod owns tenants');
+      for (const extra of [k + 3, slice.MAX_MEMBERS - 1]) assert.equal(tenants.filter(slice.predicate(k, extra)).length, 0, 'K=' + k + ': ordinal ' + extra + ' owns nothing');
       assert.equal(r.value.networkPolicies.evaluatorIntake, undefined, 'no stream intake policy');
       const bootstrap = manifests(r.value).find(m => m.kind === 'Job' && (m.spec.template.spec.initContainers || []).some(x => x.name === 'bootstrap'));
       assert.equal(env(bootstrap.spec.template.spec.initContainers.find(x => x.name === 'bootstrap'), 'NS_EVALUATOR_WORKERS').value, String(k));

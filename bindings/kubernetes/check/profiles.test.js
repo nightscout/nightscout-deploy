@@ -74,6 +74,51 @@ test('PostgreSQL max_connections is the rendered connection budget, never below 
   assert.deepEqual(table.map(row => row[1]), [205, 248, 334, 506]);
 });
 
+// Evaluator K above 8 (realtime stays at its own bound of 8): 23 connections per evaluator Pod
+// (pool 4 + read 2 + fixed 6 + operation 8 + transient 3) on top of 322 for two api Pods, eight
+// realtime Pods, tenant-admin, admin and the two reserves.
+test('evaluator K=9,16,20,32 with realtime K=8: max_connections is the budget, written out per K', () => {
+  const table = [];
+  for (const ke of [9, 16, 20, 32]) {
+    const r = render({ tenantCount: 10000, apiReplicas: 2, slices: { evaluator: ke, realtime: 8 } });
+    assert.equal(r.status, 0, r.error);
+    const budget = expectedBudget({ api: 2, k: 8, ke });
+    assert.equal(budget, 322 + 23 * ke, 'K=' + ke);
+    assert.ok(pgArgs(r.value).includes('max_connections=' + budget), 'K=' + ke + ' ' + pgArgs(r.value).join(' '));
+    assert.ok(pgArgs(r.value).includes('reserved_connections=40'));
+    assert.equal(r.value.components.evaluator.statefulset.spec.replicas, ke);
+    assert.equal(r.value.components.realtime.statefulset.spec.replicas, 8);
+    const pg = r.value.postgres.statefulset.spec.template.spec.containers.find(c => c.name === 'postgres');
+    const evaluator = roleContainer(r.value, 'evaluator');
+    assert.equal(evaluator.resources.limits, undefined, 'requests only, no limit');
+    assert.ok(heapOf(evaluator) >= mib(evaluator.resources.requests.memory), 'heap ceiling at or above the request');
+    for (const label of ['a', 'b', 'c']) assert.equal(shortfall(r, roster(10000, label), ke), 0, `10000/${ke}/${label}`);
+    table.push([ke, budget, residentOf(r), evaluator.resources.requests.memory, heapOf(evaluator), pg.resources.requests.memory]);
+    // Red control: one connection below the budget refuses to render at this K.
+    const under = render({ tenantCount: 10000, apiReplicas: 2, slices: { evaluator: ke, realtime: 8 }, postgresMaxConnections: budget - 1 });
+    assert.notEqual(under.status, 0, 'K=' + ke);
+    assert.match(under.error, new RegExp('below the connection budget ' + budget));
+  }
+  assert.deepEqual(table, [
+    [9, 529, 1253, '5454Mi', 8181, '910Mi'],
+    [16, 690, 734, '3918Mi', 5877, '1232Mi'],
+    [20, 782, 599, '3519Mi', 5279, '1416Mi'],
+    [32, 1058, 391, '2903Mi', 4355, '1968Mi'],
+  ]);
+  const over = render({ tenantCount: 10000, apiReplicas: 2, slices: { evaluator: 33, realtime: 8 } });
+  assert.notEqual(over.status, 0);
+  assert.match(over.error, /slices.evaluator must be an integer 1..32/);
+});
+
+test('PostgreSQL has a memory-backed /dev/shm of 1Gi for dynamic shared memory', () => {
+  const r = render({});
+  assert.equal(r.status, 0, r.error);
+  const pod = r.value.postgres.statefulset.spec.template.spec;
+  const postgres = pod.containers.find(actor => actor.name === 'postgres');
+  assert.deepEqual(postgres.volumeMounts.filter(m => m.mountPath === '/dev/shm'), [{ name: 'dshm', mountPath: '/dev/shm' }]);
+  assert.deepEqual(pod.volumes.filter(v => v.name === 'dshm'), [{ name: 'dshm', emptyDir: { medium: 'Memory', sizeLimit: '1Gi' } }]);
+});
+
 test('pool settings reach each role as NS_POOL_<ROLE>_MAX and move the budget', () => {
   const pools = { api: 6, realtime: 3, evaluator: 5, operation: 2, read: 1 };
   const r = render({ apiReplicas: 2, slices: { evaluator: 4, realtime: 4 }, pools });
