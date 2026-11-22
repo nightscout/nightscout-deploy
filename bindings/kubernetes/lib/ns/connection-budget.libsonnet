@@ -4,7 +4,8 @@
 //   budget          = Σ over pods (pool max per role) + transient + superuser + clinical reserve
 //   max_connections = budget (never below the PostgreSQL 140/40 default), or an explicit
 //                     postgresMaxConnections that must hold the budget (an over-budget pool set refuses)
-//   postgres memory request = typical + perConnectionMiB × (max_connections − 140)
+//   postgres memory request = typical + perConnectionMiB × (max_connections − 140) + postgresShmMiB
+//                     (the memory-backed /dev/shm volume is charged to the Pod)
 //   evaluator memory request = baseMiB + perResidentMiB × residentMax,
 //                     NS_EVALUATOR_RESIDENT_MAX = residentMax (requests only, no limit)
 //   evaluator V8 heap ceiling = ceil(heapHeadroom × memory request), passed as the node flag
@@ -47,6 +48,9 @@
     postgresDefault: 140,
     // Read-derived: private memory of an idle backend; refit from a run.
     postgresPerConnectionMiB: 2,
+    // Size of the memory-backed /dev/shm volume (dynamic shared memory for parallel query and hash
+    // joins). It is charged to the Pod's memory, so the request includes all of it.
+    postgresShmMiB: 1024,
     // Upper envelope of the measured evaluator resident-set peaks on the v2 client-model history
     // with the window levers on (plannable-scale discovery 2026-11-21/22, 17 evaluator Pods at
     // 223..1,032 residents): least squares 1,109.9 + 2.961 x residents MiB (R^2 0.90), intercept
@@ -108,7 +112,8 @@
       budget: budget,
       maxConnections: maxConnections,
       formula: 'sum(pods x pool max per role) + transientPerPod x pods + superuser + clinical reserve <= max_connections',
-      postgresMemoryMiB: perConn * std.max(0, maxConnections - d.postgresDefault),
+      postgresShmMiB: d.postgresShmMiB,
+      postgresMemoryMiB: perConn * std.max(0, maxConnections - d.postgresDefault) + d.postgresShmMiB,
       postgresPerConnectionMiB: perConn,
       evaluator: {
         ownedPerSlice: owned,

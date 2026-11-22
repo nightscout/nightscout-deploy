@@ -28,8 +28,9 @@ test('request defaults and authored overrides reach the rendered container', () 
   assert.equal(defaults.status, 0, defaults.error);
   const pod = defaults.value.postgres.statefulset.spec.template.spec;
   const postgres = pod.containers.find(actor => actor.name === 'postgres');
-  // Memory is planned from max_connections (default render: budget 176, so 132Mi + 2 x 36).
-  const planned = { ...profile.postgres, memory: '204Mi' };
+  // Memory is planned from max_connections and the memory-backed /dev/shm (default render: budget 176,
+  // so 132Mi + 2 x 36 + 1024).
+  const planned = { ...profile.postgres, memory: '1228Mi' };
   assert.deepEqual(postgres.resources, { requests: planned });
   assert.equal(pod.nodeName, undefined);
   const tuned = render({ resources: { postgres: { requests: { cpu: '42m' } } } });
@@ -68,7 +69,7 @@ test('PostgreSQL max_connections is the rendered connection budget, never below 
     assert.ok(pgArgs(r.value).includes('max_connections=' + max), 'K=' + k + ' ' + pgArgs(r.value).join(' '));
     assert.ok(pgArgs(r.value).includes('reserved_connections=40'));
     const pg = r.value.postgres.statefulset.spec.template.spec.containers.find(c => c.name === 'postgres');
-    assert.equal(mib(pg.resources.requests.memory), 132 + 2 * (max - 140));
+    assert.equal(mib(pg.resources.requests.memory), 132 + 2 * (max - 140) + 1024);
     table.push([k, budget, max, pg.resources.requests.memory]);
   }
   assert.deepEqual(table.map(row => row[1]), [205, 248, 334, 506]);
@@ -100,23 +101,31 @@ test('evaluator K=9,16,20,32 with realtime K=8: max_connections is the budget, w
     assert.match(under.error, new RegExp('below the connection budget ' + budget));
   }
   assert.deepEqual(table, [
-    [9, 529, 1253, '5454Mi', 8181, '910Mi'],
-    [16, 690, 734, '3918Mi', 5877, '1232Mi'],
-    [20, 782, 599, '3519Mi', 5279, '1416Mi'],
-    [32, 1058, 391, '2903Mi', 4355, '1968Mi'],
+    [9, 529, 1253, '5454Mi', 8181, '1934Mi'],
+    [16, 690, 734, '3918Mi', 5877, '2256Mi'],
+    [20, 782, 599, '3519Mi', 5279, '2440Mi'],
+    [32, 1058, 391, '2903Mi', 4355, '2992Mi'],
   ]);
   const over = render({ tenantCount: 10000, apiReplicas: 2, slices: { evaluator: 33, realtime: 8 } });
   assert.notEqual(over.status, 0);
   assert.match(over.error, /slices.evaluator must be an integer 1..32/);
 });
 
-test('PostgreSQL has a memory-backed /dev/shm of 1Gi for dynamic shared memory', () => {
-  const r = render({});
-  assert.equal(r.status, 0, r.error);
-  const pod = r.value.postgres.statefulset.spec.template.spec;
-  const postgres = pod.containers.find(actor => actor.name === 'postgres');
-  assert.deepEqual(postgres.volumeMounts.filter(m => m.mountPath === '/dev/shm'), [{ name: 'dshm', mountPath: '/dev/shm' }]);
-  assert.deepEqual(pod.volumes.filter(v => v.name === 'dshm'), [{ name: 'dshm', emptyDir: { medium: 'Memory', sizeLimit: '1Gi' } }]);
+test('PostgreSQL has a memory-backed /dev/shm of 1 GiB and its memory request includes it', () => {
+  const profile = require('../lib/ns/typical-requests.json');
+  for (const overrides of [{}, { tenantCount: 10000, apiReplicas: 2, slices: { evaluator: 20, realtime: 8 } }]) {
+    const r = render({ resources: null, ...overrides });
+    assert.equal(r.status, 0, r.error);
+    const pod = r.value.postgres.statefulset.spec.template.spec;
+    const postgres = pod.containers.find(actor => actor.name === 'postgres');
+    assert.deepEqual(postgres.volumeMounts.filter(m => m.mountPath === '/dev/shm'), [{ name: 'dshm', mountPath: '/dev/shm' }]);
+    const volumes = pod.volumes.filter(v => v.name === 'dshm');
+    assert.deepEqual(volumes, [{ name: 'dshm', emptyDir: { medium: 'Memory', sizeLimit: '1024Mi' } }]);
+    // A memory-backed volume is charged to the Pod, so the request holds the whole volume.
+    const max = Number(pgArgs(r.value).find(a => a.startsWith('max_connections=')).split('=')[1]);
+    assert.equal(mib(postgres.resources.requests.memory), mib(profile.postgres.memory) + 2 * (max - 140) + mib(volumes[0].emptyDir.sizeLimit));
+    assert.equal(postgres.resources.limits, undefined, 'requests only, no limit');
+  }
 });
 
 test('pool settings reach each role as NS_POOL_<ROLE>_MAX and move the budget', () => {

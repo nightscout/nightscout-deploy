@@ -271,7 +271,7 @@
                 ],
               }],
               volumes: [{ name: 'postgres-password', secret: { secretName: 'ns-postgres-password', defaultMode: 256 } },
-                        { name: 'dshm', emptyDir: { medium: 'Memory', sizeLimit: '1Gi' } }],
+                        { name: 'dshm', emptyDir: { medium: 'Memory', sizeLimit: std.toString(plan.postgresShmMiB) + 'Mi' } }],
             },
           },
           volumeClaimTemplates: [{ metadata: { name: 'data' }, spec: { accessModes: ['ReadWriteOnce'], resources: { requests: { storage: c.storage.postgres } } } }],
