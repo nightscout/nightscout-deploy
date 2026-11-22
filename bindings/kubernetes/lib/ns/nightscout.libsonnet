@@ -264,9 +264,14 @@
                 volumeMounts: [
                   { name: 'data', mountPath: '/var/lib/postgresql/data' },
                   { name: 'postgres-password', mountPath: '/run/secrets', readOnly: true },
+                  // Parallel query and hash joins allocate dynamic shared memory in /dev/shm; the
+                  // container default (64 MB) refuses them on a 10k-tenant database ("could not
+                  // resize shared memory segment ... No space left on device").
+                  { name: 'dshm', mountPath: '/dev/shm' },
                 ],
               }],
-              volumes: [{ name: 'postgres-password', secret: { secretName: 'ns-postgres-password', defaultMode: 256 } }],
+              volumes: [{ name: 'postgres-password', secret: { secretName: 'ns-postgres-password', defaultMode: 256 } },
+                        { name: 'dshm', emptyDir: { medium: 'Memory', sizeLimit: '1Gi' } }],
             },
           },
           volumeClaimTemplates: [{ metadata: { name: 'data' }, spec: { accessModes: ['ReadWriteOnce'], resources: { requests: { storage: c.storage.postgres } } } }],
