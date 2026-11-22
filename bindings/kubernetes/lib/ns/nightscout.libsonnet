@@ -38,7 +38,13 @@
     // StatefulSet replicas and the slice count. Evaluator K>1: hostname ordinal, NS_EVALUATOR_SLICES,
     // private addresses evaluator-<i>.evaluator (components.libsonnet).
     apiReplicas: 1,
-    postgresMaxConnections: 140,
+    // null: max_connections is the rendered connection budget (connection-budget.libsonnet),
+    // never below 140. A number must hold the budget, else the render refuses.
+    postgresMaxConnections: null,
+    // Pool max per role (NS_POOL_<ROLE>_MAX), rendered into each role and counted in the budget.
+    pools: {},
+    // Evaluator memory request base + per resident x ceil(tenantCount / K); refit inputs.
+    evaluatorMemory: {},
     // Writer-driven is the only input transport; the field is kept for existing binding inputs.
     inputTransport: 'writer-driven',
     slices: { realtime: 1, evaluator: 1 },
@@ -86,9 +92,10 @@
   raw(overrides):: {
     local c = std.mergePatch($.defaults, overrides),
     local ns = c.namespace,
-    local clinicalReserved = 40,
-    local superuserReserved = 3,  // PostgreSQL default, left at its image setting.
-    local maxConnections = c.postgresMaxConnections,
+    local plan = (import 'connection-budget.libsonnet').plan(c),
+    local clinicalReserved = plan.clinicalReserved,
+    local superuserReserved = plan.superuserReserved,  // PostgreSQL default, left at its image setting.
+    local maxConnections = plan.maxConnections,
     assert std.isNumber(maxConnections) && maxConnections == std.floor(maxConnections) &&
            maxConnections > clinicalReserved + superuserReserved && maxConnections <= 10000 :
            'postgresMaxConnections must be an integer from 44 to 10000, leaving at least one ordinary connection',
@@ -714,6 +721,7 @@
       prefix: c.prefix,
       sourceCommit: c.sourceCommit,
       slices: c.slices,
+      connectionBudget: plan,
     },
   },
 
@@ -721,7 +729,13 @@
   new(overrides)::
     local c = std.mergePatch($.defaults, overrides);
     local original = $.raw(overrides);
-    local typical = import 'typical-requests.json';
+    local budget = import 'connection-budget.libsonnet';
+    local plan = budget.plan(c);
+    // Planned requests: the evaluator from its owned tenants, PostgreSQL from max_connections.
+    local typical = (import 'typical-requests.json') + {
+      evaluator+: { memory: budget.quantity(plan.evaluator.memoryRequestMiB) },
+      postgres+: { memory: budget.quantity(budget.mib(super.memory) + plan.postgresMemoryMiB) },
+    };
     assert std.member(['limits-v1', 'requests-v1'], c.resourceAccounting) : 'unknown resource accounting';
     local raw = (import 'components.libsonnet').render(original, c);
     local collect(v) = if std.isArray(v) then std.flattenArrays([collect(x) for x in v]) else if !std.isObject(v) then [] else if std.objectHas(v, 'apiVersion') && std.objectHas(v, 'kind') then [v] else std.flattenArrays([collect(v[k]) for k in std.objectFields(v)]);

@@ -18,29 +18,79 @@ test('request defaults and authored overrides reach the rendered container', () 
   assert.equal(defaults.status, 0, defaults.error);
   const pod = defaults.value.postgres.statefulset.spec.template.spec;
   const postgres = pod.containers.find(actor => actor.name === 'postgres');
-  assert.deepEqual(postgres.resources, { requests: profile.postgres });
+  // Memory is planned from max_connections (default render: budget 176, so 132Mi + 2 x 36).
+  const planned = { ...profile.postgres, memory: '204Mi' };
+  assert.deepEqual(postgres.resources, { requests: planned });
   assert.equal(pod.nodeName, undefined);
   const tuned = render({ resources: { postgres: { requests: { cpu: '42m' } } } });
   assert.equal(tuned.status, 0, tuned.error);
   const actual = tuned.value.postgres.statefulset.spec.template.spec.containers.find(actor => actor.name === 'postgres');
-  assert.deepEqual(actual.resources, { requests: { ...profile.postgres, cpu: '42m' } });
+  assert.deepEqual(actual.resources, { requests: { ...planned, cpu: '42m' } });
+  const authored = render({ resources: { postgres: { requests: { memory: '1Gi' } } } });
+  assert.equal(authored.value.postgres.statefulset.spec.template.spec.containers.find(actor => actor.name === 'postgres').resources.requests.memory, '1Gi');
 });
 
-test('PostgreSQL sizing changes only the total connection limit', () => {
-  const baseline = render({});
-  assert.equal(baseline.status, 0, baseline.error);
-  const args = manifests => manifests.postgres.statefulset.spec.template.spec.containers.find(c => c.name === 'postgres').args;
-  assert.ok(args(baseline.value).includes('max_connections=140'));
-  assert.ok(args(baseline.value).includes('reserved_connections=40'));
-  for (const max of [44, 240, 400, 10000]) {
-    const tuned = render({ postgresMaxConnections: max });
-    assert.equal(tuned.status, 0, tuned.error);
-    const argv = args(tuned.value);
-    const index = argv.indexOf('max_connections=' + max);
-    assert.notEqual(index, -1);
-    argv[index] = 'max_connections=140';
-    assert.deepEqual(tuned.value, baseline.value);
+const pgArgs = manifests => manifests.postgres.statefulset.spec.template.spec.containers.find(c => c.name === 'postgres').args;
+const roleContainer = (manifests, role) => {
+  const w = manifests.components[role];
+  return (w.statefulset || w.deployment).spec.template.spec.containers.find(c => c.name === role);
+};
+const envOf = (container, name) => container.env.filter(row => row.name === name).map(row => row.value);
+const mib = q => q.endsWith('Gi') ? Number(q.slice(0, -2)) * 1024 : Number(q.slice(0, -2));
+
+// Formula (connection-budget.libsonnet), written out independently here:
+//   per pod: api 2*P_api + 10 + P_op; realtime P_rt + 5 + P_op; evaluator P_ev + P_read + 6 + P_op;
+//   tenant-admin 40; admin 15; transient 3 per serving Pod; superuser 3; clinical reserve 40.
+function expectedBudget ({ api = 1, k = 1, ke = k, pools = {} } = {}) {
+  const p = { api: 4, realtime: 4, evaluator: 4, operation: 8, read: 2, ...pools };
+  const pools_ = api * (2 * p.api + 10 + p.operation) + k * (p.realtime + 5 + p.operation) +
+    ke * (p.evaluator + p.read + 6 + p.operation) + 40 + 15;
+  return pools_ + 3 * (api + k + ke + 2) + 3 + 40;
+}
+
+test('PostgreSQL max_connections is the rendered connection budget, never below 140', () => {
+  const table = [];
+  for (const k of [1, 2, 4, 8]) {
+    const r = render({ apiReplicas: 2, slices: { evaluator: k, realtime: k } });
+    assert.equal(r.status, 0, r.error);
+    const budget = expectedBudget({ api: 2, k });
+    const max = Math.max(140, budget);
+    assert.ok(pgArgs(r.value).includes('max_connections=' + max), 'K=' + k + ' ' + pgArgs(r.value).join(' '));
+    assert.ok(pgArgs(r.value).includes('reserved_connections=40'));
+    const pg = r.value.postgres.statefulset.spec.template.spec.containers.find(c => c.name === 'postgres');
+    assert.equal(mib(pg.resources.requests.memory), 132 + 2 * (max - 140));
+    table.push([k, budget, max, pg.resources.requests.memory]);
   }
+  assert.deepEqual(table.map(row => row[1]), [205, 248, 334, 506]);
+});
+
+test('pool settings reach each role as NS_POOL_<ROLE>_MAX and move the budget', () => {
+  const pools = { api: 6, realtime: 3, evaluator: 5, operation: 2, read: 1 };
+  const r = render({ apiReplicas: 2, slices: { evaluator: 4, realtime: 4 }, pools });
+  assert.equal(r.status, 0, r.error);
+  assert.deepEqual(envOf(roleContainer(r.value, 'api'), 'NS_POOL_API_MAX'), ['6']);
+  assert.deepEqual(envOf(roleContainer(r.value, 'realtime'), 'NS_POOL_REALTIME_MAX'), ['3']);
+  assert.deepEqual(envOf(roleContainer(r.value, 'evaluator'), 'NS_POOL_EVALUATOR_MAX'), ['5']);
+  assert.deepEqual(envOf(roleContainer(r.value, 'evaluator'), 'NS_POOL_READ_MAX'), ['1']);
+  for (const role of ['api', 'realtime', 'evaluator', 'tenant-admin']) {
+    assert.deepEqual(envOf(roleContainer(r.value, role), 'NS_POOL_OPERATION_MAX'), ['2'], role);
+  }
+  assert.ok(pgArgs(r.value).includes('max_connections=' + Math.max(140, expectedBudget({ api: 2, k: 4, pools }))));
+});
+
+test('an explicit max_connections below the budget refuses to render (red control)', () => {
+  const k8 = expectedBudget({ api: 2, k: 8 });
+  const over = render({ apiReplicas: 2, slices: { evaluator: 8, realtime: 8 }, postgresMaxConnections: k8 - 1 });
+  assert.notEqual(over.status, 0);
+  assert.match(over.error, /below the connection budget 506/);
+  const exact = render({ apiReplicas: 2, slices: { evaluator: 8, realtime: 8 }, postgresMaxConnections: k8 });
+  assert.equal(exact.status, 0, exact.error);
+  const bigPools = render({ postgresMaxConnections: 240, pools: { operation: 100 } });
+  assert.notEqual(bigPools.status, 0);
+  assert.match(bigPools.error, /below the connection budget/);
+  const roomy = render({ postgresMaxConnections: 400 });
+  assert.equal(roomy.status, 0, roomy.error);
+  assert.ok(pgArgs(roomy.value).includes('max_connections=400'));
 });
 
 test('PostgreSQL sizing requires an integer and leaves room for ordinary connections', () => {
@@ -48,6 +98,34 @@ test('PostgreSQL sizing requires an integer and leaves room for ordinary connect
     const r = render({ postgresMaxConnections: max });
     assert.notEqual(r.status, 0);
     assert.match(r.error, /postgresMaxConnections/);
+  }
+  for (const pools of [{ api: 0 }, { evaluator: 1 }, { other: 2 }, { read: 1.5 }]) {
+    const r = render({ pools });
+    assert.notEqual(r.status, 0, JSON.stringify(pools));
+    assert.match(r.error, /pools/);
+  }
+});
+
+test('evaluator memory request and resident limit follow the tenants each slice owns', () => {
+  for (const [tenants, k] of [[10000, 8], [10000, 1], [1000, 2], [1001, 2], [100, 4]]) {
+    const r = render({ tenantCount: tenants, slices: { evaluator: k, realtime: k } });
+    assert.equal(r.status, 0, r.error);
+    const owned = Math.ceil(tenants / k);
+    const evaluator = roleContainer(r.value, 'evaluator');
+    assert.deepEqual(envOf(evaluator, 'NS_EVALUATOR_RESIDENT_MAX'), [String(owned)]);
+    assert.equal(evaluator.resources.requests.memory, Math.ceil(195 + 1.85 * owned) + 'Mi');
+    assert.equal(evaluator.resources.limits, undefined, 'requests only, no limit');
+  }
+  const refit = render({ tenantCount: 10000, slices: { evaluator: 8, realtime: 8 }, evaluatorMemory: { baseMiB: 210, perResidentMiB: 1.2 } });
+  assert.equal(refit.status, 0, refit.error);
+  assert.equal(roleContainer(refit.value, 'evaluator').resources.requests.memory, Math.ceil(210 + 1.2 * 1250) + 'Mi');
+  // An operator roleEnv value replaces the rendered resident limit, never duplicates it.
+  const pinned = render({ tenantCount: 1000, roleEnv: { evaluator: [{ name: 'NS_EVALUATOR_RESIDENT_MAX', value: '256' }] } });
+  assert.deepEqual(envOf(roleContainer(pinned.value, 'evaluator'), 'NS_EVALUATOR_RESIDENT_MAX'), ['256']);
+  for (const evaluatorMemory of [{ baseMiB: 0 }, { perResidentMiB: -1 }]) {
+    const bad = render({ evaluatorMemory });
+    assert.notEqual(bad.status, 0);
+    assert.match(bad.error, /evaluatorMemory/);
   }
 });
 
@@ -97,6 +175,12 @@ test('only the lab client argument changes between ten and ten thousand tenants'
     const count = client.env.find(row => row.name === 'NS_DEMO_TENANTS');
     assert.equal(count.value, String(expectedCount));
     count.value = '';
+    // The evaluator plan follows the tenant count (tested above); everything else is identical.
+    const evaluator = roleContainer(manifests, 'evaluator');
+    evaluator.env.find(row => row.name === 'NS_EVALUATOR_RESIDENT_MAX').value = '';
+    evaluator.resources.requests.memory = '';
+    // The namespace quota sums the requests, so its memory total moves with the evaluator request.
+    for (const object of Object.values(manifests.budget)) if (object?.spec?.hard?.['requests.memory']) object.spec.hard['requests.memory'] = '';
     assert.ok(!manifests.verification, 'no verification Job');
     return manifests;
   }

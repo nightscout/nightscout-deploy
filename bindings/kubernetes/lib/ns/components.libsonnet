@@ -15,6 +15,7 @@
   ordinal:: ['realtime', 'evaluator'],
   render(raw, c)::
     local lab = import 'lab-metrics.libsonnet';
+    local plan = (import 'connection-budget.libsonnet').plan(c);
     local roles = std.objectFields($.ports);
     assert c.inputTransport == 'writer-driven' : 'inputTransport must be writer-driven';
     assert std.isNumber(c.apiReplicas) && c.apiReplicas == std.floor(c.apiReplicas) && c.apiReplicas >= 1 && c.apiReplicas <= 16 : 'apiReplicas must be an integer 1..16';
@@ -65,7 +66,7 @@
       source + {
         initContainers: if agent then [source.initContainers[0]] else [],
         containers: [x + {
-          env: x.env + env + targets(role) + sliceEnv(role) + lab.roleEnv(c) + (if std.objectHas(c.roleEnv, role) then c.roleEnv[role] else []),
+          env: x.env + env + targets(role) + sliceEnv(role) + [x for x in plan.env(role) if !std.member([y.name for y in (if std.objectHas(c.roleEnv, role) then c.roleEnv[role] else [])], x.name)] + lab.roleEnv(c) + (if std.objectHas(c.roleEnv, role) then c.roleEnv[role] else []),
           ports: x.ports + [{ name: 'int-role', containerPort: $.ports[role] }],
           // Core health endpoints on the role's private listener (lib/server/serve/role-health.js).
           // Startup budget 5 s x 180 = 900 s (Compose start_period) for a long tenant warm.

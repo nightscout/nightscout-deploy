@@ -1,0 +1,116 @@
+// PostgreSQL connection budget and planned memory (decisions pg-connection-budget,
+// pg-connection-pooler-allowed, stateful-evaluator-resident-window, requests-typical-scheduler-decides).
+//
+//   budget          = Σ over pods (pool max per role) + transient + superuser + clinical reserve
+//   max_connections = budget (never below the PostgreSQL 140/40 default), or an explicit
+//                     postgresMaxConnections that must hold the budget (an over-budget pool set refuses)
+//   postgres memory request = typical + perConnectionMiB × (max_connections − 140)
+//   evaluator memory request = baseMiB + perResidentMiB × ceil(tenantCount / K_evaluator),
+//                     NS_EVALUATOR_RESIDENT_MAX = ceil(tenantCount / K_evaluator) (requests only, no limit)
+//
+// Per-process pools, read at core 80972e7ae (labels: read-derived; the harness reads connections
+// in use back against these terms). Every pool is per process, never per tenant; `max` is a
+// ceiling (node-pg opens on demand and closes idle clients after 10 s).
+//   api:          data NS_POOL_API_MAX (preview-api.js:70) + display settings NS_POOL_API_MAX
+//                 (effective-postgres.js:55) + secrets 4 (secrets/postgres.js:43) + registry 2
+//                 (registry-tenants.js:39) + socket alarm 4 (realtime/private-api.js:106)
+//                 + operation NS_POOL_OPERATION_MAX (serve/index.js:143)
+//   realtime:     data NS_POOL_REALTIME_MAX (preview-realtime.js:114) + read 2 (postgres-connection.js:95,
+//                 NS_POOL_READ_MAX not honoured) + registry 2 (registry-tenant-set.js:118) + owner 1
+//                 (preview-realtime.js:122) + operation
+//   evaluator:    data NS_POOL_EVALUATOR_MAX (evaluator-preview.js:155) + read NS_POOL_READ_MAX
+//                 + registry 2 (evaluator-preview.js:120, demand mode) + outbox 2 + suppression 2
+//                 (deployment-settings.js:193-194) + operation
+//   tenant-admin: 40 with every owner option (owner-preview.js), operation pool included; fixed literals
+//   admin:        15 (ownership 4, registry 1, sessions 4, provisioning 4, connector sources 2); fixed
+//   transient:    single Clients for health and readiness, about 3 at once per serving Pod (role-health.js:43,
+//                 role-readiness.js:37)
+{
+  defaults:: {
+    pools: { api: 4, realtime: 4, evaluator: 4, operation: 8, read: 2 },
+    // Fixed per-process pools (source literals at core 80972e7ae).
+    fixed: { api: 10, realtime: 5, evaluator: 6, 'tenant-admin': 40, admin: 15 },
+    transientPerPod: 3,
+    superuserReserved: 3,
+    clinicalReserved: 40,
+    postgresDefault: 140,
+    // Read-derived: private memory of an idle backend; refit from a run.
+    postgresPerConnectionMiB: 2,
+    // Measured at the 2-day fixture (execution log 2026-11-21, P1); refit on E1.
+    evaluatorMemory: { baseMiB: 195, perResidentMiB: 1.85 },
+  },
+
+  local integer(x) = std.isNumber(x) && x == std.floor(x),
+
+  // c: the merged binding inputs.
+  plan(c)::
+    local d = $.defaults;
+    local p = std.mergePatch(d.pools, std.get(c, 'pools', {}));
+    assert std.length([r for r in std.objectFields(p) if !std.member(std.objectFields(d.pools), r)]) == 0 : 'pools names an unknown pool';
+    assert std.length([r for r in std.objectFields(p) if !(integer(p[r]) && p[r] >= 1 && p[r] <= 1000)]) == 0 : 'pools: each pool max must be an integer 1..1000';
+    assert p.evaluator >= 2 : 'pools.evaluator must be at least 2 (core refuses below 2)';
+    local em = std.mergePatch(d.evaluatorMemory, std.get(c, 'evaluatorMemory', {}));
+    assert std.isNumber(em.baseMiB) && em.baseMiB > 0 && std.isNumber(em.perResidentMiB) && em.perResidentMiB >= 0 : 'evaluatorMemory needs a positive baseMiB and a non-negative perResidentMiB';
+    local perConn = std.get(c, 'postgresPerConnectionMiB', d.postgresPerConnectionMiB);
+    assert std.isNumber(perConn) && perConn >= 0 : 'postgresPerConnectionMiB must be non-negative';
+    local api = c.apiReplicas, kr = c.slices.realtime, ke = c.slices.evaluator;
+    local perPod = {
+      api: 2 * p.api + d.fixed.api + p.operation,
+      realtime: p.realtime + d.fixed.realtime + p.operation,
+      evaluator: p.evaluator + p.read + d.fixed.evaluator + p.operation,
+      'tenant-admin': d.fixed['tenant-admin'],
+      admin: d.fixed.admin,
+    };
+    local pods = { api: api, realtime: kr, evaluator: ke, 'tenant-admin': 1, admin: 1 };
+    local pools = std.foldl(function(s, r) s + pods[r] * perPod[r], std.objectFields(pods), 0);
+    local podCount = std.foldl(function(s, r) s + pods[r], std.objectFields(pods), 0);
+    local transient = d.transientPerPod * podCount;
+    local budget = pools + transient + d.superuserReserved + d.clinicalReserved;
+    local explicit = std.get(c, 'postgresMaxConnections', null);
+    assert explicit == null || (integer(explicit) && explicit >= 44 && explicit <= 10000) :
+      'postgresMaxConnections must be null or an integer from 44 to 10000';
+    local maxConnections = if explicit == null then std.max(d.postgresDefault, budget) else explicit;
+    assert explicit == null || maxConnections >= budget :
+      'postgresMaxConnections ' + maxConnections + ' is below the connection budget ' + budget +
+      ' (pools ' + pools + ' + transient ' + transient + ' + superuser ' + d.superuserReserved + ' + clinical reserve ' + d.clinicalReserved + ')';
+    local owned = std.ceil(c.tenantCount / ke);
+    {
+      pools: p,
+      perPod: perPod,
+      pods: pods,
+      poolConnections: pools,
+      transient: transient,
+      superuserReserved: d.superuserReserved,
+      clinicalReserved: d.clinicalReserved,
+      budget: budget,
+      maxConnections: maxConnections,
+      formula: 'sum(pods x pool max per role) + transientPerPod x pods + superuser + clinical reserve <= max_connections',
+      postgresMemoryMiB: perConn * std.max(0, maxConnections - d.postgresDefault),
+      postgresPerConnectionMiB: perConn,
+      evaluator: {
+        ownedPerSlice: owned,
+        residentMax: owned,
+        baseMiB: em.baseMiB,
+        perResidentMiB: em.perResidentMiB,
+        memoryRequestMiB: std.ceil(em.baseMiB + em.perResidentMiB * owned),
+      },
+      // Environment each role process receives (NS_POOL_<ROLE>_MAX; core pool-config.js).
+      env(role)::
+        [{ name: 'NS_POOL_OPERATION_MAX', value: std.toString(p.operation) }] +
+        (if role == 'api' then [{ name: 'NS_POOL_API_MAX', value: std.toString(p.api) }]
+         else if role == 'realtime' then [{ name: 'NS_POOL_REALTIME_MAX', value: std.toString(p.realtime) }]
+         else if role == 'evaluator' then [
+           { name: 'NS_POOL_EVALUATOR_MAX', value: std.toString(p.evaluator) },
+           { name: 'NS_POOL_READ_MAX', value: std.toString(p.read) },
+           { name: 'NS_EVALUATOR_RESIDENT_MAX', value: std.toString(owned) },
+         ] else []),
+    },
+
+  // Quantity helpers: MiB numbers to a Kubernetes quantity, and a typical quantity to MiB.
+  mib(q)::
+    local s = std.toString(q);
+    if std.endsWith(s, 'Gi') then std.parseInt(std.substr(s, 0, std.length(s) - 2)) * 1024
+    else if std.endsWith(s, 'Mi') then std.parseInt(std.substr(s, 0, std.length(s) - 2))
+    else error 'memory quantity must be Mi or Gi: ' + s,
+  quantity(m):: std.toString(std.ceil(m)) + 'Mi',
+}

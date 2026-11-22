@@ -128,11 +128,21 @@ termination or fencing.
 
 ## Inputs and storage
 
-Set the optional integer `postgresMaxConnections` in the binding inputs to change the PostgreSQL
-connection limit for a run. The default is 140. PostgreSQL reserves 40 slots for clinical roles
-and three for superusers, so the allowed range is 44 through 10,000. For example,
-`{"postgresMaxConnections": 240}` allows 197 ordinary connections. The PostgreSQL StatefulSet
-arguments record the selected value. In a running database, read it with `SHOW max_connections`.
+PostgreSQL `max_connections` is rendered from the connection budget
+(`lib/ns/connection-budget.libsonnet`): the pool maximum of every role process times its Pods, about
+three transient health and readiness clients per serving Pod, the three superuser slots and the 40
+clinical slots (`reserved_connections`). It is never below 140. Pool sizes are inputs
+(`{"pools": {"api": 4, "realtime": 4, "evaluator": 4, "operation": 8, "read": 2}}`, the core
+defaults) and reach each role as `NS_POOL_<ROLE>_MAX`. With 2 api replicas and evaluator and realtime
+K = 1, 2, 4 and 8 the budget is 205, 248, 334 and 506. An explicit `postgresMaxConnections` (44 to
+10,000) must hold the budget, or the render refuses. The PostgreSQL memory request adds 2 MiB per
+connection above 140 to its typical request.
+
+The evaluator memory request is `baseMiB + perResidentMiB x ceil(tenantCount / K)` (defaults 195 and
+1.85, fitted at the 2-day fixture; refit with `{"evaluatorMemory": {...}}`), with no limit, and
+`NS_EVALUATOR_RESIDENT_MAX` is set to the tenants each slice owns. A `roleEnv.evaluator` row of the
+same name replaces the rendered value. Read the live limit with `SHOW max_connections` and the
+planned terms in the render inventory (`connectionBudget`).
 
 All init containers, Vault sidecars and serving/provisioning containers have explicit CPU, memory
 and ephemeral-storage requests. The namespace quota allows two copies of each
