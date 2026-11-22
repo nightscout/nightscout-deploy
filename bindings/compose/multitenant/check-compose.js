@@ -69,9 +69,17 @@ function checkClinicalReserve (config) {
   assert(Number.isSafeInteger(max) && max - require('./clinical-isolation').SUPERUSER_RESERVED - reserved >= 1, 'PostgreSQL reserved_connections must leave general slots');
   return true;
 }
+// Parallel query and hash joins allocate dynamic shared memory in /dev/shm; the container default
+// (64 MB) refuses them ("could not resize shared memory segment"). Same size as the Kubernetes binding.
+const POSTGRES_SHM_BYTES = 1024 * 1024 * 1024;
+function checkSharedMemory (config) {
+  assert(Number(config.services.postgres.shm_size) === POSTGRES_SHM_BYTES, 'PostgreSQL must have a 1g /dev/shm');
+  return true;
+}
 function check (config) {
   checkNetworks(config);
   checkClinicalReserve(config);
+  checkSharedMemory(config);
   const runtime = ['api', 'realtime', 'evaluator', 'tenant-admin', 'ui', 'nginx', 'admin', ...Object.keys(config.services).filter(name => /^(?:api|evaluator)-\d+$/.test(name))];
   for (const name of runtime) {
     const service = config.services[name];
@@ -113,6 +121,9 @@ if (require.main === module) {
     const unreserved = structuredClone(config);
     unreserved.services.postgres.command = unreserved.services.postgres.command.filter(item => !String(item).startsWith('reserved_connections='));
     assert.throws(() => check(unreserved), /reserve connection slots for clinical roles/, 'Clinical connection reserve control must fail');
+    const smallShm = structuredClone(config);
+    delete smallShm.services.postgres.shm_size;
+    assert.throws(() => check(smallShm), /PostgreSQL must have a 1g \/dev\/shm/, 'Shared-memory control must fail');
     const broken = structuredClone(config);
     broken.services.ui.volumes.push({type: 'bind', source: '/tmp/state/ops', target: '/state'});
     assert.throws(() => check(broken), /privileged directory/, 'Credential-exposure control must fail');
@@ -138,10 +149,10 @@ if (require.main === module) {
     assert.throws(() => checkEdgeResolve(nginx.replace('server api:1337 resolve;', 'server api:1337;')), /upstream api must re-resolve/, 'Edge re-resolve control must fail');
     assert.throws(() => checkEdgeSame(shared, nginx.replace("proxy_set_header Cookie '';", '')), /must equal nginx.conf/, 'Edge drift control must fail');
     check(config);
-    process.stdout.write('Compose boundaries, start order, edge re-resolution and edge equivalence pass; credential, private-listener, ingress-network, start-order, edge-gating, re-resolve, edge-drift and clinical-reserve controls rejected; restored configuration passes. Runtime UNMEASURED.\n');
+    process.stdout.write('Compose boundaries, start order, edge re-resolution and edge equivalence pass; credential, private-listener, ingress-network, start-order, edge-gating, re-resolve, edge-drift, clinical-reserve and shared-memory controls rejected; restored configuration passes. Runtime UNMEASURED.\n');
   } catch (error) {
     // Authored assertion messages name only a service/property, never values.
     process.stderr.write('Compose boundary check failed: ' + (error.code === 'ERR_ASSERTION' ? error.message : error.code || 'configuration expansion') + '\n'); process.exitCode = 1;
   }
 }
-module.exports = {check, checkClinicalReserve, checkNetworks, checkOrder, checkEdgeResolve, checkEdgeSame};
+module.exports = {check, checkClinicalReserve, checkSharedMemory, checkNetworks, checkOrder, checkEdgeResolve, checkEdgeSame};

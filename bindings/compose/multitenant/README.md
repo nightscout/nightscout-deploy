@@ -411,8 +411,8 @@ native test is UNMEASURED, not deployment acceptance.
 ## Fixed native evaluator processes
 
 Set `NS_EVALUATOR_WORKERS` during preparation
-to opt in to a fixed roster of 1–8 processes. Leaving it unset keeps the
-standalone evaluator. This example starts two evaluator processes and provisions two synthetic tenants.
+to opt in to a fixed roster of 1–32 processes. Leaving it unset keeps the
+standalone evaluator. `NS_REALTIME_WORKERS` (1–8) is selected independently; the two counts need not be equal. This example starts two evaluator processes and provisions two synthetic tenants.
 
 ```bash
 NS_EVALUATOR_WORKERS=2 ./demo.sh prepare

@@ -8,6 +8,12 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 const base = __dirname;
+// Evaluator K (1..32) and realtime K (1..8) are selected independently, as in the Kubernetes
+// binding (slices.evaluator, slices.realtime). Each role reads only its own count.
+function roles (source = process.env) {
+  const selectedRealtime = require('./realtime-workers').selection(source), selectedEvaluator = require('./evaluator-workers').selection(source);
+  return { realtime: selectedRealtime, evaluator: selectedEvaluator };
+}
 function prepare (args) {
   const project = require('./project');
   const options = {project:project.DEFAULT, bind: '127.0.0.1', port: '18080', state: path.join(base, '.state')};
@@ -33,10 +39,9 @@ function prepare (args) {
   if (fs.existsSync(state) || fs.existsSync(path.join(base, '.env'))) throw new Error('State or deployment .env already exists; reuse it or choose a clean deployment checkout');
   const replicas = require('./replicas');
   const apiReplicas = replicas.count();
-  const realtime = require('./realtime-workers'), selectedRealtime = realtime.selection();
+  const realtime = require('./realtime-workers'), evaluator = require('./evaluator-workers');
+  const { realtime: selectedRealtime, evaluator: selectedEvaluator } = roles();
   const diagnostics = require('./diagnostics').selection();
-  const evaluator = require('./evaluator-workers'), selectedEvaluator = evaluator.selection();
-  if (selectedRealtime && selectedEvaluator && selectedRealtime.workers !== selectedEvaluator.workers) throw new TypeError('Static role counts must agree');
   require('./edge').policy();
   const isolation = require('./clinical-isolation');
   const clinicalIsolation = isolation.selection(process.env, { budget: isolation.connectionBudget({ apiReplicas,
@@ -91,4 +96,4 @@ if (require.main === module) {
     process.exitCode = 1;
   }
 }
-module.exports = {prepare};
+module.exports = {prepare, roles};

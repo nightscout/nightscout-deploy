@@ -25,3 +25,27 @@ test('selected evaluator processes take their ordinal from their hostname and K 
     assert(text.includes(row.socket));
   }
 });
+
+test('evaluator and realtime counts are selected independently; every sender gets both rosters', () => {
+  const { roles } = require('./prepare');
+  for (const [ev, rt] of [['9', '2'], ['32', '8'], ['2', '4'], ['20', '1']]) {
+    const selected = roles({ NS_EVALUATOR_WORKERS: ev, NS_REALTIME_WORKERS: rt });
+    assert.deepEqual([selected.evaluator.workers, selected.realtime.workers], [Number(ev), Number(rt)]);
+    const overlay = JSON.parse(require('./writer-driven').compose(2, selected.evaluator, selected.realtime)).services;
+    const evaluators = workers.services(selected.evaluator), reals = require('./realtime-workers').services(selected.realtime).filter(name => name !== 'socket-edge');
+    assert.deepEqual([evaluators.length, reals.length], [Number(ev), Number(rt)]);
+    for (const name of ['api', 'api-2', 'tenant-admin', ...evaluators, ...reals]) {
+      assert.equal(overlay[name].environment.NS_EVALUATOR_SLICES, ev, name);
+      assert.equal(overlay[name].environment.NS_REALTIME_SLICES, rt, name);
+    }
+    for (const [ordinal, name] of evaluators.entries()) {
+      assert.equal(overlay[name].hostname, 'evaluator-' + ordinal);
+      assert.deepEqual(JSON.parse(overlay[name].environment.NS_REALTIME_SLICE_PEERS), reals.map((_, i) => ({ url: 'http://realtime-' + i + '.realtime-peers:19003/' })));
+    }
+    for (const [ordinal, name] of reals.entries()) assert.equal(overlay[name].hostname, 'realtime-' + ordinal);
+  }
+  assert.deepEqual(roles({}), { realtime: null, evaluator: null });
+  // Each role keeps its own bound.
+  assert.throws(() => roles({ NS_EVALUATOR_WORKERS: '9', NS_REALTIME_WORKERS: '9' }), /NS_REALTIME_WORKERS must be explicit 1..8/);
+  assert.throws(() => roles({ NS_EVALUATOR_WORKERS: '33', NS_REALTIME_WORKERS: '8' }), /NS_EVALUATOR_WORKERS must be explicit 1..32/);
+});
