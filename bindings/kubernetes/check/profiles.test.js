@@ -1,6 +1,16 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),crypto=require('node:crypto'),os=require('node:os'),path=require('node:path'),{spawnSync}=require('node:child_process');
 const root=path.resolve(__dirname,'..'),inputs=JSON.parse(fs.readFileSync(path.join(root,'environments/synthetic/inputs.json')));
+function evalPlan(c){
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ns-k8s-plan-'));
+  try{
+    fs.mkdirSync(path.join(dir,'environments/test'),{recursive:true});
+    fs.writeFileSync(path.join(dir,'jsonnetfile.json'),'{"version":1,"dependencies":[],"legacyImports":true}');
+    fs.copyFileSync(path.join(root,'environments/synthetic/spec.json'),path.join(dir,'environments/test/spec.json'));
+    fs.writeFileSync(path.join(dir,'environments/test/main.jsonnet'),`local p=(import ${JSON.stringify(path.join(root,'lib/ns/connection-budget.libsonnet'))}).plan(${JSON.stringify(c)});p.evaluator+{command:p.evaluatorCommand}`);
+    const r=spawnSync('tk',['eval','environments/test'],{cwd:dir,encoding:'utf8'});assert.equal(r.status,0,r.stderr);return JSON.parse(r.stdout);
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+}
 function render(overrides){
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ns-k8s-profile-'));
   try{
@@ -128,8 +138,10 @@ test('evaluator memory request and resident limit bound the busiest slice, not t
     assert.deepEqual(envOf(evaluator, 'NS_EVALUATOR_RESIDENT_MAX'), [String(bound)]);
     assert.ok(bound >= Math.ceil(mean), 'never below the mean');
     if (k === 1) assert.equal(bound, tenants, 'K=1 owns every tenant');
-    assert.equal(evaluator.resources.requests.memory, Math.ceil(195 + 1.85 * bound) + 'Mi');
+    const request = Math.ceil(1745 + 2.96 * bound);
+    assert.equal(evaluator.resources.requests.memory, request + 'Mi');
     assert.equal(evaluator.resources.limits, undefined, 'requests only, no limit');
+    assert.deepEqual(evaluator.command, ['node', '--max-old-space-size=' + Math.ceil(1.5 * request), 'deploy/multitenant/entrypoint.js', 'evaluator']);
     // Occupancy: hash-owned rosters (any ids) fit the rendered limit.
     for (const label of ['a', 'b', 'c']) assert.equal(shortfall(r, roster(tenants, label), k), 0, `${tenants}/${k}/${label}`);
   }
@@ -146,13 +158,63 @@ test('evaluator memory request and resident limit bound the busiest slice, not t
   const refit = render({ tenantCount: 10000, slices: { evaluator: 8, realtime: 8 }, evaluatorMemory: { baseMiB: 210, perResidentMiB: 1.2 } });
   assert.equal(refit.status, 0, refit.error);
   assert.equal(roleContainer(refit.value, 'evaluator').resources.requests.memory, Math.ceil(210 + 1.2 * 1399) + 'Mi');
+  assert.equal(heapOf(roleContainer(refit.value, 'evaluator')), Math.ceil(1.5 * Math.ceil(210 + 1.2 * 1399)), 'the heap ceiling follows a refit request');
   // An operator roleEnv value replaces the rendered resident limit, never duplicates it.
   const pinned = render({ tenantCount: 1000, roleEnv: { evaluator: [{ name: 'NS_EVALUATOR_RESIDENT_MAX', value: '256' }] } });
   assert.deepEqual(envOf(roleContainer(pinned.value, 'evaluator'), 'NS_EVALUATOR_RESIDENT_MAX'), ['256']);
-  for (const evaluatorMemory of [{ baseMiB: 0 }, { perResidentMiB: -1 }]) {
+  for (const evaluatorMemory of [{ baseMiB: 0 }, { perResidentMiB: -1 }, { heapHeadroom: 0.9 }, { heapHeadroom: 5 }]) {
     const bad = render({ evaluatorMemory });
     assert.notEqual(bad.status, 0);
     assert.match(bad.error, /evaluatorMemory/);
+  }
+});
+
+const heapOf = container => {
+  const flags = container.command.filter(arg => arg.startsWith('--max-old-space-size='));
+  assert.equal(flags.length, 1, 'one heap flag');
+  return Number(flags[0].split('=')[1]);
+};
+
+// Discovery 2026-11-21/22: on 1,000 v2-history tenants at K=1 the evaluator ended at V8's default
+// heap ceiling (Mark-Compact 4,049.5 -> 4,022.6 MB, "JavaScript heap out of memory", exit 139) with no
+// --max-old-space-size and a 2,045 Mi request. The planned ceiling must sit above the request.
+const DEFAULT_V8_HEAP_MB = 4050;
+test('evaluator V8 heap ceiling: 10k tenants at K=8 sits above the request and the default ceiling', () => {
+  const r = render({ tenantCount: 10000, apiReplicas: 2, slices: { evaluator: 8, realtime: 8 } });
+  assert.equal(r.status, 0, r.error);
+  const evaluator = roleContainer(r.value, 'evaluator');
+  assert.equal(residentOf(r), 1399);
+  assert.equal(evaluator.resources.requests.memory, '5887Mi', 'ceil(1745 + 2.96 x 1399)');
+  assert.equal(heapOf(evaluator), 8831, 'ceil(1.5 x 5887)');
+  assert.deepEqual(evaluator.command, ['node', '--max-old-space-size=8831', 'deploy/multitenant/entrypoint.js', 'evaluator'], 'a node flag, entrypoint run directly');
+  assert.ok(heapOf(evaluator) > mib(evaluator.resources.requests.memory) && heapOf(evaluator) > DEFAULT_V8_HEAP_MB);
+  assert.equal(evaluator.resources.limits, undefined, 'requests only, no limit');
+  assert.ok(!envOf(evaluator, 'NODE_OPTIONS').length, 'no NODE_OPTIONS');
+  // Every measured v2 peak (window levers on) is at or below the request model.
+  for (const [residents, rssMiB] of [[223, 1769.7], [252, 1843.6], [254, 1446.4], [271, 1527.3], [475, 3148.6], [525, 3219.8], [968, 4112.0], [1000, 4263.5], [1032, 4173.3]]) {
+    assert.ok(Math.ceil(1745 + 2.96 * residents) >= rssMiB, residents + ' residents: ' + rssMiB + ' MiB');
+  }
+  // Red control: the previous model (195 + 1.85 x residents) plans below the measured 1,000-resident peak.
+  assert.ok(195 + 1.85 * 1000 < 4263.5);
+});
+
+test('evaluator V8 heap ceiling: 10k tenants at K=20 is refused by the evaluator K bound; its plan is still defined', () => {
+  const r = render({ tenantCount: 10000, apiReplicas: 2, slices: { evaluator: 20, realtime: 8 } });
+  assert.notEqual(r.status, 0);
+  assert.match(r.error, /slices.evaluator must be an integer 1..8/);
+  // The memory plan alone (connection-budget.libsonnet), as a K=20 render would use it once the bound allows it.
+  const plan = evalPlan({ tenantCount: 10000, apiReplicas: 2, slices: { evaluator: 20, realtime: 8 } });
+  assert.equal(plan.residentMax, 599);
+  assert.equal(plan.memoryRequestMiB, 3519, 'ceil(1745 + 2.96 x 599)');
+  assert.equal(plan.heapMiB, 5279, 'ceil(1.5 x 3519)');
+  assert.deepEqual(plan.command, ['node', '--max-old-space-size=5279', 'deploy/multitenant/entrypoint.js', 'evaluator']);
+});
+
+test('roleEnv cannot set NODE_OPTIONS or the other names the Compose role environment refuses', () => {
+  for (const name of ['NODE_OPTIONS', 'NODE_PATH', 'PATH', 'LD_PRELOAD', 'NS_ENV_FILE']) {
+    const r = render({ roleEnv: { evaluator: [{ name, value: '--max-old-space-size=1' }] } });
+    assert.notEqual(r.status, 0, name);
+    assert.match(r.error, /roleEnv may not set NODE_OPTIONS/);
   }
 });
 
@@ -206,6 +268,7 @@ test('only the lab client argument changes between ten and ten thousand tenants'
     const evaluator = roleContainer(manifests, 'evaluator');
     evaluator.env.find(row => row.name === 'NS_EVALUATOR_RESIDENT_MAX').value = '';
     evaluator.resources.requests.memory = '';
+    evaluator.command = evaluator.command.filter(arg => !arg.startsWith('--max-old-space-size='));
     // The namespace quota sums the requests, so its memory total moves with the evaluator request.
     for (const object of Object.values(manifests.budget)) if (object?.spec?.hard?.['requests.memory']) object.spec.hard['requests.memory'] = '';
     assert.ok(!manifests.verification, 'no verification Job');

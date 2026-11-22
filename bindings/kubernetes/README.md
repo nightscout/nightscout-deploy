@@ -138,8 +138,27 @@ K = 1, 2, 4 and 8 the budget is 205, 248, 334 and 506. An explicit `postgresMaxC
 10,000) must hold the budget, or the render refuses. The PostgreSQL memory request adds 2 MiB per
 connection above 140 to its typical request.
 
-The evaluator memory request is `baseMiB + perResidentMiB x residentMax` (defaults 195 and 1.85,
-fitted at the 2-day fixture; refit with `{"evaluatorMemory": {...}}`), with no limit.
+The evaluator memory request is `baseMiB + perResidentMiB x residentMax`, with no limit. The
+defaults, 1745 and 2.96, are the upper envelope of the measured evaluator resident-set peaks on the
+v2 client-model history with the window levers on (17 evaluator Pods at 223 to 1,032 residents,
+plannable-scale discovery 2026-11-21/22): least squares gives `1110 + 2.961 x residents` MiB, and
+the intercept is raised by the largest residual (632 MiB) so that every measured peak is at or below
+the line. The model overstates small deployments (a 16-tenant smoke peaked at 490 MiB) and its slope
+is a floor: the 1,000-resident peaks sat at V8's default heap ceiling. Refit with
+`{"evaluatorMemory": {"baseMiB": ..., "perResidentMiB": ...}}`.
+
+The same plan sets the evaluator's V8 heap ceiling: the evaluator command is
+`node --max-old-space-size=<heapMiB> deploy/multitenant/entrypoint.js evaluator` with
+`heapMiB = ceil(heapHeadroom x memory request)` (`evaluatorMemory.heapHeadroom`, default 1.5, 1 to
+4). Without the flag V8's default old-space limit, about 4 GB on the 64-bit Node 24 image, ends the
+process ("JavaScript heap out of memory", exit 139) below a larger request; that was measured on
+1,000 v2-history tenants at K=1 with the window levers off. The flag is in the command, never in
+`NODE_OPTIONS`: like the Compose private role environment, `roleEnv` refuses `NODE_OPTIONS`,
+`NODE_PATH`, `PATH`, `LD_PRELOAD` and `NS_ENV_FILE`. An authored evaluator request above the heap
+ceiling fails the `evaluator-statefulset` check; raise the model or the headroom instead. At 10,000
+tenants and K=8 the render plans 1,399 residents, a 5,887 MiB request and an 8,831 MiB heap ceiling
+per evaluator. The ceiling is not a container limit: an evaluator that grows towards it uses memory
+above its request.
 `NS_EVALUATOR_RESIDENT_MAX` (`residentMax`) bounds the busiest slice, not the mean: tenant ids are
 unknown at render time and ownership is a hash, so a slice owns `Binomial(tenantCount, 1/K)` tenants.
 `residentMax = min(tenantCount, ceil(mean + z x sqrt(mean x (1 - 1/K))))` with `mean = tenantCount / K`

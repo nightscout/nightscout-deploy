@@ -7,6 +7,10 @@
 //   postgres memory request = typical + perConnectionMiB × (max_connections − 140)
 //   evaluator memory request = baseMiB + perResidentMiB × residentMax,
 //                     NS_EVALUATOR_RESIDENT_MAX = residentMax (requests only, no limit)
+//   evaluator V8 heap ceiling = ceil(heapHeadroom × memory request), passed as the node flag
+//                     --max-old-space-size (MiB) in the evaluator command. Without it V8's default
+//                     old-space limit (about 4 GB on the 64-bit Node 24 image) ends the process
+//                     ("JavaScript heap out of memory", exit 139) below the planned request.
 //   residentMax     = min(tenantCount, ceil(mean + z × sqrt(mean × (1 − 1/K)))), mean = tenantCount / K,
 //                     z = residentHeadroomZ (default 4.5). Ownership is sha256-modulo-v1 over tenant ids
 //                     unknown at render time, so the busiest slice is Binomial(tenantCount, 1/K) above the
@@ -42,8 +46,12 @@
     postgresDefault: 140,
     // Read-derived: private memory of an idle backend; refit from a run.
     postgresPerConnectionMiB: 2,
-    // Measured at the 2-day fixture (execution log 2026-11-21, P1); refit on E1.
-    evaluatorMemory: { baseMiB: 195, perResidentMiB: 1.85 },
+    // Upper envelope of the measured evaluator resident-set peaks on the v2 client-model history
+    // with the window levers on (plannable-scale discovery 2026-11-21/22, 17 evaluator Pods at
+    // 223..1,032 residents): least squares 1,109.9 + 2.961 x residents MiB (R^2 0.90), intercept
+    // raised by the largest residual (632.4 MiB, K=2 at 475) so every measured peak is at or below
+    // the line. The 1,000-resident peaks sat at V8's default heap ceiling, so the slope is a floor.
+    evaluatorMemory: { baseMiB: 1745, perResidentMiB: 2.96, heapHeadroom: 1.5 },
     residentHeadroomZ: 4.5,
   },
 
@@ -58,6 +66,7 @@
     assert p.evaluator >= 2 : 'pools.evaluator must be at least 2 (core refuses below 2)';
     local em = std.mergePatch(d.evaluatorMemory, std.get(c, 'evaluatorMemory', {}));
     assert std.isNumber(em.baseMiB) && em.baseMiB > 0 && std.isNumber(em.perResidentMiB) && em.perResidentMiB >= 0 : 'evaluatorMemory needs a positive baseMiB and a non-negative perResidentMiB';
+    assert std.isNumber(em.heapHeadroom) && em.heapHeadroom >= 1 && em.heapHeadroom <= 4 : 'evaluatorMemory.heapHeadroom must be a number from 1 to 4 (the V8 heap ceiling is never below the memory request)';
     local perConn = std.get(c, 'postgresPerConnectionMiB', d.postgresPerConnectionMiB);
     assert std.isNumber(perConn) && perConn >= 0 : 'postgresPerConnectionMiB must be non-negative';
     local api = c.apiReplicas, kr = c.slices.realtime, ke = c.slices.evaluator;
@@ -85,6 +94,8 @@
     local mean = c.tenantCount / ke;
     local owned = std.ceil(mean);
     local residentMax = std.min(c.tenantCount, std.ceil(mean + z * std.sqrt(mean * (1 - 1 / ke))));
+    local memoryRequestMiB = std.ceil(em.baseMiB + em.perResidentMiB * residentMax);
+    local heapMiB = std.ceil(em.heapHeadroom * memoryRequestMiB);
     {
       pools: p,
       perPod: perPod,
@@ -104,8 +115,13 @@
         residentHeadroomZ: z,
         baseMiB: em.baseMiB,
         perResidentMiB: em.perResidentMiB,
-        memoryRequestMiB: std.ceil(em.baseMiB + em.perResidentMiB * residentMax),
+        memoryRequestMiB: memoryRequestMiB,
+        heapHeadroom: em.heapHeadroom,
+        heapMiB: heapMiB,
       },
+      // The evaluator command: the V8 heap ceiling is a node flag, never NODE_OPTIONS (the private
+      // role environment refuses NODE_OPTIONS in both bindings).
+      evaluatorCommand: ['node', '--max-old-space-size=' + std.toString(heapMiB), 'deploy/multitenant/entrypoint.js', 'evaluator'],
       // Environment each role process receives (NS_POOL_<ROLE>_MAX; core pool-config.js).
       env(role)::
         [{ name: 'NS_POOL_OPERATION_MAX', value: std.toString(p.operation) }] +

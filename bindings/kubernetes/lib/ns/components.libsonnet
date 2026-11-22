@@ -22,6 +22,10 @@
     local k = c.slices.realtime;
     local e = c.slices.evaluator;
     assert std.length([r for r in std.objectFields(c.roleEnv) if !std.member(std.objectFields($.ports), r)]) == 0 : 'roleEnv names an unknown role';
+    // The Compose private role environment refuses these names (service-environment.js); so does this
+    // binding. The evaluator heap ceiling is a node flag in its command (connection-budget.libsonnet).
+    local refusedEnv = ['NODE_OPTIONS', 'NODE_PATH', 'PATH', 'LD_PRELOAD', 'NS_ENV_FILE'];
+    assert std.length([r for r in std.objectFields(c.roleEnv) if std.length([y for y in c.roleEnv[r] if std.member(refusedEnv, y.name)]) > 0]) == 0 : 'roleEnv may not set NODE_OPTIONS, NODE_PATH, PATH, LD_PRELOAD or NS_ENV_FILE';
     assert std.isNumber(e) && e == std.floor(e) && e >= 1 && e <= 8 : 'slices.evaluator must be an integer 1..8';
     assert std.isNumber(k) && k == std.floor(k) && k >= 1 && k <= 8 : 'slices.realtime must be an integer 1..8';
     local label(role) = { 'app.kubernetes.io/name': 'nightscout', 'app.kubernetes.io/part-of': 'nightscout-multitenant', 'app.kubernetes.io/component': role };
@@ -68,6 +72,7 @@
         containers: [x + {
           env: x.env + env + targets(role) + sliceEnv(role) + [x for x in plan.env(role) if !std.member([y.name for y in (if std.objectHas(c.roleEnv, role) then c.roleEnv[role] else [])], x.name)] + lab.roleEnv(c) + (if std.objectHas(c.roleEnv, role) then c.roleEnv[role] else []),
           ports: x.ports + [{ name: 'int-role', containerPort: $.ports[role] }],
+        } + (if role == 'evaluator' then { command: plan.evaluatorCommand } else {}) + {
           // Core health endpoints on the role's private listener (lib/server/serve/role-health.js).
           // Startup budget 5 s x 180 = 900 s (Compose start_period) for a long tenant warm.
           // tenant-admin has its own boot checks and no serving-role isolation catalogue.

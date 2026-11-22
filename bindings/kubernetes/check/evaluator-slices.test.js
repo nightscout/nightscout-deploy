@@ -33,7 +33,7 @@ test('evaluator K=1: one Pod, entrypoint run directly, headless intake, explicit
   assert.equal(JSON.stringify(one.value), JSON.stringify(base.value));
   const set = base.value.components.evaluator.statefulset, container = evaluatorOf(base.value);
   assert.equal(set.spec.replicas, 1); assert.equal(set.spec.serviceName, 'evaluator');
-  assert.deepEqual(container.command, ['node', 'deploy/multitenant/entrypoint.js', 'evaluator']);
+  assert.deepEqual(container.command, ['node', '--max-old-space-size=' + base.inventory.connectionBudget.evaluator.heapMiB, 'deploy/multitenant/entrypoint.js', 'evaluator']);
   assert.equal(env(container, 'NS_EVALUATOR_SLICES').value, '1');
   const intake = base.value.components.evaluator.intake;
   assert.equal(intake.metadata.name, 'evaluator'); assert.equal(intake.spec.clusterIP, 'None'); assert.equal(intake.spec.publishNotReadyAddresses, true);
@@ -63,7 +63,7 @@ test('evaluator K=2,3: hostname ordinal and one K; the slices cover every tenant
       const set = r.value.components.evaluator.statefulset, container = evaluatorOf(r.value);
       assert.equal(set.spec.replicas, k, 'replicas and K come from one value');
       assert.equal(env(container, 'NS_EVALUATOR_SLICES').value, String(k), 'K is one rendered environment value');
-      assert.deepEqual(container.command, ['node', 'deploy/multitenant/entrypoint.js', 'evaluator'], 'no shell shim');
+      assert.deepEqual(container.command, ['node', '--max-old-space-size=' + r.inventory.connectionBudget.evaluator.heapMiB, 'deploy/multitenant/entrypoint.js', 'evaluator'], 'no shell shim; one heap flag');
       for (const name of ['NS_PGSTREAM_EVALUATOR_SLICE', 'NS_PGSTREAM_RECEIVER_URL', 'NS_EVALUATOR_POD_INDEX', 'NS_SLICE_ORDINAL']) assert(!env(container, name), name);
       assert.equal(tenants.filter(slice.predicate(k, k)).length, 0, 'ordinal K owns nothing and is not refused');
       const owners = tenants.map(tenant => Array.from({ length: k }, (_, ordinal) => ordinal).filter(ordinal => slice.predicate(k, ordinal)(tenant)));
@@ -101,4 +101,20 @@ test('two API processes route to two private writer-driven evaluator and realtim
   assert.deepEqual(failures(), []);
   env(components.api.deployment.spec.template.spec.containers[0], 'NS_REALTIME_SLICES').value = '1';
   assert.ok(failures().some(x => x.failures.some(f => f.includes('writer target counts'))));
+});
+
+test('evaluator heap ceiling invariant: green as rendered, red without the flag or under an authored request above it', () => {
+  const r = render({ tenantCount: 10000, apiReplicas: 2, slices: { evaluator: 8, realtime: 8 } });
+  assert.equal(r.status, 0, r.error);
+  const failing = value => checks(manifests(value), r.inventory, composeDir, {}).filter(x => x.failures.length).map(x => x.failures.join('; ')).join('\n');
+  assert.equal(failing(r.value), '');
+  const container = evaluatorOf(r.value), command = container.command;
+  container.command = ['node', 'deploy/multitenant/entrypoint.js', 'evaluator'];
+  assert.match(failing(r.value), /planned V8 heap ceiling/, 'no flag: V8 default ceiling');
+  container.command = command;
+  container.resources.requests.memory = '9Gi';
+  assert.match(failing(r.value), /heap ceiling \(8831 MiB\) must be at or above its memory request \(9Gi\)/);
+  const authored = render({ tenantCount: 10000, apiReplicas: 2, slices: { evaluator: 8, realtime: 8 }, resources: { evaluator: { requests: { memory: '9Gi' } } } });
+  assert.equal(authored.status, 0, authored.error);
+  assert.match(checks(manifests(authored.value), authored.inventory, composeDir, {}).filter(x => x.failures.length).map(x => x.failures.join('; ')).join('\n'), /must be at or above its memory request \(9Gi\)/, 'raise evaluatorMemory or heapHeadroom instead');
 });

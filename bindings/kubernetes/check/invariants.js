@@ -203,7 +203,14 @@ function checks (all, inventory, composeDir, envMain) {
     const container = podSpec(w).containers.find(c => c.name === 'evaluator'), env = container.env || [];
     if (env.find(e => e.name === 'NS_EVALUATOR_SLICES')?.value !== String(k)) fail('NS_EVALUATOR_SLICES must equal slices.evaluator');
     if (env.some(e => ['NS_PGSTREAM_EVALUATOR_SLICE', 'NS_PGSTREAM_RECEIVER_URL', 'NS_SLICE_ORDINAL'].includes(e.name))) fail('the evaluator derives its slice and receiver from its hostname and K');
-    if (JSON.stringify(container.command) !== JSON.stringify(['node', 'deploy/multitenant/entrypoint.js', 'evaluator'])) fail('the evaluator runs the entrypoint directly');
+    // The entrypoint runs directly, with one node flag: the V8 heap ceiling from the memory plan.
+    const plan = inventory.connectionBudget?.evaluator || {};
+    if (JSON.stringify(container.command) !== JSON.stringify(['node', '--max-old-space-size=' + plan.heapMiB, 'deploy/multitenant/entrypoint.js', 'evaluator'])) fail('the evaluator runs the entrypoint directly with the planned V8 heap ceiling');
+    // Planned or authored, the memory request must sit below the heap ceiling, or V8 ends the process first.
+    const q = String(container.resources?.requests?.memory || ''), unit = { Mi: 1, Gi: 1024 }[q.slice(-2)];
+    const request = unit ? Number(q.slice(0, -2)) * unit : NaN;
+    if (!(Number.isInteger(plan.heapMiB) && plan.heapMiB >= plan.memoryRequestMiB && plan.heapMiB >= request)) fail('the evaluator V8 heap ceiling (' + plan.heapMiB + ' MiB) must be at or above its memory request (' + q + ')');
+    if (env.some(e => e.name === 'NODE_OPTIONS')) fail('the evaluator takes no NODE_OPTIONS');
   });
 
   run('realtime-slices', fail => {
