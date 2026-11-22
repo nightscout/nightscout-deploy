@@ -5,8 +5,10 @@ const assert = require('node:assert/strict');
 const workers = require('./evaluator-workers');
 test('opt-in evaluator processes require an explicit bounded count and allow idle registry slices', () => {
   assert.equal(workers.selection({}), null);
-  for (const raw of ['0', '9', '17', '2x', '', 2]) assert.throws(() => workers.selection({NS_EVALUATOR_WORKERS:raw}));
+  for (const raw of ['0', '33', '64', '2x', '', 2]) assert.throws(() => workers.selection({NS_EVALUATOR_WORKERS:raw}));
   assert.deepEqual(workers.services(workers.selection({NS_EVALUATOR_WORKERS:'3'})), ['evaluator','evaluator-2','evaluator-3']);
+  assert.equal(workers.MAX_WORKERS, 32);
+  for (const raw of ['9', '20', '32']) assert.equal(workers.selection({NS_EVALUATOR_WORKERS:raw}).workers, Number(raw));
 });
 
 test('selected evaluator processes take their ordinal from their hostname and K from NS_EVALUATOR_SLICES',()=>{

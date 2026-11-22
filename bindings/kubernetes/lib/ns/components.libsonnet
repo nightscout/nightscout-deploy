@@ -26,7 +26,7 @@
     // binding. The evaluator heap ceiling is a node flag in its command (connection-budget.libsonnet).
     local refusedEnv = ['NODE_OPTIONS', 'NODE_PATH', 'PATH', 'LD_PRELOAD', 'NS_ENV_FILE'];
     assert std.length([r for r in std.objectFields(c.roleEnv) if std.length([y for y in c.roleEnv[r] if std.member(refusedEnv, y.name)]) > 0]) == 0 : 'roleEnv may not set NODE_OPTIONS, NODE_PATH, PATH, LD_PRELOAD or NS_ENV_FILE';
-    assert std.isNumber(e) && e == std.floor(e) && e >= 1 && e <= 8 : 'slices.evaluator must be an integer 1..8';
+    assert std.isNumber(e) && e == std.floor(e) && e >= 1 && e <= 32 : 'slices.evaluator must be an integer 1..32';
     assert std.isNumber(k) && k == std.floor(k) && k >= 1 && k <= 8 : 'slices.realtime must be an integer 1..8';
     local label(role) = { 'app.kubernetes.io/name': 'nightscout', 'app.kubernetes.io/part-of': 'nightscout-multitenant', 'app.kubernetes.io/component': role };
     local meta(name, role) = { name: name, namespace: c.namespace, labels: label(role) };

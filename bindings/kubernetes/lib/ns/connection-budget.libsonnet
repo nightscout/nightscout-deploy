@@ -15,7 +15,8 @@
 //                     z = residentHeadroomZ (default 4.5). Ownership is sha256-modulo-v1 over tenant ids
 //                     unknown at render time, so the busiest slice is Binomial(tenantCount, 1/K) above the
 //                     mean (smoke: 53 of 50 at K=2, 30 of 25 at K=4). Chance any slice exceeds z=4.5:
-//                     <= 8e-5 for K <= 8, tenantCount >= 100 (exact binomial tail). Over the limit the
+//                     <= 8e-5 for K <= 8, tenantCount >= 100 (exact binomial tail); at 10,000 tenants
+//                     9.0e-5 for K=20 and 1.9e-4 for K=32 (union bound over slices). Over the limit the
 //                     runtime evicts and reloads (evaluator-runtime.js trimResidents); it does not refuse.
 //
 // Per-process pools, read at core 80972e7ae (labels: read-derived; the harness reads connections

@@ -309,7 +309,7 @@
         "evaluator": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 8,
+          "maximum": 32,
           "description": "Evaluator K: StatefulSet replicas and NS_EVALUATOR_SLICES; each Pod takes its ordinal from its hostname. K>1 addresses evaluator-<i>.evaluator; scripts/secrets.sh seed must then run with the same NS_EVALUATOR_WORKERS. The maximum equals evaluator-workers.js MAX_WORKERS (check/evaluator-slices.test.js)."
         }
       }

@@ -198,11 +198,23 @@ test('evaluator V8 heap ceiling: 10k tenants at K=8 sits above the request and t
   assert.ok(195 + 1.85 * 1000 < 4263.5);
 });
 
-test('evaluator V8 heap ceiling: 10k tenants at K=20 is refused by the evaluator K bound; its plan is still defined', () => {
+test('evaluator V8 heap ceiling: 10k tenants at K=20 (realtime K=8) renders its plan; K=33 is refused', () => {
   const r = render({ tenantCount: 10000, apiReplicas: 2, slices: { evaluator: 20, realtime: 8 } });
-  assert.notEqual(r.status, 0);
-  assert.match(r.error, /slices.evaluator must be an integer 1..8/);
-  // The memory plan alone (connection-budget.libsonnet), as a K=20 render would use it once the bound allows it.
+  assert.equal(r.status, 0, r.error);
+  const evaluator = roleContainer(r.value, 'evaluator');
+  assert.equal(r.value.components.evaluator.statefulset.spec.replicas, 20);
+  assert.equal(residentOf(r), 599);
+  assert.equal(evaluator.resources.requests.memory, '3519Mi', 'ceil(1745 + 2.96 x 599)');
+  assert.deepEqual(evaluator.command, ['node', '--max-old-space-size=5279', 'deploy/multitenant/entrypoint.js', 'evaluator']);
+  assert.equal(evaluator.resources.limits, undefined, 'requests only, no limit');
+  // Red control for the raised bound: K=33 is refused; realtime keeps 1..8.
+  const over = render({ tenantCount: 10000, slices: { evaluator: 33, realtime: 8 } });
+  assert.notEqual(over.status, 0);
+  assert.match(over.error, /slices.evaluator must be an integer 1..32/);
+  const realtime = render({ tenantCount: 10000, slices: { evaluator: 20, realtime: 9 } });
+  assert.notEqual(realtime.status, 0);
+  assert.match(realtime.error, /slices.realtime must be an integer 1..8/);
+  // The memory plan alone (connection-budget.libsonnet) agrees with the render.
   const plan = evalPlan({ tenantCount: 10000, apiReplicas: 2, slices: { evaluator: 20, realtime: 8 } });
   assert.equal(plan.residentMax, 599);
   assert.equal(plan.memoryRequestMiB, 3519, 'ceil(1745 + 2.96 x 599)');

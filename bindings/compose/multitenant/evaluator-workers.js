@@ -6,7 +6,9 @@
 // alias, so both platforms take one path. K=1 is the unsliced single evaluator.
 // The one evaluator K bound. The Kubernetes binding's assert and input schema, its seed script and
 // the capacity harness's progress reader are checked against it (bindings/kubernetes/check).
-const MAX_WORKERS = 8;
+// Raised from 8 to 32 for the 10,000-tenant runs; core caps a slice count at 1,024
+// (lib/pool-membership/slice.js MAX_MEMBERS at 442f5c595). Realtime keeps its own bound of 8.
+const MAX_WORKERS = 32;
 
 function selection(source = process.env) {
   const raw = source.NS_EVALUATOR_WORKERS;

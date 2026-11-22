@@ -163,7 +163,8 @@ above its request.
 unknown at render time and ownership is a hash, so a slice owns `Binomial(tenantCount, 1/K)` tenants.
 `residentMax = min(tenantCount, ceil(mean + z x sqrt(mean x (1 - 1/K))))` with `mean = tenantCount / K`
 and `z = residentHeadroomZ` (default 4.5; the chance that any slice at K <= 8 exceeds it is below
-8e-5; 3.4e-5 at 10,000 tenants). A slice over its limit evicts and reloads tenants rather than refusing them. A `roleEnv.evaluator` row of the
+8e-5; 3.4e-5 at 10,000 tenants; at 10,000 tenants it is 9.0e-5 for K=20 and 1.9e-4 for K=32, union bound
+over slices of the exact binomial tail; evaluator K is 1 to 32, realtime K 1 to 8). A slice over its limit evicts and reloads tenants rather than refusing them. A `roleEnv.evaluator` row of the
 same name replaces the rendered value. Read the live limit with `SHOW max_connections` and the
 planned terms in the render inventory (`connectionBudget`).
 
