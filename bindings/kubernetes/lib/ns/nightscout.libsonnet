@@ -43,7 +43,7 @@
     postgresMaxConnections: null,
     // Pool max per role (NS_POOL_<ROLE>_MAX), rendered into each role and counted in the budget.
     pools: {},
-    // Evaluator memory request base + per resident x ceil(tenantCount / K); refit inputs.
+    // Evaluator memory request base + per resident x residentMax (busiest-slice bound); refit inputs.
     evaluatorMemory: {},
     // Writer-driven is the only input transport; the field is kept for existing binding inputs.
     inputTransport: 'writer-driven',

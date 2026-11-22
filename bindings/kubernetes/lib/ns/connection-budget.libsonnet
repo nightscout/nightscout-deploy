@@ -5,8 +5,14 @@
 //   max_connections = budget (never below the PostgreSQL 140/40 default), or an explicit
 //                     postgresMaxConnections that must hold the budget (an over-budget pool set refuses)
 //   postgres memory request = typical + perConnectionMiB × (max_connections − 140)
-//   evaluator memory request = baseMiB + perResidentMiB × ceil(tenantCount / K_evaluator),
-//                     NS_EVALUATOR_RESIDENT_MAX = ceil(tenantCount / K_evaluator) (requests only, no limit)
+//   evaluator memory request = baseMiB + perResidentMiB × residentMax,
+//                     NS_EVALUATOR_RESIDENT_MAX = residentMax (requests only, no limit)
+//   residentMax     = min(tenantCount, ceil(mean + z × sqrt(mean × (1 − 1/K)))), mean = tenantCount / K,
+//                     z = residentHeadroomZ (default 4.5). Ownership is sha256-modulo-v1 over tenant ids
+//                     unknown at render time, so the busiest slice is Binomial(tenantCount, 1/K) above the
+//                     mean (smoke: 53 of 50 at K=2, 30 of 25 at K=4). Chance any slice exceeds z=4.5:
+//                     <= 8e-5 for K <= 8, tenantCount >= 100 (exact binomial tail). Over the limit the
+//                     runtime evicts and reloads (evaluator-runtime.js trimResidents); it does not refuse.
 //
 // Per-process pools, read at core 80972e7ae (labels: read-derived; the harness reads connections
 // in use back against these terms). Every pool is per process, never per tenant; `max` is a
@@ -38,6 +44,7 @@
     postgresPerConnectionMiB: 2,
     // Measured at the 2-day fixture (execution log 2026-11-21, P1); refit on E1.
     evaluatorMemory: { baseMiB: 195, perResidentMiB: 1.85 },
+    residentHeadroomZ: 4.5,
   },
 
   local integer(x) = std.isNumber(x) && x == std.floor(x),
@@ -73,7 +80,11 @@
     assert explicit == null || maxConnections >= budget :
       'postgresMaxConnections ' + maxConnections + ' is below the connection budget ' + budget +
       ' (pools ' + pools + ' + transient ' + transient + ' + superuser ' + d.superuserReserved + ' + clinical reserve ' + d.clinicalReserved + ')';
-    local owned = std.ceil(c.tenantCount / ke);
+    local z = std.get(c, 'residentHeadroomZ', d.residentHeadroomZ);
+    assert std.isNumber(z) && z >= 0 && z <= 10 : 'residentHeadroomZ must be a number from 0 to 10';
+    local mean = c.tenantCount / ke;
+    local owned = std.ceil(mean);
+    local residentMax = std.min(c.tenantCount, std.ceil(mean + z * std.sqrt(mean * (1 - 1 / ke))));
     {
       pools: p,
       perPod: perPod,
@@ -89,10 +100,11 @@
       postgresPerConnectionMiB: perConn,
       evaluator: {
         ownedPerSlice: owned,
-        residentMax: owned,
+        residentMax: residentMax,
+        residentHeadroomZ: z,
         baseMiB: em.baseMiB,
         perResidentMiB: em.perResidentMiB,
-        memoryRequestMiB: std.ceil(em.baseMiB + em.perResidentMiB * owned),
+        memoryRequestMiB: std.ceil(em.baseMiB + em.perResidentMiB * residentMax),
       },
       // Environment each role process receives (NS_POOL_<ROLE>_MAX; core pool-config.js).
       env(role)::
@@ -102,7 +114,7 @@
          else if role == 'evaluator' then [
            { name: 'NS_POOL_EVALUATOR_MAX', value: std.toString(p.evaluator) },
            { name: 'NS_POOL_READ_MAX', value: std.toString(p.read) },
-           { name: 'NS_EVALUATOR_RESIDENT_MAX', value: std.toString(owned) },
+           { name: 'NS_EVALUATOR_RESIDENT_MAX', value: std.toString(residentMax) },
          ] else []),
     },
 

@@ -70,6 +70,7 @@
         "perResidentMiB": { "type": "number", "minimum": 0 }
       }
     },
+    "residentHeadroomZ": { "type": "number", "minimum": 0, "maximum": 10 },
     "provisionDeadlineSeconds": {
       "type": "integer",
       "minimum": 60,

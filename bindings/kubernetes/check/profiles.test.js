@@ -1,5 +1,5 @@
 'use strict';
-const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),{spawnSync}=require('node:child_process');
+const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),crypto=require('node:crypto'),os=require('node:os'),path=require('node:path'),{spawnSync}=require('node:child_process');
 const root=path.resolve(__dirname,'..'),inputs=JSON.parse(fs.readFileSync(path.join(root,'environments/synthetic/inputs.json')));
 function render(overrides){
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ns-k8s-profile-'));
@@ -106,19 +106,46 @@ test('PostgreSQL sizing requires an integer and leaves room for ordinary connect
   }
 });
 
-test('evaluator memory request and resident limit follow the tenants each slice owns', () => {
-  for (const [tenants, k] of [[10000, 8], [10000, 1], [1000, 2], [1001, 2], [100, 4]]) {
+// core lib/pool-membership/slice.js bucket(): sha256(id) first 8 bytes big-endian, modulo K.
+const bucket = (id, k) => Number(crypto.createHash('sha256').update(id, 'utf8').digest().readBigUInt64BE(0) % BigInt(k));
+// Deterministic synthetic roster of UUID-shaped ids (no user data).
+const roster = (n, label) => Array.from({ length: n }, (_, i) => {
+  const h = crypto.createHash('sha256').update(label + ':' + i).digest('hex');
+  return [h.slice(0, 8), h.slice(8, 12), '4' + h.slice(13, 16), '8' + h.slice(17, 20), h.slice(20, 32)].join('-');
+});
+const busiest = (ids, k) => { const c = new Array(k).fill(0); for (const id of ids) c[bucket(id, k)]++; return Math.max(...c); };
+const residentOf = r => Number(envOf(roleContainer(r.value, 'evaluator'), 'NS_EVALUATOR_RESIDENT_MAX')[0]);
+// The binding must hold the busiest slice of a hash-owned roster; returns the shortfall.
+const shortfall = (r, ids, k) => Math.max(0, busiest(ids, k) - residentOf(r));
+
+test('evaluator memory request and resident limit bound the busiest slice, not the mean', () => {
+  for (const [tenants, k] of [[10000, 8], [10000, 1], [1000, 2], [1001, 2], [100, 4], [100, 2], [10000, 4], [4000, 8]]) {
     const r = render({ tenantCount: tenants, slices: { evaluator: k, realtime: k } });
     assert.equal(r.status, 0, r.error);
-    const owned = Math.ceil(tenants / k);
+    const mean = tenants / k;
+    const bound = Math.min(tenants, Math.ceil(mean + 4.5 * Math.sqrt(mean * (1 - 1 / k))));
     const evaluator = roleContainer(r.value, 'evaluator');
-    assert.deepEqual(envOf(evaluator, 'NS_EVALUATOR_RESIDENT_MAX'), [String(owned)]);
-    assert.equal(evaluator.resources.requests.memory, Math.ceil(195 + 1.85 * owned) + 'Mi');
+    assert.deepEqual(envOf(evaluator, 'NS_EVALUATOR_RESIDENT_MAX'), [String(bound)]);
+    assert.ok(bound >= Math.ceil(mean), 'never below the mean');
+    if (k === 1) assert.equal(bound, tenants, 'K=1 owns every tenant');
+    assert.equal(evaluator.resources.requests.memory, Math.ceil(195 + 1.85 * bound) + 'Mi');
     assert.equal(evaluator.resources.limits, undefined, 'requests only, no limit');
+    // Occupancy: hash-owned rosters (any ids) fit the rendered limit.
+    for (const label of ['a', 'b', 'c']) assert.equal(shortfall(r, roster(tenants, label), k), 0, `${tenants}/${k}/${label}`);
   }
+  // 10k at K=8: 1,399 resident (mean 1,250; simulation worst of 300 rosters 1,374).
+  assert.equal(residentOf(render({ tenantCount: 10000, slices: { evaluator: 8, realtime: 8 } })), 1399);
+  // Red control: a limit of ceil(tenants / K) (z = 0) leaves a hash-owned roster over its limit.
+  for (const [tenants, k] of [[10000, 8], [100, 4], [1000, 2]]) {
+    const mean = render({ tenantCount: tenants, slices: { evaluator: k, realtime: k }, residentHeadroomZ: 0 });
+    assert.equal(mean.status, 0, mean.error);
+    assert.equal(residentOf(mean), Math.ceil(tenants / k));
+    assert.ok(shortfall(mean, roster(tenants, 'a'), k) > 0, `ceil(n/K) must fail the occupancy check at ${tenants}/${k}`);
+  }
+  for (const residentHeadroomZ of [-1, 11, 'x']) assert.notEqual(render({ residentHeadroomZ }).status, 0);
   const refit = render({ tenantCount: 10000, slices: { evaluator: 8, realtime: 8 }, evaluatorMemory: { baseMiB: 210, perResidentMiB: 1.2 } });
   assert.equal(refit.status, 0, refit.error);
-  assert.equal(roleContainer(refit.value, 'evaluator').resources.requests.memory, Math.ceil(210 + 1.2 * 1250) + 'Mi');
+  assert.equal(roleContainer(refit.value, 'evaluator').resources.requests.memory, Math.ceil(210 + 1.2 * 1399) + 'Mi');
   // An operator roleEnv value replaces the rendered resident limit, never duplicates it.
   const pinned = render({ tenantCount: 1000, roleEnv: { evaluator: [{ name: 'NS_EVALUATOR_RESIDENT_MAX', value: '256' }] } });
   assert.deepEqual(envOf(roleContainer(pinned.value, 'evaluator'), 'NS_EVALUATOR_RESIDENT_MAX'), ['256']);

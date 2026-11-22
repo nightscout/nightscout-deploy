@@ -138,9 +138,13 @@ K = 1, 2, 4 and 8 the budget is 205, 248, 334 and 506. An explicit `postgresMaxC
 10,000) must hold the budget, or the render refuses. The PostgreSQL memory request adds 2 MiB per
 connection above 140 to its typical request.
 
-The evaluator memory request is `baseMiB + perResidentMiB x ceil(tenantCount / K)` (defaults 195 and
-1.85, fitted at the 2-day fixture; refit with `{"evaluatorMemory": {...}}`), with no limit, and
-`NS_EVALUATOR_RESIDENT_MAX` is set to the tenants each slice owns. A `roleEnv.evaluator` row of the
+The evaluator memory request is `baseMiB + perResidentMiB x residentMax` (defaults 195 and 1.85,
+fitted at the 2-day fixture; refit with `{"evaluatorMemory": {...}}`), with no limit.
+`NS_EVALUATOR_RESIDENT_MAX` (`residentMax`) bounds the busiest slice, not the mean: tenant ids are
+unknown at render time and ownership is a hash, so a slice owns `Binomial(tenantCount, 1/K)` tenants.
+`residentMax = min(tenantCount, ceil(mean + z x sqrt(mean x (1 - 1/K))))` with `mean = tenantCount / K`
+and `z = residentHeadroomZ` (default 4.5; the chance that any slice at K <= 8 exceeds it is below
+8e-5; 3.4e-5 at 10,000 tenants). A slice over its limit evicts and reloads tenants rather than refusing them. A `roleEnv.evaluator` row of the
 same name replaces the rendered value. Read the live limit with `SHOW max_connections` and the
 planned terms in the render inventory (`connectionBudget`).
 
