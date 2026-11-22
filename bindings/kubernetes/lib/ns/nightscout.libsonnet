@@ -76,6 +76,9 @@
     // Extra environment rows per application role (api, evaluator, realtime, tenant-admin),
     // appended after the binding's own rows: diagnostics and profiling switches only.
     roleEnv: {},
+    // PostgreSQL server settings passed as -c name=value (sorted), e.g. shared_buffers for a large
+    // tenant count; empty keeps the image defaults.
+    postgresSettings: {},
     // Opt-in lab metrics (lab-metrics.libsonnet): per-namespace Prometheus, postgres_exporter
     // sidecar and NS_METRICS=true on the roles. Off by default; off renders nothing extra.
     labMetrics: (import 'lab-metrics.libsonnet').defaults,
@@ -252,7 +255,8 @@
                 args: ['postgres', '-c', 'max_connections=' + maxConnections, '-c', 'reserved_connections=' + clinicalReserved,
                   // Statement statistics and I/O timing for capacity runs (the observer snapshots
                   // pg_stat_statements around steady state); the image ships the contrib module.
-                  '-c', 'shared_preload_libraries=pg_stat_statements', '-c', 'track_io_timing=on'],
+                  '-c', 'shared_preload_libraries=pg_stat_statements', '-c', 'track_io_timing=on'] +
+                  std.flattenArrays([['-c', k + '=' + c.postgresSettings[k]] for k in std.objectFields(c.postgresSettings)]),
                 env: [
                   { name: 'POSTGRES_DB', value: 'nightscout_compose_test' },
                   { name: 'POSTGRES_PASSWORD_FILE', value: '/run/secrets/postgres-password' },

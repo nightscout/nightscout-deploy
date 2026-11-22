@@ -118,6 +118,15 @@
         }
       }
     },
+    "postgresSettings": {
+      "type": "object",
+      "description": "PostgreSQL server settings passed as -c name=value; empty keeps the image defaults.",
+      "propertyNames": {
+        "pattern": "^[a-z][a-z_]{1,62}$",
+        "not": { "enum": ["max_connections", "reserved_connections", "shared_preload_libraries"] }
+      },
+      "additionalProperties": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,32}$" }
+    },
     "resources": {
       "type": "object",
       "additionalProperties": {
