@@ -45,6 +45,12 @@
       "type": "integer",
       "minimum": 1
     },
+    "postgresMaxConnections": {
+      "type": "integer",
+      "minimum": 44,
+      "maximum": 10000,
+      "default": 140
+    },
     "provisionDeadlineSeconds": {
       "type": "integer",
       "minimum": 60,
