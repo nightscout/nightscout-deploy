@@ -41,11 +41,20 @@ const CLINICAL_ROLE_KINDS = Object.freeze(['evaluator', 'realtime', 'outbox', 's
 
 // Declared PostgreSQL connection budget (decision pg-connection-budget): each
 // role process's pools (core lib/server/serve/pool-config.js, NS_POOL_<ROLE>_MAX,
-// defaults below) times its process count. An evaluator process opens the
-// evaluation, stream-receipt (RECEIVER, decision ack-path-tenant-independent) and
-// operation pools. Side clients (readiness, migration, listeners) are not yet
-// declared; they use the headroom above the budget.
-const POOL_DEFAULTS = Object.freeze({ API: 4, REALTIME: 4, EVALUATOR: 4, RECEIVER: 2, OPERATION: 8 });
+// defaults below) times its process count, plus about three transient health and
+// readiness clients per process, as the Kubernetes plan counts them
+// (bindings/kubernetes/lib/ns/connection-budget.libsonnet). An evaluator process
+// opens the evaluation pool, its read-statement pool (NS_POOL_READ_MAX), fixed
+// registry 2, outbox 2 and suppression 2 pools, and the operation pool: 4 + 2 + 6
+// + 8 + 3 = 23 at the defaults, the Kubernetes figure. The stream-receipt pool
+// (RECEIVER) is retired in core and no longer counted. Measured 2026-11-22 (core
+// 458539d99, Compose, 120 tenants, one evaluator, sampled pg_stat_activity every
+// 0.5 s): peaks evaluation 4, read 2, registry 2, outbox 2, suppression 2,
+// operation 5; 16 at once. The api and realtime terms are still their data pools
+// only; their fixed pools are not yet declared and use the headroom above the budget.
+const POOL_DEFAULTS = Object.freeze({ API: 4, REALTIME: 4, EVALUATOR: 4, READ: 2, OPERATION: 8 });
+const EVALUATOR_FIXED = 6;
+const TRANSIENT_PER_PROCESS = 3;
 function poolMax (source, role) {
   const raw = source['NS_POOL_' + role + '_MAX'];
   if (raw === undefined || raw === '') return POOL_DEFAULTS[role];
@@ -55,7 +64,7 @@ function poolMax (source, role) {
 function connectionBudget ({ apiReplicas = 1, realtimeWorkers = 1, evaluatorWorkers = 1 } = {}, source = process.env) {
   const pool = role => poolMax(source, role);
   return apiReplicas * pool('API') + realtimeWorkers * pool('REALTIME') +
-    evaluatorWorkers * (pool('EVALUATOR') + pool('RECEIVER') + pool('OPERATION'));
+    evaluatorWorkers * (pool('EVALUATOR') + pool('READ') + EVALUATOR_FIXED + pool('OPERATION') + TRANSIENT_PER_PROCESS);
 }
 function fail (message) { throw new TypeError(message); }
 // With a declared budget, an unset NS_POSTGRES_MAX_CONNECTIONS is sized to hold

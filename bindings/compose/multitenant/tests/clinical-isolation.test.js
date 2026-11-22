@@ -41,13 +41,16 @@ test('reserved-connection grants name clinical roles and never a REST-serving or
   assert.throws(() => isolation.grants(merged), /REST-serving role cannot use reserved connections/);
 });
 
-test('max_connections is sized from the declared role pools, including the evaluator receiver pool', () => {
+test('max_connections is sized from the declared role pools; an evaluator counts 23 at the defaults, as on Kubernetes', () => {
   const shape = {apiReplicas: 16, realtimeWorkers: 8, evaluatorWorkers: 8};
-  // 16 x api 4 + 8 x realtime 4 + 8 x (evaluator 4 + receiver 2 + operation 8)
-  assert.equal(isolation.connectionBudget(shape, {}), 208);
-  assert.equal(isolation.connectionBudget(shape, {NS_POOL_RECEIVER_MAX: '6'}) - isolation.connectionBudget(shape, {}), 8 * 4);
-  assert.equal(isolation.selection({}, {budget: 208}).maxConnections, 3 + 40 + 208);
+  // 16 x api 4 + 8 x realtime 4 + 8 x (evaluator 4 + read 2 + registry/outbox/suppression 6 + operation 8 + transient 3)
+  assert.equal(isolation.connectionBudget(shape, {}), 64 + 32 + 8 * 23);
+  assert.equal(isolation.connectionBudget({apiReplicas: 0, realtimeWorkers: 0, evaluatorWorkers: 1}, {}), 23);
+  assert.equal(isolation.connectionBudget(shape, {NS_POOL_READ_MAX: '6'}) - isolation.connectionBudget(shape, {}), 8 * 4);
+  // The retired stream-receipt pool is not counted.
+  assert.equal(isolation.connectionBudget(shape, {NS_POOL_RECEIVER_MAX: '6'}), isolation.connectionBudget(shape, {}));
+  assert.equal(isolation.selection({}, {budget: 280}).maxConnections, 3 + 40 + 280);
   assert.equal(isolation.selection({}, {budget: 22}).maxConnections, 140);
-  assert.equal(isolation.selection({NS_POSTGRES_MAX_CONNECTIONS: '200'}, {budget: 208}).maxConnections, 200);
-  assert.throws(() => isolation.connectionBudget(shape, {NS_POOL_RECEIVER_MAX: 'x'}), /NS_POOL_RECEIVER_MAX/);
+  assert.equal(isolation.selection({NS_POSTGRES_MAX_CONNECTIONS: '200'}, {budget: 280}).maxConnections, 200);
+  assert.throws(() => isolation.connectionBudget(shape, {NS_POOL_READ_MAX: 'x'}), /NS_POOL_READ_MAX/);
 });
