@@ -1,0 +1,105 @@
+rule_files:
+  - multitenant.rules.yml
+evaluation_interval: 1m
+tests:
+  # Fires: slice 0's oldest pending input age grows past 120 s and stays there.
+  - interval: 1m
+    input_series:
+      - series: 'nightscout_evaluator_pending_oldest_age_seconds{slice="0",pod="evaluator-0",job="roles"}'
+        values: '0 0 200 200 200 200'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: NightscoutEvaluatorPendingOldest
+        exp_alerts:
+          - exp_labels: {severity: critical, slice: "0", pod: evaluator-0}
+            exp_annotations:
+              summary: "Evaluator evaluator-0 still owes a completion for an input older than 120 s"
+              runbook: docs/30-design/tenancy/operations-runbook.md#evaluator-lag
+  # Quiet: a pending age that stays at 30 s, and a refusal counter that does not move.
+  - interval: 1m
+    input_series:
+      - series: 'nightscout_evaluator_pending_oldest_age_seconds{slice="0",pod="evaluator-0",job="roles"}'
+        values: '30 30 30 30 30 30'
+      - series: 'nightscout_storage_refusals_total{code="STORAGE_BUSY",route_class="entries_write",phase="checkout"}'
+        values: '0+0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: NightscoutEvaluatorPendingOldest
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: NightscoutStorageRefusals
+        exp_alerts: []
+  # Fires: storage refusals at 1/s for ten minutes.
+  - interval: 1m
+    input_series:
+      - series: 'nightscout_storage_refusals_total{code="STORAGE_BUSY",route_class="entries_write",phase="checkout"}'
+        values: '0+60x12'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: NightscoutStorageRefusals
+        exp_alerts:
+          - exp_labels: {severity: warning, code: STORAGE_BUSY}
+            exp_annotations:
+              summary: "api is answering 503 STORAGE_BUSY (storage refusal) at more than 0.1/s"
+              runbook: docs/30-design/tenancy/operations-runbook.md#storage-refusals
+  # Fires: every completion takes about 150 s, so p95 and p99 pass their thresholds.
+  - interval: 1m
+    input_series:
+      - series: 'nightscout_evaluator_completion_lag_seconds_bucket{slice="0",le="120"}'
+        values: '0+0x20'
+      - series: 'nightscout_evaluator_completion_lag_seconds_bucket{slice="0",le="180"}'
+        values: '0+60x20'
+      - series: 'nightscout_evaluator_completion_lag_seconds_bucket{slice="0",le="+Inf"}'
+        values: '0+60x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: NightscoutEvaluatorCompletionLagClinical
+        exp_alerts:
+          - exp_labels: {severity: critical, slice: "0"}
+            exp_annotations:
+              summary: "Evaluator slice 0 p99 completion lag is above the 120 s clinical deadline; alarms may reach people late"
+              runbook: docs/30-design/tenancy/operations-runbook.md#evaluator-lag
+  # Quiet: completions all under 1 s.
+  - interval: 1m
+    input_series:
+      - series: 'nightscout_evaluator_completion_lag_seconds_bucket{slice="0",le="1"}'
+        values: '0+60x20'
+      - series: 'nightscout_evaluator_completion_lag_seconds_bucket{slice="0",le="180"}'
+        values: '0+60x20'
+      - series: 'nightscout_evaluator_completion_lag_seconds_bucket{slice="0",le="+Inf"}'
+        values: '0+60x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: NightscoutEvaluatorCompletionLagClinical
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: NightscoutEvaluatorCompletionLagHigh
+        exp_alerts: []
+  # Fires: event loop 95% busy on the realtime pod.
+  - interval: 1m
+    input_series:
+      - series: 'nodejs_eventloop_utilization_histogram_sum{pod="realtime-0",workload="realtime"}'
+        values: '0+57x20'
+      - series: 'nodejs_eventloop_utilization_histogram_count{pod="realtime-0",workload="realtime"}'
+        values: '0+60x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: NightscoutEventLoopSaturated
+        exp_alerts:
+          - exp_labels: {severity: warning, pod: realtime-0, workload: realtime}
+            exp_annotations:
+              summary: "realtime realtime-0 event loop is more than 90% busy"
+              runbook: docs/30-design/tenancy/operations-runbook.md#evaluator-lag
+  # Fires: postgres down.
+  - interval: 1m
+    input_series:
+      - series: 'pg_up{pod="postgres-0"}'
+        values: '1 1 0 0 0'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: PostgresDown
+        exp_alerts:
+          - exp_labels: {severity: critical, pod: postgres-0}
+            exp_annotations:
+              summary: "PostgreSQL is not answering the exporter"
+              runbook: docs/30-design/tenancy/operations-runbook.md#postgresql-restart-and-failover
