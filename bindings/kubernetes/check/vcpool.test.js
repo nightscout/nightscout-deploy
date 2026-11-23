@@ -56,7 +56,8 @@ test('on: one StatefulSet replica, its listener, the connector-entry Job and eve
     assert.ok(from(v, policy).includes(caller), policy + ' admits ' + caller);
   }
   assert.deepEqual(from(v, 'admin-from-operator'), ['operator'], 'the admin plane admits operator Pods only');
-  const job = find(v, 'Job', 'connector-entry');
+  // The entry Job renders where a claim holds the primer's roster (dynamic storage here; see below).
+  const job = find(render({ ...ON, profile: 'standard', storage: { mode: 'dynamic' } }).value, 'Job', 'connector-entry');
   assert.equal(job.spec.suspend, true);
   assert.equal(job.spec.template.metadata.labels['app.kubernetes.io/component'], 'operator');
   for (const policy of ['postgres-from-app', 'vault-from-app']) assert.ok(!from(v, policy).includes('operator'), 'connector-entry holds no database or Vault credential');
@@ -92,4 +93,24 @@ test('on: every binding invariant holds', () => {
   const check = require('./invariants.js');
   const all = objects(render(ON).value), inventory = render(ON, '.inventory').value;
   assert.deepEqual(check.checks(all, inventory).filter(row => row.failures.length).map(row => row.name + ': ' + row.failures.join('; ')), []);
+});
+
+test('on: connector-entry reads the roster from the claim the primer writes, and is not rendered when no claim holds it', () => {
+  // Disposable storage keeps the primer's roster on its Pod's emptyDir (nightscout.libsonnet primer
+  // client-state): no claim exists, so a Job naming primer-results would stay Pending forever
+  // (reproduced on kind 2026-11-23: FailedScheduling, persistentvolumeclaim "primer-results" not found).
+  const claims = v => objects(v).filter(o => o.kind === 'PersistentVolumeClaim').map(o => o.metadata.name);
+  const dynamic = render({ ...ON, profile: 'standard', storage: { mode: 'dynamic' } }).value;
+  const job = find(dynamic, 'Job', 'connector-entry');
+  assert.equal(job.spec.template.spec.volumes.find(x => x.name === 'client-state').persistentVolumeClaim.claimName, 'primer-results');
+  assert.ok(claims(dynamic).includes('primer-results'));
+  const named = render({ ...ON, storage: { mode: 'existing-claim', claims: { postgres: 'p', vault: 'v', provisionState: 's', primerResults: 'fixture-primer-results' } } }).value;
+  const primer = find(named, 'Job', 'primer').spec.template.spec.volumes.find(x => x.name === 'client-state');
+  assert.equal(primer.persistentVolumeClaim.claimName, 'fixture-primer-results');
+  assert.equal(find(named, 'Job', 'connector-entry').spec.template.spec.volumes.find(x => x.name === 'client-state').persistentVolumeClaim.claimName,
+    'fixture-primer-results');
+  const disposable = render({ ...ON, storage: { mode: 'disposable' } }).value;
+  assert.equal(find(disposable, 'Job', 'primer').spec.template.spec.volumes.find(x => x.name === 'client-state').emptyDir !== undefined, true);
+  assert.equal(find(disposable, 'Job', 'connector-entry'), undefined, 'no Job that can never schedule');
+  assert.ok(find(disposable, 'StatefulSet', 'vcpool'), 'the vcpool role still renders');
 });

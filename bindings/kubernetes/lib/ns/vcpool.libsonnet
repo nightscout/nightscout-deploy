@@ -15,7 +15,8 @@
 //     NS_VAULT_ADDR; credentials from Secret ns-config-vcpool (scripts/secrets.sh with NS_VCPOOL=1);
 //   - provisioning: the bootstrap step mounts ns-credentials-vcpool and creates the two vcpool logins,
 //     their grants and the decrypt-only Vault token (compose/multitenant/vcpool.js);
-//   - a suspended operator Job `connector-entry` (compose/multitenant/connector-entry.js) that enters,
+//   - where a claim holds the primer's roster (dynamic or existing-claim storage), a suspended
+//     operator Job `connector-entry` (compose/multitenant/connector-entry.js) that enters,
 //     from Secret ns-connector-entry, the connector subject (tenant root API), the three secrets
 //     (admin PUT /v1/tenants/{id}/secrets/{ref}, decision connector-secret-entry-admin) and the
 //     definition (admin connector-sources); it holds no database or Vault credential;
@@ -97,6 +98,14 @@
       }],
       volumes: [{ name: 'secret-vcpool', secret: { secretName: 'ns-config-vcpool', defaultMode: 288 } }] + [v for v in template.volumes if std.member(keep, v.name)],
     };
+    // The entry Job reads the primer's roster (tenants.json, with each tenant's root secret) from the
+    // claim the primer writes: primer-results under dynamic storage, the named primerResults claim under
+    // existing-claim. Disposable storage keeps the roster on the primer Pod's emptyDir only
+    // (nightscout.libsonnet primer client-state), so no Job is rendered there: a Job naming a claim
+    // that does not exist stays Pending (reproduced on kind 2026-11-23). There the operator enters
+    // connectors where the roster lives (the lab harness runs connector-entry.js in its roster reader).
+    local claim = if c.storage.mode == 'dynamic' then 'primer-results'
+                  else if c.storage.mode == 'existing-claim' then std.get(c.storage.claims, 'primerResults', null) else null;
     local entry = {
       apiVersion: 'batch/v1', kind: 'Job', metadata: meta('connector-entry', 'operator'),
       spec: { suspend: true, backoffLimit: 0, activeDeadlineSeconds: c.provisionDeadlineSeconds,
@@ -119,7 +128,7 @@
           }],
           volumes: [
             { name: 'entry-input', secret: { secretName: 'ns-connector-entry', defaultMode: 288 } },
-            { name: 'client-state', persistentVolumeClaim: { claimName: 'primer-results', readOnly: true } },
+            { name: 'client-state', persistentVolumeClaim: { claimName: claim, readOnly: true } },
           ] + [v for v in template.volumes if std.member(['tmp'], v.name)],
         } },
       },
@@ -138,6 +147,6 @@
       },
       internal: service('vcpool-internal', 'vcpool', [{ name: 'internal', port: $.port, targetPort: 'int-role' }], true),
       policy: policy('vcpool-internal', 'vcpool', ['operator'] + (if labEnv != [] || s.metrics then ['metrics'] else []), [$.port]),
-      connectorEntry: entry,
+      [if claim != null then 'connectorEntry']: entry,
     },
 }
