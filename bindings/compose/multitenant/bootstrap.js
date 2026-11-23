@@ -94,6 +94,8 @@ async function bootstrap(options) {
         await admin.query(loginSQL(l.roles.owner_settings,seeded.postgres.owner_settings));
       }
       await migrate(admin,pg,l,plan.catalogues(),false);
+      // vcpool identities: created here too, so a restored fixture can enable the role.
+      await require('./vcpool').ensure({admin,l,credentials:options.credentials,request,rootToken:initialization.root_token});
     }finally{await admin.end();}
     const seededFrom=complete.seededFrom||complete.sourceCommit;
     if(complete.sourceCommit!==sourceCommit||complete.deployCommit!==deployCommit){
@@ -135,9 +137,10 @@ async function bootstrap(options) {
       'UPDATE(work_observed,work_observed_at,work_pending_at) ON '+namespace+'.tenant_consumer_checkpoint TO '+writer);
     // Registry completion runs before the admin client closes.
     const result=await require('./registry-bootstrap').finish({request,rootToken:initialization.root_token,layout:l,tokens:seeded.vault,admin});
+    const vcpool=await require('./vcpool').ensure({admin,l,credentials:options.credentials,request,rootToken:initialization.root_token});
     writePrivate(path.join(privateDirectory,'layout.json'),l);
     writePrivate(completeFile,{version:2,sourceCommit,deployCommit,registryMode:true,inputTransport:'writer-driven',evaluatorWorkers:evaluatorWorkers?.workers});
-    return {...result,sourceCommit};
+    return {...result,...(vcpool.vcpool==='ready'?{vcpool:'ready'}:{}),sourceCommit};
   }finally{await admin.end();}
 }
 // Creates (fresh) or brings forward (existing) every catalogue schema, then applies the grants.

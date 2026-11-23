@@ -35,6 +35,8 @@
 //                 (deployment-settings.js:193-194) + operation
 //   tenant-admin: 40 with every owner option (owner-preview.js), operation pool included; fixed literals
 //   admin:        15 (ownership 4, registry 1, sessions 4, provisioning 4, connector sources 2); fixed
+//   vcpool:       10 when enabled (secrets 4 secrets/postgres.js:44, activity 2 tenant-activity/postgres.js:61,
+//                 registry view 2 tenant-connector/registry-view.js:18, definitions 2 postgres-sources.js:59); fixed
 //   transient:    single Clients for health and readiness, about 3 at once per serving Pod (role-health.js:43,
 //                 role-readiness.js:37)
 {
@@ -75,14 +77,16 @@
     local perConn = std.get(c, 'postgresPerConnectionMiB', d.postgresPerConnectionMiB);
     assert std.isNumber(perConn) && perConn >= 0 : 'postgresPerConnectionMiB must be non-negative';
     local api = c.apiReplicas, kr = c.slices.realtime, ke = c.slices.evaluator;
+    local vc = import 'vcpool.libsonnet';
     local perPod = {
       api: 2 * p.api + d.fixed.api + p.operation,
       realtime: p.realtime + d.fixed.realtime + p.operation,
       evaluator: p.evaluator + p.read + d.fixed.evaluator + p.operation,
       'tenant-admin': d.fixed['tenant-admin'],
       admin: d.fixed.admin,
-    };
-    local pods = { api: api, realtime: kr, evaluator: ke, 'tenant-admin': 1, admin: 1 };
+    } + (if vc.enabled(c) then { vcpool: vc.fixedPool } else {});
+    // vcpool (vcpool.libsonnet): one Pod when enabled, fixed pools only; absent when off.
+    local pods = { api: api, realtime: kr, evaluator: ke, 'tenant-admin': 1, admin: 1 } + (if vc.enabled(c) then { vcpool: vc.pods(c) } else {});
     local pools = std.foldl(function(s, r) s + pods[r] * perPod[r], std.objectFields(pods), 0);
     local podCount = std.foldl(function(s, r) s + pods[r], std.objectFields(pods), 0);
     local transient = d.transientPerPod * podCount;

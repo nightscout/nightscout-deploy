@@ -8,7 +8,9 @@
 #   NS_KUBE_CONTEXT=<explicit> NS_RUN_ID=<rendered> \
 #     scripts/secrets.sh seed <namespace> <app image>
 #
-# For evaluator K>1 also set NS_EVALUATOR_WORKERS=<slices.evaluator>.
+# For evaluator K>1 also set NS_EVALUATOR_WORKERS=<slices.evaluator>. For the opt-in vcpool role
+# (vcpool.enabled) set NS_VCPOOL=1: it adds ns-credentials-vcpool (mounted only by the provision Job)
+# and ns-config-vcpool.
 #
 # Creates ns-postgres-password, ns-vault-tls, ns-ca (CA signing key discarded),
 # ns-credentials-postgres and ns-credentials-vault (one PostgreSQL password per deployment role
@@ -61,10 +63,16 @@ if [ -n "${NS_EVALUATOR_WORKERS:-}" ]; then
   evaluator_env=(-e "NS_EVALUATOR_WORKERS=$NS_EVALUATOR_WORKERS")
 fi
 
+vcpool_env=()
+if [ -n "${NS_VCPOOL:-}" ]; then
+  [ "$NS_VCPOOL" = 1 ] || { echo 'REFUSED: NS_VCPOOL must be 1, or unset' >&2; exit 64; }
+  vcpool_env=(-e NS_VCPOOL=1)
+fi
+
 # Prepare per-role credentials offline in the application image.
 mkdir -m 700 "$work/seed"
 docker run --rm --network none --read-only --tmpfs /tmp --user "$(id -u):$(id -g)" -w /opt/app \
-  -v "$work/seed:/seed" -v "$here/ops:/run/ns-overlay:ro" ${evaluator_env[@]+"${evaluator_env[@]}"} \
+  -v "$work/seed:/seed" -v "$here/ops:/run/ns-overlay:ro" ${evaluator_env[@]+"${evaluator_env[@]}"} ${vcpool_env[@]+"${vcpool_env[@]}"} \
   --entrypoint node "$image" /run/ns-overlay/seed.cjs >/dev/null
 docs=$work/seed/roles
 
@@ -79,5 +87,9 @@ for role in api realtime evaluator tenant-admin ui admin primer; do
   mapfile -t args < <(from_dir "$docs/$role")
   secret "ns-config-$role" "${args[@]}"
 done
+if [ -n "${NS_VCPOOL:-}" ]; then
+  mapfile -t args < <(from_dir "$work/seed/credentials/vcpool"); secret ns-credentials-vcpool "${args[@]}"
+  mapfile -t args < <(from_dir "$docs/vcpool"); secret ns-config-vcpool "${args[@]}"
+fi
 k label secret "${created[@]}" "nightscout.org/run-id=$NS_RUN_ID" >/dev/null
 printf '{"state":"seeded","secrets":[%s]}\n' "$(printf '"%s",' "${created[@]}" | sed 's/,$//')"

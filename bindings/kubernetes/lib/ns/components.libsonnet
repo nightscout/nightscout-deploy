@@ -15,6 +15,8 @@
   ordinal:: ['realtime', 'evaluator'],
   render(raw, c)::
     local lab = import 'lab-metrics.libsonnet';
+    local vc = import 'vcpool.libsonnet';
+    assert vc.check(c);
     local plan = (import 'connection-budget.libsonnet').plan(c);
     local roles = std.objectFields($.ports);
     assert c.inputTransport == 'writer-driven' : 'inputTransport must be writer-driven';
@@ -119,6 +121,9 @@
     { [key]: raw[key] for key in std.objectFields(raw) if key != 'networkPolicies' } + {
       postgres: lab.postgres(raw.postgres, c),
       [if lab.enabled(c) then 'labMetrics']: lab.render(c, c.namespace, label),
+      // vcpool (vcpool.libsonnet): off renders nothing and leaves provision and the policies unchanged.
+      [if vc.enabled(c) then 'vcpool']: vc.render(c, raw, meta, label, service, policy, lab.roleEnv(c)),
+      [if vc.enabled(c) then 'provision']: raw.provision + { job: vc.provision(raw.provision.job, c) },
       // One API agent retains its existing policy/sink. Other roles use their
       // own role-specific credential Secrets.
       roleAuth: { serviceAccount: raw.roleTemplate.serviceAccount, agentConfig: raw.roleTemplate.agentConfig },
@@ -169,10 +174,10 @@
         // Private role contracts; no public/edge Pod reaches these ports.
         [role + '-internal']: policy(role + '-internal', role, roles + ['operator'] + lab.callers(c), [$.ports[role]]) for role in roles
       } + lab.policies(c, policy) + {
-        apiPublic: policy('api-public', 'api', ['edge', 'operator'], [1337]),
+        apiPublic: policy('api-public', 'api', ['edge', 'operator'] + vc.callers(c), [1337]),
         realtimePublic: policy('realtime-public', 'realtime', ['edge', 'operator'] + (if routed then ['socket-edge'] else []), [1339]),
-        postgresFromApp: policy('postgres-from-app', 'postgres', roles + ['admin', 'ui', 'provision'] + (if routed then ['socket-edge'] else []), [5432]),
-        vaultFromApp: policy('vault-from-app', 'vault', ['api', 'tenant-admin', 'admin', 'provision', 'vault'], [8200]),
+        postgresFromApp: vc.admitTask(policy('postgres-from-app', 'postgres', roles + ['admin', 'ui', 'provision'] + (if routed then ['socket-edge'] else []) + vc.callers(c), [5432]), c),
+        vaultFromApp: vc.admitTask(policy('vault-from-app', 'vault', ['api', 'tenant-admin', 'admin', 'provision', 'vault'] + vc.callers(c), [8200]), c),
       } + (if routed then {
         socketEdgeFromEdge: policy('socket-edge-from-edge', 'socket-edge', ['edge'], [$.socketEdgePort]),
       } else {}),

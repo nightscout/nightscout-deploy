@@ -429,6 +429,18 @@
         }
       }
     },
+    "vcpool": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Opt-in vcpool role (lib/ns/vcpool.libsonnet): the tenant-side Nightscout connector, one StatefulSet Pod, and the suspended connector-entry operator Job. Off by default.",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "allowHosts": { "type": "array", "items": { "type": "string", "pattern": "^[a-z0-9.-]{1,253}$" } },
+        "allowInsecureHttp": { "type": "boolean" },
+        "egressProxy": { "type": ["string", "null"] },
+        "metrics": { "type": "boolean" }
+      }
+    },
     "labMetrics": {
       "type": "object",
       "additionalProperties": false,

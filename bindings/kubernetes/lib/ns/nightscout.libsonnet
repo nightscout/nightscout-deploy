@@ -92,12 +92,15 @@
     // Opt-in lab metrics (lab-metrics.libsonnet): per-namespace Prometheus, postgres_exporter
     // sidecar and NS_METRICS=true on the roles. Off by default; off renders nothing extra.
     labMetrics: (import 'lab-metrics.libsonnet').defaults,
+    // Opt-in vcpool role (vcpool.libsonnet): the tenant-side Nightscout connector. Off by default; off
+    // renders nothing extra.
+    vcpool: (import 'vcpool.libsonnet').defaults,
     resources: {
       [name]: {
         requests: { cpu: '25m', memory: '32Mi', 'ephemeral-storage': '16Mi' },
         limits: { cpu: '500m', memory: '256Mi', 'ephemeral-storage': '128Mi' },
       }
-      for name in ['install-config', 'vault-agent', 'wait-stores', 'bootstrap', 'vault-kubernetes-auth', 'primer', 'api', 'realtime', 'evaluator', 'tenant-admin', 'admin', 'ui', 'postgres', 'nginx', 'vault', 'prometheus', 'postgres-exporter']
+      for name in ['install-config', 'vault-agent', 'wait-stores', 'bootstrap', 'vault-kubernetes-auth', 'primer', 'api', 'realtime', 'evaluator', 'tenant-admin', 'admin', 'ui', 'postgres', 'nginx', 'vault', 'prometheus', 'postgres-exporter', 'vcpool', 'connector-entry']
     },
     storage: { mode: 'dynamic', postgres: '1Gi', vault: '256Mi', provisionState: '64Mi', primerResults: '64Mi', claims: {} },
   },
@@ -882,7 +885,8 @@
           'tenant-admin': ['ns_owner_writer_pg','ns_owner_reader_pg','ns_owner_credentials_pg','ns_owner_settings_pg','ns_lifetime_pg','vault-token'],
           admin: ['ns_provisioner_pg','ns_ownership_pg','ns_connector_sources_pg','ns_management_sessions_pg','vault-token'],
           ui: ['env.json','config.json'], primer: ['config.json'],
-        },
+        } + (if (import 'vcpool.libsonnet').enabled(c) then { vcpool: ['ns_vcpool_secrets_pg','ns_vcpool_activity_pg','ns_vcpool_definitions_pg','vcpool-token'] } else {}),
+        [if (import 'vcpool.libsonnet').enabled(c) then 'vcpool']: (import 'vcpool.libsonnet').settings(c),
         ownership: { namespace: c.namespace, label: { 'nightscout.org/run-id': c.runId }, clusterScoped: [{ kind: 'ClusterRoleBinding', name: c.namespace + '-vault-tokenreview' }] },
         services: { [v.metadata.name]: { selector: v.spec.selector, type: if std.objectHas(v.spec,'type') then v.spec.type else 'ClusterIP', ports: if std.objectHas(v.spec,'ports') then v.spec.ports else [] } for v in [v for v in collect(rendered) if v.kind == 'Service'] },
         configMaps: ['vault-config','vault-agent-config','edge-nginx','provision-scripts'],
@@ -892,7 +896,9 @@
         [if c.postgresSizing != null then 'postgresSizing']: { tier: c.postgresSizing, nodeSize: $.postgresSizing(c).nodeSize,
           claim: $.postgresSizing(c).claim, settings: $.postgresSizing(c).settings },
         [if c.postgresNode != null then 'postgresNode']: c.postgresNode,
-        seed: { script: 'scripts/secrets.sh seed', environment: { [if c.slices.evaluator > 1 then 'NS_EVALUATOR_WORKERS']: std.toString(c.slices.evaluator), NS_INPUT_TRANSPORT: c.inputTransport }, credentials: ['ns-credentials-postgres', 'ns-credentials-vault'], mountedBy: ['provision'],
+        seed: { script: 'scripts/secrets.sh seed', environment: { [if c.slices.evaluator > 1 then 'NS_EVALUATOR_WORKERS']: std.toString(c.slices.evaluator), NS_INPUT_TRANSPORT: c.inputTransport,
+                                                                 [if (import 'vcpool.libsonnet').enabled(c) then 'NS_VCPOOL']: '1' },
+          credentials: ['ns-credentials-postgres', 'ns-credentials-vault'] + (if (import 'vcpool.libsonnet').enabled(c) then ['ns-credentials-vcpool'] else []), mountedBy: ['provision'],
           // One object; a fixture restore re-creates it with the seed run's other Secrets.
           signing: { secret: 'ns-signing-secret', mountedBy: ['api', 'admin', 'tenant-admin'] } },
         results: { primer: { claim: if c.storage.mode == 'existing-claim' then std.get(c.storage.claims, 'primerResults', null) else if c.storage.mode == 'dynamic' then 'primer-results' else null, file: 'tenants.json' } },

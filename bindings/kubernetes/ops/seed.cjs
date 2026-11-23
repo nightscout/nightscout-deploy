@@ -10,6 +10,8 @@ function main (env = process.env) {
   const binding = path.join(app, 'deploy/multitenant');
   const seed = require(path.join(binding, 'credentials')).seed;
   seed(credentials);
+  // vcpool (opt-in): its two logins and Vault token id, before render writes its role document.
+  if (env.NS_VCPOOL === '1') require(path.join(binding, 'vcpool')).seed(credentials);
   const render = require(path.join(app, 'deploy/multitenant/render'));
   return render.render(render.input({ ...env, NS_CREDENTIALS_DIR: credentials, NS_RENDER_OUTPUT: output, NS_API_VAULT_TOKEN_FILE: '/run/ns-vault/token' }));
 }
