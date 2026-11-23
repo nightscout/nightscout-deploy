@@ -79,6 +79,16 @@
     // PostgreSQL server settings passed as -c name=value (sorted), e.g. shared_buffers for a large
     // tenant count; empty keeps the image defaults.
     postgresSettings: {},
+    // One PostgreSQL primary sized vertically (postgres-sizing.json): null keeps the image defaults and
+    // the planned requests; '1k', '5k' or '10k' selects a tier's settings, requests and claim. Explicit
+    // postgresSettings, resources.postgres.requests and storage.postgres each override the tier's value.
+    postgresSizing: null,
+    // PostgreSQL alone on its own node: null schedules postgres like every other workload. Otherwise
+    // { nodeSelector: {...}, taint: { key, value } } gives postgres that nodeSelector and a NoSchedule
+    // toleration for the operator-made taint key=value:NoSchedule on that node pool. No other workload
+    // may tolerate the key (the render refuses), so nothing else is scheduled there; NoSchedule never
+    // evicts a running Pod.
+    postgresNode: null,
     // Opt-in lab metrics (lab-metrics.libsonnet): per-namespace Prometheus, postgres_exporter
     // sidecar and NS_METRICS=true on the roles. Off by default; off renders nothing extra.
     labMetrics: (import 'lab-metrics.libsonnet').defaults,
@@ -92,6 +102,43 @@
     storage: { mode: 'dynamic', postgres: '1Gi', vault: '256Mi', provisionState: '64Mi', primerResults: '64Mi', claims: {} },
   },
 
+  // Effective PostgreSQL settings, requests and claim (postgres-sizing.json); explicit postgresSettings win.
+  postgresSizing(c)::
+    local tiers = (import 'postgres-sizing.json').tiers;
+    local forbidden = ['max_connections', 'reserved_connections', 'shared_preload_libraries', 'track_io_timing'];
+    assert c.postgresSizing == null || (std.isString(c.postgresSizing) && std.objectHas(tiers, c.postgresSizing)) :
+      'postgresSizing must be null or one of ' + std.join(', ', std.objectFields(tiers));
+    local tier = if c.postgresSizing == null then null else tiers[c.postgresSizing];
+    local settings = (if tier == null then {} else tier.settings) + c.postgresSettings;
+    assert std.length([k for k in std.objectFields(settings) if std.member(forbidden, k)]) == 0 :
+      'postgresSettings must not set ' + std.join(', ', forbidden) + ' (the binding owns them)';
+    { settings: settings, requests: if tier == null then null else tier.requests,
+      claim: if tier == null then null else tier.claim, nodeSize: if tier == null then null else tier.nodeSize },
+
+  // PostgreSQL on its own node: the node's selector and a NoSchedule toleration for its taint, added to
+  // the run's own tolerations (a capacity pool taint, for example). Refuses any other workload that would
+  // tolerate the dedicated taint and any per-workload postgres placement that would contradict it.
+  postgresPlacement(c)::
+    local n = c.postgresNode;
+    assert std.isObject(n) && std.objectHas(n, 'nodeSelector') && std.isObject(n.nodeSelector) && std.length(std.objectFields(n.nodeSelector)) > 0 &&
+           std.objectHas(n, 'taint') && std.isObject(n.taint) && std.isString(std.get(n.taint, 'key')) && std.length(n.taint.key) > 0 &&
+           std.isString(std.get(n.taint, 'value')) && std.length(n.taint.value) > 0 &&
+           std.length([k for k in std.objectFields(n) if !std.member(['nodeSelector', 'taint'], k)]) == 0 &&
+           std.length([k for k in std.objectFields(n.taint) if !std.member(['key', 'value'], k)]) == 0 :
+      'postgresNode must be { nodeSelector: {non-empty}, taint: { key, value } } (the effect is always NoSchedule)';
+    assert !std.objectHas(c.placement, 'nodeName') : 'postgresNode cannot be combined with placement.nodeName';
+    assert !std.objectHas(c.placementByWorkload, 'postgres') : 'postgresNode and placementByWorkload.postgres both place postgres; choose one';
+    local tolerates(t) = std.isObject(t) && (std.get(t, 'key', '') == n.taint.key || (std.get(t, 'operator', 'Equal') == 'Exists' && std.get(t, 'key', '') == ''));
+    local shared = std.get(c.placement, 'tolerations', []);
+    assert std.length([t for t in shared if tolerates(t)]) == 0 : 'placement.tolerations must not tolerate the postgres node taint ' + n.taint.key;
+    local others = [w for w in std.objectFields(c.placementByWorkload)
+                    if std.length([t for t in std.get(c.placementByWorkload[w], 'tolerations', []) if tolerates(t)]) > 0];
+    assert std.length(others) == 0 : 'only postgres may tolerate the postgres node taint ' + n.taint.key + '; refused for ' + std.join(', ', others);
+    { [k]: c.placement[k] for k in std.objectFields(c.placement) if !std.member(['nodeSelector', 'tolerations', 'affinity', 'topologySpreadConstraints'], k) } + {
+      nodeSelector: n.nodeSelector,
+      tolerations: shared + [{ key: n.taint.key, operator: 'Equal', value: n.taint.value, effect: 'NoSchedule' }],
+    },
+
   raw(overrides):: {
     local c = std.mergePatch($.defaults, overrides),
     local ns = c.namespace,
@@ -99,6 +146,9 @@
     local clinicalReserved = plan.clinicalReserved,
     local superuserReserved = plan.superuserReserved,  // PostgreSQL default, left at its image setting.
     local maxConnections = plan.maxConnections,
+    local sizing = $.postgresSizing(c),
+    local authoredStorage = std.objectHas(overrides, 'storage') && std.isObject(overrides.storage) && std.objectHas(overrides.storage, 'postgres'),
+    local postgresClaim = if sizing != null && !authoredStorage then sizing.claim else c.storage.postgres,
     assert std.isNumber(maxConnections) && maxConnections == std.floor(maxConnections) &&
            maxConnections > clinicalReserved + superuserReserved && maxConnections <= 10000 :
            'postgresMaxConnections must be an integer from 44 to 10000, leaving at least one ordinary connection',
@@ -256,7 +306,7 @@
                   // Statement statistics and I/O timing for capacity runs (the observer snapshots
                   // pg_stat_statements around steady state); the image ships the contrib module.
                   '-c', 'shared_preload_libraries=pg_stat_statements', '-c', 'track_io_timing=on'] +
-                  std.flattenArrays([['-c', k + '=' + c.postgresSettings[k]] for k in std.objectFields(c.postgresSettings)]),
+                  std.flattenArrays([['-c', k + '=' + sizing.settings[k]] for k in std.objectFields(sizing.settings)]),
                 env: [
                   { name: 'POSTGRES_DB', value: 'nightscout_compose_test' },
                   { name: 'POSTGRES_PASSWORD_FILE', value: '/run/secrets/postgres-password' },
@@ -278,7 +328,7 @@
                         { name: 'dshm', emptyDir: { medium: 'Memory', sizeLimit: std.toString(plan.postgresShmMiB) + 'Mi' } }],
             },
           },
-          volumeClaimTemplates: [{ metadata: { name: 'data' }, spec: { accessModes: ['ReadWriteOnce'], resources: { requests: { storage: c.storage.postgres } } } }],
+          volumeClaimTemplates: [{ metadata: { name: 'data' }, spec: { accessModes: ['ReadWriteOnce'], resources: { requests: { storage: postgresClaim } } } }],
         },
       },
     },
@@ -746,6 +796,13 @@
       postgres+: { memory: budget.quantity(budget.mib(super.memory) + plan.postgresMemoryMiB) },
     };
     assert std.member(['limits-v1', 'requests-v1'], c.resourceAccounting) : 'unknown resource accounting';
+    // A tier's requests, never below the planned memory (max_connections and /dev/shm).
+    local tier = $.postgresSizing(c);
+    local sizedPostgres = if tier == null || tier.requests == null then typical.postgres else typical.postgres + {
+      cpu: tier.requests.cpu,
+      memory: budget.quantity(std.max(budget.mib(tier.requests.memory), budget.mib(typical.postgres.memory))),
+    };
+    assert c.postgresNode == null || $.postgresPlacement(c) != null;
     local raw = (import 'components.libsonnet').render(original, c);
     local collect(v) = if std.isArray(v) then std.flattenArrays([collect(x) for x in v]) else if !std.isObject(v) then [] else if std.objectHas(v, 'apiVersion') && std.objectHas(v, 'kind') then [v] else std.flattenArrays([collect(v[k]) for k in std.objectFields(v)]);
     assert std.member(['standard', 'existing-capacity'], c.profile) : 'unknown profile';
@@ -775,13 +832,14 @@
             local selected = c.resources[name];
             local authored = std.objectHas(overrides, 'resources') && std.objectHas(overrides.resources, name) && std.objectHas(overrides.resources[name], 'limits');
             if c.resourceAccounting == 'requests-v1' then
-              { requests: std.mergePatch(typical[name],
+              { requests: std.mergePatch(if name == 'postgres' then sizedPostgres else typical[name],
                     if std.objectHas(overrides, 'resources') && std.objectHas(overrides.resources, name)
                     then std.get(overrides.resources[name], 'requests', {}) else {}) } +
               (if authored && overrides.resources[name].limits != null then { limits: overrides.resources[name].limits } else {})
             else selected;
           local containers(key) = [x + { resources: resources(x.name) } for x in spec[key]];
-          local placement = c.placement + (if std.objectHas(c.placementByWorkload, name) then c.placementByWorkload[name] else {});
+          local placement = if name == 'postgres' && c.postgresNode != null then $.postgresPlacement(c)
+            else c.placement + (if std.objectHas(c.placementByWorkload, name) then c.placementByWorkload[name] else {});
           { spec+: {
             template+: { metadata+: { labels+: ownership, annotations+: identity }, spec+: placement + {
               imagePullSecrets: c.imagePullSecrets,
@@ -831,6 +889,9 @@
         imagePullSecrets: c.imagePullSecrets,
         placement: c.placement,
         placementByWorkload: c.placementByWorkload,
+        [if c.postgresSizing != null then 'postgresSizing']: { tier: c.postgresSizing, nodeSize: $.postgresSizing(c).nodeSize,
+          claim: $.postgresSizing(c).claim, settings: $.postgresSizing(c).settings },
+        [if c.postgresNode != null then 'postgresNode']: c.postgresNode,
         seed: { script: 'scripts/secrets.sh seed', environment: { [if c.slices.evaluator > 1 then 'NS_EVALUATOR_WORKERS']: std.toString(c.slices.evaluator), NS_INPUT_TRANSPORT: c.inputTransport }, credentials: ['ns-credentials-postgres', 'ns-credentials-vault'], mountedBy: ['provision'],
           // One object; a fixture restore re-creates it with the seed run's other Secrets.
           signing: { secret: 'ns-signing-secret', mountedBy: ['api', 'admin', 'tenant-admin'] } },

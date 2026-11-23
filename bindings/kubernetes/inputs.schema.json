@@ -127,6 +127,25 @@
       },
       "additionalProperties": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,32}$" }
     },
+    "postgresSizing": {
+      "description": "PostgreSQL tier from lib/ns/postgres-sizing.json (settings, requests, claim); null keeps the image defaults.",
+      "enum": [null, "1k", "5k", "10k"]
+    },
+    "postgresNode": {
+      "description": "PostgreSQL alone on its own node: its nodeSelector and a NoSchedule toleration for the operator-made taint key=value:NoSchedule; no other workload may tolerate the key.",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["nodeSelector", "taint"],
+      "properties": {
+        "nodeSelector": { "type": "object", "minProperties": 1, "additionalProperties": { "type": "string" } },
+        "taint": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["key", "value"],
+          "properties": { "key": { "type": "string", "minLength": 1 }, "value": { "type": "string", "minLength": 1 } }
+        }
+      }
+    },
     "resources": {
       "type": "object",
       "additionalProperties": {
