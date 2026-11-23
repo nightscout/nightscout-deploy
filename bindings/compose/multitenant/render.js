@@ -84,7 +84,7 @@ function render ({ output, credentials, postgres, useAgent, sourceCommit }) {
   json(path.join(output, 'ops', 'env.json'), { NS_OPERATOR_PG: roleURLs.operator, NS_AUTH_AUDIT_PG: roleURLs.api, ...(sourceCommit ? { NS_SOURCE_COMMIT: sourceCommit } : {}) }, false);
   token(path.join(output, 'ops', 'vault-token'), tokens.api);
   // vcpool (off unless seeded with NS_VCPOOL=1): its own role document, nothing otherwise.
-  const vcpool = require('./vcpool').render({ output, credentials, l, postgres });
+  const vcpool = require('./vcpool').render({ output, credentials, l, postgres, write });
   return { state: 'credentials-rendered', roles: Object.values(services).flat().length + (vcpool ? 1 : 0) };
 }
 

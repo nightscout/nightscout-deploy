@@ -56,7 +56,7 @@ function grants (l) {
 }
 
 // The vcpool role document: its three connection files and its Vault token, beside the other roles'.
-function render ({ output, credentials, l, postgres }) {
+function render ({ output, credentials, l, postgres, write }) {
   const seeded = read(credentials);
   if (!seeded) { fs.rmSync(path.join(output, 'vcpool'), { recursive: true, force: true }); return null; }
   const login = (role, password) => {
@@ -70,7 +70,6 @@ function render ({ output, credentials, l, postgres }) {
     ns_vcpool_definitions_pg: login(r.vcpool_definitions, seeded.postgres.vcpool_definitions),
     'vcpool-token': seeded.token
   };
-  const write = require('./render').write;
   for (const [name, text] of Object.entries(files)) write(path.join(output, 'vcpool', name), text + '\n');
   return Object.keys(files).length;
 }
