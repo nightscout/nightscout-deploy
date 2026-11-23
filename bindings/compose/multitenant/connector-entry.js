@@ -111,10 +111,37 @@ async function secretsComponent (options) {
   const source = settings.withSecrets({ ...process.env, NS_SECRETS_DIR: options.secretsDir });
   const l = settings.layout(source);
   const token = fs.readFileSync(path.join(options.secretsDir, 'vault-token'), 'utf8').trim();
-  const persistence = await require('../../lib/secrets/postgres').createPostgresSecrets({ connectionString: source.NS_PROVISIONER_PG, namespace: l.namespaces.secrets });
+  // The provisioning login is not a standard secrets-store identity (it also reads audit columns,
+  // so lib/secrets/postgres.js refuses its shape as SECRETS_STORE_UNSAFE). It writes the record and
+  // its audit row the way tenant provisioning does (lib/tenant-registry/provision.js): one
+  // transaction per row under the tenant's row-security binding.
+  const { Client } = require('pg'), q = name => '"' + name + '"';
+  const records = q(l.namespaces.secrets) + '.secret_records', audits = q(l.namespaces.secrets) + '.secret_audit';
+  async function bound (tenant, sql, values) {
+    const client = new Client({ connectionString: source.NS_PROVISIONER_PG, connectionTimeoutMillis: 10000, statement_timeout: 10000, application_name: 'nightscout-connector-entry' });
+    client.on('error', () => {});
+    await client.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenant]);
+      await client.query(sql, values);
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      if (error.code === '23505') throw fail('SECRETS_REFERENCE_EXISTS');
+      throw fail('CONNECTOR_ENTRY_SECRET_STORE_FAILED');
+    } finally { await client.end().catch(() => {}); }
+  }
+  const persistence = {
+    store: { get: async () => undefined,
+      insert: record => bound(record.tenant, 'INSERT INTO ' + records + ' (tenant_id, id, format, ciphertext) VALUES ($1, $2, $3, $4)', [record.tenant, record.id, record.format, record.ciphertext]) },
+    audit: event => bound(event.tenant, 'INSERT INTO ' + audits + ' (event_id, tenant_id, principal, consumer, operation, secret_id, phase, event_time) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+      [crypto.randomUUID(), event.tenant, event.principal, event.consumer, event.operation, event.id, event.phase, event.time]),
+    close: async () => {}
+  };
   const rules = require('../../lib/tenant-registry/rules');
   const actor = { principal: 'compose-provisioning', consumer: 'connector-entry' };
-  const secrets = require('../../lib/secrets/component').createSecrets({ ...persistence, maxTokenLifetimeSeconds: 1,
+  const secrets = require('../../lib/secrets/component').createSecrets({ store: persistence.store, audit: persistence.audit, maxTokenLifetimeSeconds: 1,
     providerFor: async tenant => require('../../lib/secrets/vault-transit').createVaultTransit({ address: options.vault, mount: l.mount,
       encryptionKey: rules.vaultKey(tenant, 'data'), getToken: async () => token }),
     // Encrypt only, and only the connector's three references.
