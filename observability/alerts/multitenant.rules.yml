@@ -1,0 +1,152 @@
+# Prometheus alert rules for a multitenant deployment. Every expression reads a metric that core
+# exports with NS_METRICS=true (lib/metrics/index.js at cgm-remote-monitor 2dee799c8) or the
+# standard postgres_exporter / Prometheus `up` series. No label carries a tenant id.
+# Thresholds follow the latency-objectives decision: p95 30 s planning objective, 120 s clinical
+# deadline. They are starting points, not measured production values: tune them against the
+# first operator deployment. Job and workload labels match the lab scrape config
+# (bindings/kubernetes/lib/ns/lab-metrics.libsonnet): job="roles" with workload=<role>, and
+# job="postgres" for postgres_exporter.
+groups:
+  - name: nightscout-multitenant-delivery
+    rules:
+      - alert: NightscoutEvaluatorCompletionLagHigh
+        expr: |
+          histogram_quantile(0.95, sum by (le, slice) (rate(nightscout_evaluator_completion_lag_seconds_bucket[5m]))) > 30
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Evaluator slice {{ $labels.slice }} p95 completion lag is above the 30 s planning objective"
+          runbook: docs/30-design/tenancy/operations-runbook.md#evaluator-lag
+      - alert: NightscoutEvaluatorCompletionLagClinical
+        expr: |
+          histogram_quantile(0.99, sum by (le, slice) (rate(nightscout_evaluator_completion_lag_seconds_bucket[5m]))) > 120
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "Evaluator slice {{ $labels.slice }} p99 completion lag is above the 120 s clinical deadline; alarms may reach people late"
+          runbook: docs/30-design/tenancy/operations-runbook.md#evaluator-lag
+      - alert: NightscoutEvaluatorPendingOldest
+        expr: max by (slice, pod) (nightscout_evaluator_pending_oldest_age_seconds) > 120
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "Evaluator {{ $labels.pod }} still owes a completion for an input older than 120 s"
+          runbook: docs/30-design/tenancy/operations-runbook.md#evaluator-lag
+      - alert: NightscoutEvaluatorPendingTenants
+        expr: sum by (slice) (nightscout_evaluator_pending_tenants) > 500
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Evaluator slice {{ $labels.slice }} has more than 500 tenants waiting for a durable completion"
+          runbook: docs/30-design/tenancy/operations-runbook.md#evaluator-lag
+      - alert: NightscoutEvaluatorUncertainCompletion
+        expr: sum by (slice) (increase(nightscout_evaluator_completion_unobserved_total[15m])) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: "Evaluator slice {{ $labels.slice }} had a completion whose commit was unconfirmed"
+          runbook: docs/30-design/tenancy/operations-runbook.md#evaluator-lag
+      - alert: NightscoutRealtimeFrameLagHigh
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(nightscout_realtime_frame_lag_seconds_bucket[5m]))) > 10
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Realtime p95 frame lag (completed output known to frame sent) is above 10 s"
+          runbook: docs/30-design/tenancy/operations-runbook.md#realtime-lag
+      - alert: NightscoutRealtimePendingOldest
+        expr: max by (pod) (nightscout_realtime_pending_oldest_age_seconds) > 60
+        for: 2m
+        labels: {severity: warning}
+        annotations:
+          summary: "Realtime {{ $labels.pod }} holds a completed-output notice unpublished for more than 60 s"
+          runbook: docs/30-design/tenancy/operations-runbook.md#realtime-lag
+      - alert: NightscoutStageClockSkew
+        expr: sum by (stage) (increase(nightscout_stage_lag_negative_total[15m])) > 0
+        for: 15m
+        labels: {severity: info}
+        annotations:
+          summary: "Stage lag for {{ $labels.stage }} is being clamped at 0: processes disagree on the clock, so lag figures understate"
+  - name: nightscout-multitenant-storage-and-process
+    rules:
+      - alert: NightscoutStorageRefusals
+        expr: sum by (code) (rate(nightscout_storage_refusals_total[5m])) > 0.1
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "api is answering 503 {{ $labels.code }} (storage refusal) at more than 0.1/s"
+          runbook: docs/30-design/tenancy/operations-runbook.md#storage-refusals
+      - alert: NightscoutStorageUnavailable
+        expr: sum(rate(nightscout_storage_refusals_total{code="STORAGE_UNAVAILABLE"}[2m])) > 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "api reports STORAGE_UNAVAILABLE: the database is suspended or unreachable"
+          runbook: docs/30-design/tenancy/operations-runbook.md#postgresql-restart-and-failover
+      - alert: NightscoutEventLoopSaturated
+        expr: |
+          (sum by (pod, workload) (rate(nodejs_eventloop_utilization_histogram_sum[5m]))
+            / sum by (pod, workload) (rate(nodejs_eventloop_utilization_histogram_count[5m]))) > 0.9
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.workload }} {{ $labels.pod }} event loop is more than 90% busy"
+          runbook: docs/30-design/tenancy/operations-runbook.md#evaluator-lag
+      - alert: NightscoutRoleDown
+        expr: up{job="roles"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ $labels.workload }} {{ $labels.pod }} is not answering its metrics scrape"
+          runbook: docs/30-design/tenancy/operations-runbook.md#node-loss
+      - alert: NightscoutDatabaseClockOffset
+        expr: abs(nightscout_db_clock_offset_seconds) > 2 or nightscout_db_clock_offset_seconds != nightscout_db_clock_offset_seconds
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Clock offset between {{ $labels.pod }} and the database is above 2 s or unreadable; lag figures are unreliable"
+  - name: nightscout-postgres
+    rules:
+      - alert: PostgresExporterDown
+        expr: up{job="postgres"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "postgres_exporter {{ $labels.pod }} is not scraped"
+          runbook: docs/30-design/tenancy/operations-runbook.md#postgresql-restart-and-failover
+      - alert: PostgresDown
+        expr: pg_up == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "PostgreSQL is not answering the exporter"
+          runbook: docs/30-design/tenancy/operations-runbook.md#postgresql-restart-and-failover
+      - alert: PostgresConnectionsNearLimit
+        expr: sum by (pod) (pg_stat_activity_count) / max by (pod) (pg_settings_max_connections) > 0.85
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "PostgreSQL {{ $labels.pod }} uses more than 85% of max_connections"
+      - alert: PostgresRestarted
+        expr: changes(pg_postmaster_start_time_seconds[10m]) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: "PostgreSQL {{ $labels.pod }} restarted; expect a warm-up of tenant caches"
+          runbook: docs/30-design/tenancy/operations-runbook.md#warm-up-after-restart
+      - alert: PostgresReplicationLagHigh
+        expr: max(pg_replication_lag_seconds) > 30
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "A PostgreSQL replica is more than 30 s behind; a failover now would lose recent writes"
+          runbook: docs/30-design/tenancy/operations-runbook.md#postgresql-restart-and-failover
+      - alert: PostgresLongRunningTransaction
+        expr: max by (pod) (pg_stat_activity_max_tx_duration) > 300
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "A PostgreSQL transaction has run for more than 300 s on {{ $labels.pod }}"
+      - alert: PostgresDeadlocks
+        expr: sum(increase(pg_stat_database_deadlocks[15m])) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: "PostgreSQL deadlocks in the last 15 minutes"
