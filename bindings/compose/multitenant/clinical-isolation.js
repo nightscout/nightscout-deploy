@@ -50,9 +50,16 @@ const CLINICAL_ROLE_KINDS = Object.freeze(['evaluator', 'realtime', 'outbox', 's
 // (RECEIVER) is retired in core and no longer counted. Measured 2026-11-22 (core
 // 458539d99, Compose, 120 tenants, one evaluator, sampled pg_stat_activity every
 // 0.5 s): peaks evaluation 4, read 2, registry 2, outbox 2, suppression 2,
-// operation 5; 16 at once. The api and realtime terms are still their data pools
-// only; their fixed pools are not yet declared and use the headroom above the budget.
+// operation 5; 16 at once. An api process opens its data and display-settings
+// pools (NS_POOL_API_MAX each), fixed secrets 4, registry 2 and socket alarm 4
+// pools, and the operation pool: 2 x 4 + 10 + 8 + 3 = 29 at the defaults. A
+// realtime process opens its data pool, fixed read 2, registry 2 and owner 1
+// pools, and the operation pool: 4 + 5 + 8 + 3 = 20. Same terms as the
+// Kubernetes perPod (connection-budget.libsonnet); before 2026-11-23 the api and
+// realtime terms counted only their data pools (4 each).
 const POOL_DEFAULTS = Object.freeze({ API: 4, REALTIME: 4, EVALUATOR: 4, READ: 2, OPERATION: 8 });
+const API_FIXED = 10;
+const REALTIME_FIXED = 5;
 const EVALUATOR_FIXED = 6;
 const TRANSIENT_PER_PROCESS = 3;
 function poolMax (source, role) {
@@ -63,7 +70,8 @@ function poolMax (source, role) {
 }
 function connectionBudget ({ apiReplicas = 1, realtimeWorkers = 1, evaluatorWorkers = 1 } = {}, source = process.env) {
   const pool = role => poolMax(source, role);
-  return apiReplicas * pool('API') + realtimeWorkers * pool('REALTIME') +
+  return apiReplicas * (2 * pool('API') + API_FIXED + pool('OPERATION') + TRANSIENT_PER_PROCESS) +
+    realtimeWorkers * (pool('REALTIME') + REALTIME_FIXED + pool('OPERATION') + TRANSIENT_PER_PROCESS) +
     evaluatorWorkers * (pool('EVALUATOR') + pool('READ') + EVALUATOR_FIXED + pool('OPERATION') + TRANSIENT_PER_PROCESS);
 }
 function fail (message) { throw new TypeError(message); }

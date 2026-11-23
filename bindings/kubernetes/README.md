@@ -71,6 +71,32 @@ directories. This includes extensionless source token files. The installer test 
 admin environment through the actual source environment reader and confirms it refuses group-readable
 input. No Secret or literal credential is rendered.
 
+## PostgreSQL sizing and its own node
+
+One PostgreSQL primary, on its own node, sized vertically. `postgresSizing: '1k' | '5k' | '10k'` selects a
+tier from `lib/ns/postgres-sizing.json`: server settings (`-c` flags), CPU and memory requests (memory never
+below the planned connection and `/dev/shm` figure) and, in dynamic storage mode, the claim size. Explicit
+`postgresSettings`, `resources.postgres.requests` and `storage.postgres` each win over the tier.
+`max_connections`, `reserved_connections`, `shared_preload_libraries` and `track_io_timing` stay owned by
+the binding and are refused in either place. A restored fixture claim (existing-claim mode) is sized by
+whoever restores it: use at least the tier's `claim` (the database plus `max_wal_size` plus growth). The tier
+figures come from the 10k packets (database 44-50 GB; read-derived for 5k and 1k) and stay provisional until
+the ladder measures them.
+
+`postgresNode: { nodeSelector: {...}, taint: { key, value } }` gives the postgres Pod that node selector and a
+`NoSchedule` toleration for `key=value`, added to the run's own `placement.tolerations`. The render refuses
+any other workload that would tolerate the key, a `placementByWorkload.postgres` beside it, and a
+`placement.nodeName`. The node pool and its taint are made by the operator, for example (not run by any tool
+here):
+
+    doctl kubernetes cluster node-pool create <cluster> --name <run>-pg --size m-16vcpu-128gb --count 1 \
+      --taint nightscout.org/dedicated=postgres:NoSchedule
+
+with `postgresNode: { nodeSelector: { "doks.digitalocean.com/node-pool": "<run>-pg" }, taint: { key:
+"nightscout.org/dedicated", value: "postgres" } }`. `NoSchedule` affects only new scheduling: a new pool has no
+Pods, and nothing already running elsewhere is evicted. Without either input the render is unchanged
+(`check/postgres-sizing.test.js`).
+
 ## Lab metrics (opt-in)
 
 `labMetrics: {enabled: true}` adds, in the run namespace only: one Prometheus Deployment (pinned
