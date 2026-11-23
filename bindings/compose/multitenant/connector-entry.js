@@ -8,17 +8,14 @@
 //      tenant root secret, as a single site's admin would (role `vcpool-connector`: read+create on
 //      the copied collections, read on profile: the connector reads its gap from the tenant first);
 //   2. enters three tenant secrets (source endpoint, source credential, the subject's access
-//      token) through core's secrets component under the tenant's binding, with the provisioning
-//      identity (PostgreSQL provisioner login, Vault encrypt on tenant data keys only);
+//      token) through the admin API's write-only resource PUT /v1/tenants/{id}/secrets/{ref}
+//      (decision connector-secret-entry-admin); the values are never read back;
 //   3. creates the connector definition (references only) through the private admin API.
-// Core has no HTTP resource that enters a tenant secret value; the connector-sources resource
-// requires the references to exist first (core docs/tenant-connector.md).
 //
 //   NS_CONNECTOR_ENTRY_INPUT  /run/ns-connector-entry/input.json
 //       { version: 1, sourceId, collections, tenants: [{ id, endpoint, sourceCredential }] }
 //   NS_PRIMER_STATE           the primer roster directory (tenants.json: id, host, rootSecret)
-//   NS_SECRETS_DIR            the admin role document (ns_provisioner_pg, vault-token)
-//   NS_CONNECTOR_API_ORIGIN, NS_CONNECTOR_ADMIN_ORIGIN, NS_VAULT_ADDR
+//   NS_CONNECTOR_API_ORIGIN, NS_CONNECTOR_ADMIN_ORIGIN
 // Output (stdout, one JSON line): counts and fixed codes only; never ids, hosts or credentials.
 const fs = require('node:fs'), path = require('node:path'), crypto = require('node:crypto'), http = require('node:http');
 const fail = (code, extra = {}) => Object.assign(new Error(code), { code, ...extra });
@@ -56,8 +53,7 @@ function input (env = process.env) {
     const r = known.get(row.id);
     if (!r || typeof r.host !== 'string' || typeof r.rootSecret !== 'string' || !r.rootSecret) throw fail('CONNECTOR_ENTRY_ROSTER_MISSING');
   }
-  return { ...value, roster: known, api: env.NS_CONNECTOR_API_ORIGIN || 'http://api:1337', admin: env.NS_CONNECTOR_ADMIN_ORIGIN || 'http://admin:1342',
-    vault: env.NS_VAULT_ADDR || 'https://vault:8200', secretsDir: env.NS_SECRETS_DIR || '/run/ns-config' };
+  return { ...value, roster: known, api: env.NS_CONNECTOR_API_ORIGIN || 'http://api:1337', admin: env.NS_CONNECTOR_ADMIN_ORIGIN || 'http://admin:1342' };
 }
 
 function request (origin, route, { method = 'GET', body, headers = {} } = {}) {
@@ -105,64 +101,17 @@ async function subjectToken (options, tenant, collections) {
   return { token: subject.accessToken, outcome };
 }
 
-async function secretsComponent (options) {
-  require('../../lib/storage/tenant-scope').setTenancyMode('multi');
-  const settings = require('../../lib/server/serve/deployment-settings');
-  const source = settings.withSecrets({ ...process.env, NS_SECRETS_DIR: options.secretsDir });
-  const l = settings.layout(source);
-  const token = fs.readFileSync(path.join(options.secretsDir, 'vault-token'), 'utf8').trim();
-  // The provisioning login is not a standard secrets-store identity (it also reads audit columns,
-  // so lib/secrets/postgres.js refuses its shape as SECRETS_STORE_UNSAFE). It writes the record and
-  // its audit row the way tenant provisioning does (lib/tenant-registry/provision.js): one
-  // transaction per row under the tenant's row-security binding.
-  const { Client } = require('pg'), q = name => '"' + name + '"';
-  const records = q(l.namespaces.secrets) + '.secret_records', audits = q(l.namespaces.secrets) + '.secret_audit';
-  async function bound (tenant, sql, values) {
-    const client = new Client({ connectionString: source.NS_PROVISIONER_PG, connectionTimeoutMillis: 10000, statement_timeout: 10000, application_name: 'nightscout-connector-entry' });
-    client.on('error', () => {});
-    await client.connect();
-    try {
-      await client.query('BEGIN');
-      await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenant]);
-      await client.query(sql, values);
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK').catch(() => {});
-      if (error.code === '23505') throw fail('SECRETS_REFERENCE_EXISTS');
-      throw fail('CONNECTOR_ENTRY_SECRET_STORE_FAILED');
-    } finally { await client.end().catch(() => {}); }
-  }
-  const persistence = {
-    store: { get: async () => undefined,
-      insert: record => bound(record.tenant, 'INSERT INTO ' + records + ' (tenant_id, id, format, ciphertext) VALUES ($1, $2, $3, $4)', [record.tenant, record.id, record.format, record.ciphertext]) },
-    audit: event => bound(event.tenant, 'INSERT INTO ' + audits + ' (event_id, tenant_id, principal, consumer, operation, secret_id, phase, event_time) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
-      [crypto.randomUUID(), event.tenant, event.principal, event.consumer, event.operation, event.id, event.phase, event.time]),
-    close: async () => {}
-  };
-  const rules = require('../../lib/tenant-registry/rules');
-  const actor = { principal: 'compose-provisioning', consumer: 'connector-entry' };
-  const secrets = require('../../lib/secrets/component').createSecrets({ store: persistence.store, audit: persistence.audit, maxTokenLifetimeSeconds: 1,
-    providerFor: async tenant => require('../../lib/secrets/vault-transit').createVaultTransit({ address: options.vault, mount: l.mount,
-      encryptionKey: rules.vaultKey(tenant, 'data'), getToken: async () => token }),
-    // Encrypt only, and only the connector's three references.
-    authorize: async (identity, action) => identity.principal === actor.principal && identity.consumer === actor.consumer &&
-      action.operation === 'encrypt' && Object.values(refs(options.sourceId)).includes(action.id) });
-  return { actor, secrets, close: () => persistence.close() };
-}
-
-async function enter (options, component, tenant, row) {
+async function enter (options, tenant, row) {
   const ids = refs(options.sourceId), outcomes = {};
   const subject = await subjectToken(options, tenant, options.collections);
   const values = { sourceEndpoint: row.endpoint, sourceCredential: row.sourceCredential, writeCredential: subject.token };
   for (const [field, id] of Object.entries(ids)) {
-    try {
-      await component.secrets.encrypt({ tenant: tenant.id, ...component.actor }, id, Buffer.from(values[field]));
-      outcomes[field] = 'created';
-    } catch (error) {
-      // A repeated entry keeps the first value; rotation is a separate operator act.
-      if (error.code !== 'SECRETS_REFERENCE_EXISTS') throw fail(error.code || 'CONNECTOR_ENTRY_SECRET_FAILED');
-      outcomes[field] = 'existing';
-    }
+    // The admin API's write-only secret resource (decision connector-secret-entry-admin).
+    const put = await request(options.admin, '/v1/tenants/' + tenant.id + '/secrets/' + id, { method: 'PUT', body: { value: values[field] } });
+    if (put.status === 201) outcomes[field] = 'created';
+    // A repeated entry keeps the first value; rotation is a separate operator act.
+    else if (put.status === 409 && put.body?.code === 'TENANT_SECRET_EXISTS') outcomes[field] = 'existing';
+    else throw fail('CONNECTOR_ENTRY_SECRET_REFUSED', { status: put.status, detail: put.body?.code });
   }
   const definition = { ifGeneration: 0, enabled: true, connector: { collections: options.collections, ...ids, sourceCredentialKind: 'token' } };
   const route = '/v1/tenants/' + tenant.id + '/connector-sources/' + options.sourceId;
@@ -178,15 +127,15 @@ async function enter (options, component, tenant, row) {
 }
 
 async function main (env = process.env) {
-  const options = input(env), component = await secretsComponent(options), counts = {};
+  const options = input(env), counts = {};
   const bump = key => { counts[key] = (counts[key] || 0) + 1; };
-  try {
+  {
     for (const row of options.tenants) {
-      const result = await enter(options, component, { id: row.id, ...options.roster.get(row.id) }, row);
+      const result = await enter(options, { id: row.id, ...options.roster.get(row.id) }, row);
       bump('subject:' + result.subject); bump('definition:' + result.definition);
       for (const outcome of Object.values(result.secrets)) bump('secret:' + outcome);
     }
-  } finally { await component.close().catch(() => {}); }
+  }
   return { state: 'connectors-entered', tenants: options.tenants.length, counts };
 }
 

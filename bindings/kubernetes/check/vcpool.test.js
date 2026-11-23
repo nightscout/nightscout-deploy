@@ -52,14 +52,15 @@ test('on: one StatefulSet replica, its listener, the connector-entry Job and eve
   assert.equal(find(v, 'Service', 'vcpool-internal').spec.ports[0].port, 19005);
   assert.deepEqual(from(v, 'vcpool-internal'), ['operator']);
   for (const [policy, caller] of [['postgres-from-app', 'vcpool'], ['vault-from-app', 'vcpool'], ['api-public', 'vcpool'],
-    ['postgres-from-app', 'connector-entry'], ['vault-from-app', 'connector-entry'], ['api-public', 'operator'], ['admin-from-operator', 'operator']]) {
+    ['api-public', 'operator'], ['admin-from-operator', 'operator']]) {
     assert.ok(from(v, policy).includes(caller), policy + ' admits ' + caller);
   }
   assert.deepEqual(from(v, 'admin-from-operator'), ['operator'], 'the admin plane admits operator Pods only');
   const job = find(v, 'Job', 'connector-entry');
   assert.equal(job.spec.suspend, true);
-  assert.deepEqual([job.spec.template.metadata.labels['app.kubernetes.io/component'], job.spec.template.metadata.labels['nightscout.org/operator-task']], ['operator', 'connector-entry']);
-  assert.deepEqual(job.spec.template.spec.volumes.filter(x => x.secret).map(x => x.secret.secretName).sort(), ['ns-ca', 'ns-config-admin', 'ns-connector-entry']);
+  assert.equal(job.spec.template.metadata.labels['app.kubernetes.io/component'], 'operator');
+  for (const policy of ['postgres-from-app', 'vault-from-app']) assert.ok(!from(v, policy).includes('operator'), 'connector-entry holds no database or Vault credential');
+  assert.deepEqual(job.spec.template.spec.volumes.filter(x => x.secret).map(x => x.secret.secretName).sort(), ['ns-connector-entry']);
   assert.equal(job.spec.template.spec.volumes.find(x => x.name === 'client-state').persistentVolumeClaim.claimName, 'primer-results');
   const provision = find(v, 'Job', 'provision').spec.template.spec;
   assert.ok(provision.initContainers.find(x => x.name === 'bootstrap').volumeMounts.some(m => m.mountPath === '/run/ns-credentials/vcpool'));

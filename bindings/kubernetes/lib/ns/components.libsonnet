@@ -176,8 +176,8 @@
       } + lab.policies(c, policy) + {
         apiPublic: policy('api-public', 'api', ['edge', 'operator'] + vc.callers(c), [1337]),
         realtimePublic: policy('realtime-public', 'realtime', ['edge', 'operator'] + (if routed then ['socket-edge'] else []), [1339]),
-        postgresFromApp: vc.admitTask(policy('postgres-from-app', 'postgres', roles + ['admin', 'ui', 'provision'] + (if routed then ['socket-edge'] else []) + vc.callers(c), [5432]), c),
-        vaultFromApp: vc.admitTask(policy('vault-from-app', 'vault', ['api', 'tenant-admin', 'admin', 'provision', 'vault'] + vc.callers(c), [8200]), c),
+        postgresFromApp: policy('postgres-from-app', 'postgres', roles + ['admin', 'ui', 'provision'] + (if routed then ['socket-edge'] else []) + vc.callers(c), [5432]),
+        vaultFromApp: policy('vault-from-app', 'vault', ['api', 'tenant-admin', 'admin', 'provision', 'vault'] + vc.callers(c), [8200]),
       } + (if routed then {
         socketEdgeFromEdge: policy('socket-edge-from-edge', 'socket-edge', ['edge'], [$.socketEdgePort]),
       } else {}),

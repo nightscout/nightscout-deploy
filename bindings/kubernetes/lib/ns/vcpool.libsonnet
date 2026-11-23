@@ -15,11 +15,12 @@
 //     NS_VAULT_ADDR; credentials from Secret ns-config-vcpool (scripts/secrets.sh with NS_VCPOOL=1);
 //   - provisioning: the bootstrap step mounts ns-credentials-vcpool and creates the two vcpool logins,
 //     their grants and the decrypt-only Vault token (compose/multitenant/vcpool.js);
-//   - a suspended operator Job `connector-entry` (compose/multitenant/connector-entry.js) that enters
-//     connector subjects, tenant secrets and definitions from Secret ns-connector-entry;
+//   - a suspended operator Job `connector-entry` (compose/multitenant/connector-entry.js) that enters,
+//     from Secret ns-connector-entry, the connector subject (tenant root API), the three secrets
+//     (admin PUT /v1/tenants/{id}/secrets/{ref}, decision connector-secret-entry-admin) and the
+//     definition (admin connector-sources); it holds no database or Vault credential;
 //   - NetworkPolicy: vcpool reaches postgres, vault and the api's public port; connector-entry is an
-//     operator Pod (admin and the api's public port admit operators) labelled
-//     nightscout.org/operator-task=connector-entry, which postgres and vault admit. Egress to sources is not restricted here (policies
+//     operator Pod (admin and the api's public port admit operators). Egress to sources is not restricted here (policies
 //     are ingress only); a source in the namespace admits vcpool with its own policy.
 // Connection budget: one Pod × (secrets 4 + activity 2 + registry view 2 + definitions 2) = 10,
 // plus the transient readiness clients (connection-budget.libsonnet).
@@ -37,13 +38,9 @@
   settings(c):: std.mergePatch($.defaults, std.get(c, 'vcpool', {})),
   enabled(c):: $.settings(c).enabled == true,
   pods(c):: if $.enabled(c) then 1 else 0,
-  // The connector-entry Pod is an operator Pod (component `operator`, so the admin plane and the
-  // api's public port already admit it) with one more label that postgres and vault admit.
-  task:: { 'nightscout.org/operator-task': 'connector-entry' },
-  // Extra components admitted to postgres, vault and the api's public port.
+  // Extra components admitted to postgres, vault and the api's public port. The connector-entry Pod
+  // is an operator Pod: admin and the api's public port already admit operators.
   callers(c):: if $.enabled(c) then ['vcpool'] else [],
-  // A postgres or vault policy with the connector-entry operator task admitted as well.
-  admitTask(p, c):: if !$.enabled(c) then p else p + { spec+: { ingress: [p.spec.ingress[0] + { from+: [{ podSelector: { matchLabels: $.task } }] }] } },
 
   check(c)::
     local s = $.settings(c);
@@ -103,32 +100,27 @@
     local entry = {
       apiVersion: 'batch/v1', kind: 'Job', metadata: meta('connector-entry', 'operator'),
       spec: { suspend: true, backoffLimit: 0, activeDeadlineSeconds: c.provisionDeadlineSeconds,
-        template: { metadata: { labels: label('operator') + $.task }, spec: {
+        template: { metadata: { labels: label('operator') }, spec: {
           restartPolicy: 'Never', automountServiceAccountToken: false, enableServiceLinks: false,
           securityContext: template.securityContext,
           containers: [{
             name: 'connector-entry', image: base.image, imagePullPolicy: 'IfNotPresent', securityContext: hardened,
             command: ['node', 'deploy/multitenant/connector-entry.js'],
             env: [
-              { name: 'NODE_EXTRA_CA_CERTS', value: '/run/ns-ca/ca.crt' },
-              { name: 'NS_VAULT_ADDR', value: 'https://vault:8200' },
-              { name: 'NS_SECRETS_DIR', value: '/run/ns-config' },
               { name: 'NS_PRIMER_STATE', value: '/run/ns-client' },
               { name: 'NS_CONNECTOR_ENTRY_INPUT', value: '/run/ns-connector-entry/input.json' },
               { name: 'NS_CONNECTOR_API_ORIGIN', value: 'http://api:1337' },
               { name: 'NS_CONNECTOR_ADMIN_ORIGIN', value: 'http://admin:1342' },
             ],
             volumeMounts: [
-              { name: 'secret-admin', mountPath: '/run/ns-config', readOnly: true },
               { name: 'entry-input', mountPath: '/run/ns-connector-entry', readOnly: true },
               { name: 'client-state', mountPath: '/run/ns-client', readOnly: true },
-            ] + [v for v in base.volumeMounts if std.member(keep, v.name)],
+            ] + [v for v in base.volumeMounts if std.member(['tmp'], v.name)],
           }],
           volumes: [
-            { name: 'secret-admin', secret: { secretName: 'ns-config-admin', defaultMode: 288 } },
             { name: 'entry-input', secret: { secretName: 'ns-connector-entry', defaultMode: 288 } },
             { name: 'client-state', persistentVolumeClaim: { claimName: 'primer-results', readOnly: true } },
-          ] + [v for v in template.volumes if std.member(keep, v.name)],
+          ] + [v for v in template.volumes if std.member(['tmp'], v.name)],
         } },
       },
     };
