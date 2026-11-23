@@ -43,7 +43,9 @@ for (const finishFails of [false, true]) {
       './output-grants': {outputGrants: () => async () => {}},
       '../../lib/server/serve/deployment-settings': {evaluator: () => ({consumer: 'evaluator-fixture'})},
       './credentials': {read: () => ({postgres: {}, vault: {}})},
-      './registry-bootstrap': {finish}
+      './registry-bootstrap': {finish},
+      // vcpool identities (vcpool.js): not seeded in this fixture.
+      './vcpool': {ensure: async ({admin}) => { await admin.query(); events.push('vcpool'); return {vcpool: 'not-seeded'}; }}
     };
     const file = require.resolve('../bootstrap');
     const loaded = new Module(file, module);
@@ -55,6 +57,6 @@ for (const finishFails of [false, true]) {
     });
     if (finishFails) await assert.rejects(result, error => error === finishError);
     else assert.equal((await result).state, 'complete');
-    assert.deepEqual(events, ['finish-start', 'finish-settled', 'close']);
+    assert.deepEqual(events, finishFails ? ['finish-start', 'finish-settled', 'close'] : ['finish-start', 'finish-settled', 'vcpool', 'close']);
   });
 }
