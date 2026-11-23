@@ -35,6 +35,15 @@ test('no tier and no node: the render is unchanged (postgres keeps the image def
   assert.equal(base.value.inventoryOut.postgresNode, undefined);
 });
 
+test('no tier and no authored storage.postgres: the claim keeps the default size, never null', () => {
+  const r = render({ storage: { mode: 'dynamic' }, profile: 'standard' });
+  assert.equal(r.status, 0, r.error);
+  assert.equal(r.value.postgres.statefulset.spec.volumeClaimTemplates[0].spec.resources.requests.storage, '1Gi');
+  const authored = render({ storage: { mode: 'dynamic', postgres: '3Gi' }, profile: 'standard' });
+  assert.equal(authored.status, 0, authored.error);
+  assert.equal(authored.value.postgres.statefulset.spec.volumeClaimTemplates[0].spec.resources.requests.storage, '3Gi');
+});
+
 for (const name of Object.keys(tiers)) {
   test(`tier ${name}: settings, requests and claim reach postgres; explicit settings win`, () => {
     const t = tiers[name];

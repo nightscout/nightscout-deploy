@@ -148,7 +148,7 @@
     local maxConnections = plan.maxConnections,
     local sizing = $.postgresSizing(c),
     local authoredStorage = std.objectHas(overrides, 'storage') && std.isObject(overrides.storage) && std.objectHas(overrides.storage, 'postgres'),
-    local postgresClaim = if sizing != null && !authoredStorage then sizing.claim else c.storage.postgres,
+    local postgresClaim = if sizing.claim != null && !authoredStorage then sizing.claim else c.storage.postgres,
     assert std.isNumber(maxConnections) && maxConnections == std.floor(maxConnections) &&
            maxConnections > clinicalReserved + superuserReserved && maxConnections <= 10000 :
            'postgresMaxConnections must be an integer from 44 to 10000, leaving at least one ordinary connection',
