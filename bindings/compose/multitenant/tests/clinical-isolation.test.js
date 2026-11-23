@@ -41,11 +41,18 @@ test('reserved-connection grants name clinical roles and never a REST-serving or
   assert.throws(() => isolation.grants(merged), /REST-serving role cannot use reserved connections/);
 });
 
-test('max_connections is sized from the declared role pools; an evaluator counts 23 at the defaults, as on Kubernetes', () => {
+test('max_connections is sized from the declared role pools; api 29, realtime 20 and evaluator 23 at the defaults, as on Kubernetes', () => {
   const shape = {apiReplicas: 16, realtimeWorkers: 8, evaluatorWorkers: 8};
-  // 16 x api 4 + 8 x realtime 4 + 8 x (evaluator 4 + read 2 + registry/outbox/suppression 6 + operation 8 + transient 3)
-  assert.equal(isolation.connectionBudget(shape, {}), 64 + 32 + 8 * 23);
+  // 16 x (api data 4 + display 4 + secrets/registry/alarm 10 + operation 8 + transient 3)
+  // + 8 x (realtime 4 + read/registry/owner 5 + operation 8 + transient 3)
+  // + 8 x (evaluator 4 + read 2 + registry/outbox/suppression 6 + operation 8 + transient 3)
+  assert.equal(isolation.connectionBudget(shape, {}), 16 * 29 + 8 * 20 + 8 * 23);
   assert.equal(isolation.connectionBudget({apiReplicas: 0, realtimeWorkers: 0, evaluatorWorkers: 1}, {}), 23);
+  assert.equal(isolation.connectionBudget({apiReplicas: 1, realtimeWorkers: 0, evaluatorWorkers: 0}, {}), 29);
+  assert.equal(isolation.connectionBudget({apiReplicas: 0, realtimeWorkers: 1, evaluatorWorkers: 0}, {}), 20);
+  // NS_POOL_API_MAX sizes two api pools (data and display settings); NS_POOL_OPERATION_MAX one pool in every role.
+  assert.equal(isolation.connectionBudget(shape, {NS_POOL_API_MAX: '8'}) - isolation.connectionBudget(shape, {}), 16 * 2 * 4);
+  assert.equal(isolation.connectionBudget(shape, {NS_POOL_OPERATION_MAX: '9'}) - isolation.connectionBudget(shape, {}), 16 + 8 + 8);
   assert.equal(isolation.connectionBudget(shape, {NS_POOL_READ_MAX: '6'}) - isolation.connectionBudget(shape, {}), 8 * 4);
   // The retired stream-receipt pool is not counted.
   assert.equal(isolation.connectionBudget(shape, {NS_POOL_RECEIVER_MAX: '6'}), isolation.connectionBudget(shape, {}));
