@@ -97,3 +97,18 @@ test('realtime K=2: every internal caller addresses the tenant owner Pod', { ski
 });
 
 // Evaluator K>1: check/evaluator-slices.test.js.
+
+// socket-edge replicas (lane E, 2026-11-24): rendered from realtime K unless socketEdge.replicas
+// states a count; it inherited ui's replicas: 1 before. Stateless routing: no client affinity.
+test('socket-edge replicas follow realtime K or the stated socketEdge.replicas', () => {
+  for (const k of [2, 4, 8]) {
+    const r = render({ slices: { realtime: k } });
+    assert.equal(r.status, 0, r.error);
+    assert.equal(r.value.socketEdge.deployment.spec.replicas, k, 'K=' + k);
+    assert.equal(r.value.ui.deployment.spec.replicas, 1, 'ui keeps one replica');
+  }
+  const stated = render({ slices: { realtime: 2 }, socketEdge: { replicas: 3 } });
+  assert.equal(stated.status, 0, stated.error);
+  assert.equal(stated.value.socketEdge.deployment.spec.replicas, 3);
+  for (const bad of [0, 17, 1.5]) assert.notEqual(render({ slices: { realtime: 2 }, socketEdge: { replicas: bad } }).status, 0, 'refuses ' + bad);
+});

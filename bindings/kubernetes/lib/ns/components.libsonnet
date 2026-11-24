@@ -147,9 +147,18 @@
         // Compose: socket-edge extends ui (same documents and registry reader, another command).
         local ui = raw.ui.deployment,
         local upstreams = [realtimePod(i, 1339) for i in std.range(0, k - 1)],
+        // Replicas: socketEdge.replicas, or realtime K when null (one edge process per realtime
+        // slice). socket-edge keeps no per-connection state that pins a client: the route is
+        // sha256-modulo-v1 of the tenant over the static map, identical in every replica; the
+        // engine.io session lives in the owning realtime Pod; a polling request or an upgrade may
+        // reach any replica through the Service. The strategy stays ui's Recreate (the binding's
+        // invariant for every Deployment, check/invariants.js).
+        local requested = std.get(std.get(c, 'socketEdge', {}), 'replicas', null),
+        local replicas = if requested == null then k else requested,
+        assert std.isNumber(replicas) && replicas == std.floor(replicas) && replicas >= 1 && replicas <= 16 : 'socketEdge.replicas must be null or an integer 1..16',
         deployment: ui + {
           metadata: meta('socket-edge', 'socket-edge'),
-          spec+: { selector: { matchLabels: label('socket-edge') }, template+: {
+          spec+: { replicas: replicas, selector: { matchLabels: label('socket-edge') }, template+: {
             metadata: { labels: label('socket-edge') },
             spec+: { containers: [x + {
               command: ['node', '-r', './deploy/multitenant/load-env.js', 'deploy/multitenant/socket-edge.js'],

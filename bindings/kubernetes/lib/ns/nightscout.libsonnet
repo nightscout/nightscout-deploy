@@ -95,6 +95,10 @@
     // Opt-in vcpool role (vcpool.libsonnet): the tenant-side Nightscout connector. Off by default; off
     // renders nothing extra.
     vcpool: (import 'vcpool.libsonnet').defaults,
+    // socket-edge (realtime K>1 only, components.libsonnet): replicas null = realtime K, one per
+    // realtime slice; an integer 1..16 is the operator's stated count. Each replica routes every
+    // tenant by the same static map and holds no session state, so no client is pinned to one.
+    socketEdge: { replicas: null },
     resources: {
       [name]: {
         requests: { cpu: '25m', memory: '32Mi', 'ephemeral-storage': '16Mi' },

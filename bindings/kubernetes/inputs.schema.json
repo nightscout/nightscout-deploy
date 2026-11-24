@@ -429,6 +429,14 @@
         }
       }
     },
+    "socketEdge": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "socket-edge, the realtime routing proxy rendered when slices.realtime > 1 (lib/ns/components.libsonnet). It holds no per-connection state, so its replicas need no client affinity.",
+      "properties": {
+        "replicas": { "type": ["integer", "null"], "minimum": 1, "maximum": 16, "description": "null renders realtime K replicas (one per realtime slice)." }
+      }
+    },
     "vcpool": {
       "type": "object",
       "additionalProperties": false,
