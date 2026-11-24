@@ -108,8 +108,9 @@ test('postgresNode refuses any other workload that would tolerate the dedicated 
   assert.match(noExecute.error, /effect is always NoSchedule/);
 });
 
-// A parallel VACUUM (or other parallel maintenance) allocates a dynamic shared memory segment of up to
-// maintenance_work_mem in /dev/shm, beside the 1 GiB the binding plans for parallel query and hash joins.
+// Parallel maintenance allocates dynamic shared memory in /dev/shm, beside the 1 GiB the binding plans
+// for parallel query and hash joins: the binding plans max(1, max_parallel_maintenance_workers) x
+// maintenance_work_mem (PostgreSQL's default of 2 workers when the settings do not name the count).
 // Measured (lane L, 2026-11-23): at the 10k tier, VACUUM (PARALLEL 4) failed on the 1 GiB volume with
 // "could not resize shared memory segment ... to 1073779488 bytes: No space left on device".
 const pgMiB = v => { const m = /^(\d+)\s*(kB|MB|GB|TB)?$/.exec(v); assert.ok(m, 'unparsed ' + v); return Number(m[1]) * { kB: 1 / 1024, MB: 1, GB: 1024, TB: 1024 * 1024 }[m[2] || 'kB']; };
@@ -120,18 +121,25 @@ for (const name of Object.keys(tiers)) {
     assert.equal(r.status, 0, r.error);
     const mwm = pgMiB(settingsOf(r.value).maintenance_work_mem);
     assert.ok(mwm >= 512, 'every tier sets maintenance_work_mem');
-    assert.ok(shmMiB(r.value) >= 1024 + mwm, `${name}: /dev/shm ${shmMiB(r.value)}Mi is not above maintenance_work_mem ${mwm}MiB + 1024MiB`);
+    const workers = Math.max(1, Number(settingsOf(r.value).max_parallel_maintenance_workers ?? 2));
+    assert.equal(shmMiB(r.value), 1024 + workers * mwm, `${name}: /dev/shm is 1024MiB + ${workers} x maintenance_work_mem ${mwm}MiB`);
     const req = pgContainer(r.value).resources.requests.memory;
     assert.ok(Number(req.slice(0, -2)) >= shmMiB(r.value), 'the memory request holds the memory-backed volume');
   });
 }
 
-test('/dev/shm follows an explicit maintenance_work_mem in any PostgreSQL unit; without one it stays 1 GiB', () => {
-  for (const [value, expected] of [['4GB', 1024 + 4096], ['262144', 1024 + 256], ['300MB', 1024 + 300], ['524288kB', 1024 + 512]]) {
+test('/dev/shm follows maintenance_work_mem (any PostgreSQL unit) times the maintenance workers; without one it stays 1 GiB', () => {
+  for (const [value, expected] of [['4GB', 1024 + 2 * 4096], ['262144', 1024 + 2 * 256], ['300MB', 1024 + 2 * 300], ['524288kB', 1024 + 2 * 512]]) {
     const r = render({ postgresSettings: { maintenance_work_mem: value } });
     assert.equal(r.status, 0, r.error);
     assert.equal(shmMiB(r.value), expected, value);
   }
+  for (const [workers, expected] of [['4', 1024 + 4 * 1024], ['1', 1024 + 1024], ['0', 1024 + 1024]]) {
+    const r = render({ postgresSettings: { maintenance_work_mem: '1GB', max_parallel_maintenance_workers: workers } });
+    assert.equal(r.status, 0, r.error);
+    assert.equal(shmMiB(r.value), expected, workers + ' workers');
+  }
+  assert.match(render({ postgresSettings: { maintenance_work_mem: '1GB', max_parallel_maintenance_workers: 'many' } }).error, /max_parallel_maintenance_workers/);
   const base = render({});
   assert.equal(base.status, 0, base.error);
   assert.equal(shmMiB(base.value), 1024);

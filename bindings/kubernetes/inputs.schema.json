@@ -76,13 +76,25 @@
       "type": "integer",
       "minimum": 60,
       "maximum": 9223372036,
-      "description": "Total Job deadline in seconds. The Kubernetes Job controller converts these seconds to a signed 64-bit nanosecond duration."
+      "description": "Total Job deadline in seconds. The Kubernetes Job controller converts these seconds to a signed 64-bit nanosecond duration. Omitted with migration.largestRelationBytes declared: the larger of 900 and the migration budget. An authored value below the migration budget is refused."
     },
     "migrationStatementTimeoutMs": {
       "type": "integer",
       "minimum": 1,
       "maximum": 600000,
-      "description": "PostgreSQL catalogue migration statement timeout during bootstrap. Omit for the application's migration default."
+      "description": "PostgreSQL catalogue migration statement timeout during bootstrap. Omit for the value derived from migration.largestRelationBytes, or without one for the application's migration default. The maximum is the core migration runner's own limit."
+    },
+    "migration": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Catalogue migration budget for a restored database: statement timeout = max(60 s, ceil(largestRelationBytes / buildBytesPerSecond x safetyFactor)); the provision Job needs that x longStatements + otherStepsSeconds.",
+      "properties": {
+        "largestRelationBytes": { "type": "integer", "minimum": 0, "description": "Heap bytes of the largest relation a migration statement may scan or index. Omit to derive nothing." },
+        "buildBytesPerSecond": { "type": "number", "exclusiveMinimum": 0, "default": 220000000, "description": "Measured once: 13,110,624,256 heap bytes in 59.613 s (2026-11-24)." },
+        "safetyFactor": { "type": "number", "minimum": 1, "default": 3 },
+        "longStatements": { "type": "integer", "minimum": 1, "default": 1, "description": "Migration statements expected to use the whole statement budget." },
+        "otherStepsSeconds": { "type": "integer", "minimum": 0, "default": 300, "description": "Store wait, roles, grants and Vault steps of the provision Job." }
+      }
     },
     "primerConcurrency": {
       "type": "integer",

@@ -294,10 +294,22 @@ authority oracles.
 
 ### Restore a cold synthetic fixture
 
-Set `migrationStatementTimeoutMs` when an offline catalogue change needs more time
-to build an index on a restored table. The bootstrap init container accepts 1–600,000 ms
-per migration statement. Omitting it selects the core migration default of 60,000 ms.
-The provision Job's `provisionDeadlineSeconds` covers all its init containers together.
+Declare `migration.largestRelationBytes` (heap bytes of the largest restored relation) so an
+offline catalogue change has time to scan it or build an index on it. The render derives the
+bootstrap's migration statement timeout as max(60 s, ceil(bytes / `buildBytesPerSecond` ×
+`safetyFactor`)); the defaults are 220,000,000 bytes/s (measured once, 2026-11-24: a partial
+index over a 13,110,624,256-byte heap in 59.613 s) and 3. The provision Job's deadline covers all
+its init containers: it must hold that timeout × `longStatements` (1) + `otherStepsSeconds` (300).
+With no authored `provisionDeadlineSeconds` the render raises the 900 s default to that sum; an
+authored deadline below it is refused, and so is an authored `migrationStatementTimeoutMs` below
+the derived value. The core migration runner accepts at most 600,000 ms per statement, so a
+larger derived timeout is refused at render (about 44 GB at the default rate and factor).
+With nothing declared the render is unchanged: no timeout is passed (core default 60,000 ms) and
+the deadline is `provisionDeadlineSeconds`.
+
+`/dev/shm` for PostgreSQL is 1,024 MiB plus max(1, `max_parallel_maintenance_workers`) ×
+`maintenance_work_mem` when the effective settings name `maintenance_work_mem` (PostgreSQL's
+default of 2 workers when the count is not named).
 
 For a storage-backed run, keep the four PVCs used by PostgreSQL, Vault, the provision Job
 and the primer Job together with the matching `ns-config-*`, `ns-credentials-*`,

@@ -9,6 +9,17 @@ test('bootstrap requires explicit intent, dedicated database and HTTPS Vault',()
   for (const value of ['0', '600001', '-1000', '5.5', 'unlimited']) {
     assert.throws(() => bootstrap.input({...env, NS_MIGRATION_STATEMENT_TIMEOUT_MS:value}), /BOOTSTRAP_MIGRATION_TIMEOUT_INVALID/);
   }
+  // A declared relation size derives the timeout: the measured build (13,110,624,256 bytes in
+  // 59.613 s) gets three times its time, rounded up; the Kubernetes render gives the same 179000.
+  const sized=(bytes,more={})=>bootstrap.input({...env,NS_MIGRATION_LARGEST_RELATION_BYTES:bytes,...more}).migrationStatementTimeoutMs;
+  assert.equal(sized('13110624256'),179000);
+  assert.equal(sized('1000'),60000);
+  assert.equal(sized('1000000000',{NS_MIGRATION_BUILD_BYTES_PER_SECOND:'10000000'}),300000);
+  assert.equal(sized('13110624256',{NS_MIGRATION_STATEMENT_TIMEOUT_MS:'200000'}),200000);
+  assert.throws(()=>sized('13110624256',{NS_MIGRATION_STATEMENT_TIMEOUT_MS:'100000'}),/BOOTSTRAP_MIGRATION_TIMEOUT_BELOW_BUDGET/);
+  assert.throws(()=>sized('60000000000'),/BOOTSTRAP_MIGRATION_BUDGET_ABOVE_RUNNER_LIMIT/);
+  for (const value of ['-1','1.5','lots','']) assert.throws(()=>sized(value),/BOOTSTRAP_MIGRATION_BUDGET_INVALID/);
+  assert.throws(()=>sized('1000',{NS_MIGRATION_BUILD_BYTES_PER_SECOND:'0'}),/BOOTSTRAP_MIGRATION_BUDGET_INVALID/);
   assert.throws(()=>bootstrap.input({...env,NS_COMPOSE_BOOTSTRAP:'0'}),/EXPLICIT_COMPOSE/);
   assert.throws(()=>bootstrap.input({...env,NS_BOOTSTRAP_POSTGRES_URL:'postgres://postgres:synthetic-only@postgres:5432/real_database'}),/DEDICATED/);
   assert.throws(()=>bootstrap.input({...env,VAULT_ADDR:'http://vault:8200'}),/HTTPS/);

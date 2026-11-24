@@ -29,6 +29,16 @@ test('operator CLI requires an explicit tenant, private directory and exact rest
   assert.throws(() => argumentsFor(['restore', '--tenant', A, '--directory', '/run/ns-artifacts']), { code: 'COMPOSE_OPERATOR_USAGE' });
   assert.throws(() => argumentsFor(['export', '--tenant', A, '--directory', '../artifact']), { code: 'COMPOSE_OPERATOR_USAGE' });
   assert.equal(argumentsFor(['restore', '--tenant', A, '--directory', '/run/ns-artifacts', '--digest', 'a'.repeat(64)]).digest, 'a'.repeat(64));
+  assert.equal(argumentsFor(['export', '--tenant', A, '--directory', '/run/ns-artifacts', '--rows', '250000']).rows, 250000);
+  assert.throws(() => argumentsFor(['export', '--tenant', A, '--directory', '/run/ns-artifacts', '--rows', '1.5']), { code: 'COMPOSE_OPERATOR_USAGE' });
+  assert.throws(() => argumentsFor(['restore', '--tenant', A, '--directory', '/run/ns-artifacts', '--digest', 'a'.repeat(64), '--rows', '1']), { code: 'COMPOSE_OPERATOR_USAGE' });
+  // Export statement timeout: 10 s floor plus rows at the declared rate (5,000 rows/s by default).
+  const { exportTimeoutMs } = require('./restore');
+  assert.deepEqual([exportTimeoutMs(undefined, {}), exportTimeoutMs(0, {}), exportTimeoutMs(1, {}), exportTimeoutMs(250000, {})], [10000, 10000, 11000, 60000]);
+  assert.equal(exportTimeoutMs(250000, { NS_EXPORT_ROWS_PER_SECOND: '1000' }), 260000);
+  for (const [rows, rate] of [[-1, '5000'], [1.5, '5000'], [1, '0'], [1, 'fast'], [1e13, '1']]) {
+    assert.throws(() => exportTimeoutMs(rows, { NS_EXPORT_ROWS_PER_SECOND: rate }), { code: 'COMPOSE_OPERATOR_EXPORT_BUDGET_INVALID' });
+  }
 });
 
 test('interrupted-restore recovery takes a tenant, resume takes the reported claim, and both use a plain pool', async () => {

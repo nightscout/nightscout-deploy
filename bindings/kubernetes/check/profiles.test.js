@@ -501,3 +501,36 @@ test('the migration timeout belongs only to the bootstrap init container', () =>
   assert.equal(JSON.stringify(result.value).split(name).length - 1, 1);
   for (const invalid of [0, 600001, 1.5]) assert.notEqual(render({[field]: invalid}).status, 0);
 });
+
+test('a declared relation size sets the migration timeout and the provision deadline holds it', () => {
+  const name = 'NS_MIGRATION_STATEMENT_TIMEOUT_MS';
+  const job = r => { assert.equal(r.status, 0, r.error); return r.value.provision.job.spec; };
+  const timeout = spec => spec.template.spec.initContainers.find(c => c.name === 'bootstrap').env.find(e => e.name === name)?.value;
+  // Nothing declared: no timeout is passed and the deadline is the default.
+  const plain = job(render({}));
+  assert.deepEqual([timeout(plain), plain.activeDeadlineSeconds], [undefined, 900]);
+  // The measured case: 13,110,624,256 bytes took 59.613 s; the budget is three times that, rounded up.
+  const measured = job(render({ migration: { largestRelationBytes: 13110624256 } }));
+  assert.deepEqual([timeout(measured), measured.activeDeadlineSeconds], ['179000', 900]);
+  assert.ok(Number(timeout(measured)) >= 3 * 59613 && Number(timeout(measured)) < 3 * 59613 + 2000);
+  // A small relation keeps the 60 s floor; the rate and the factor are inputs.
+  assert.equal(timeout(job(render({ migration: { largestRelationBytes: 1000 } }))), '60000');
+  assert.equal(timeout(job(render({ migration: { largestRelationBytes: 1e9, buildBytesPerSecond: 1e7, safetyFactor: 2 } }))), '200000');
+  // The deadline follows the budget when it is not authored: timeout x statements + other steps.
+  const long = job(render({ migration: { largestRelationBytes: 4e10, longStatements: 2 } }));
+  assert.deepEqual([timeout(long), long.activeDeadlineSeconds], ['546000', 546 * 2 + 300]);
+  // Refusals: a deadline or an authored timeout below the budget, and a budget core's runner refuses.
+  const short = render({ migration: { largestRelationBytes: 4e10 }, provisionDeadlineSeconds: 845 });
+  assert.notEqual(short.status, 0);
+  assert.match(short.error, /provisionDeadlineSeconds 845 is below the 846 s/);
+  assert.equal(job(render({ migration: { largestRelationBytes: 4e10 }, provisionDeadlineSeconds: 846 })).activeDeadlineSeconds, 846);
+  const low = render({ migration: { largestRelationBytes: 13110624256 }, migrationStatementTimeoutMs: 100000 });
+  assert.match(low.error, /is below the 179000 ms derived/);
+  const huge = render({ migration: { largestRelationBytes: 6e10 } });
+  assert.match(huge.error, /above the 600000 ms the core migration runner accepts/);
+  const tight = render({ migrationStatementTimeoutMs: 600000, provisionDeadlineSeconds: 899 });
+  assert.match(tight.error, /provisionDeadlineSeconds 899 is below the 900 s/);
+  const schema = JSON.parse(fs.readFileSync(path.join(root, 'inputs.schema.json')));
+  assert.deepEqual(Object.keys(schema.properties.migration.properties).sort(),
+    ['buildBytesPerSecond', 'largestRelationBytes', 'longStatements', 'otherStepsSeconds', 'safetyFactor']);
+});

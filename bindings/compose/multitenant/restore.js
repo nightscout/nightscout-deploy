@@ -124,12 +124,25 @@ async function targetLocks(config, tenant, pool) {
   } finally { client.release(error); }
 }
 
-async function capture (config, tenant, env = process.env) {
+// Export statement timeout: a 10 s floor plus the tenant's declared rows at a declared rate
+// (`export --rows`, NS_EXPORT_ROWS_PER_SECOND). The whole tenant's rows bound every table's copy.
+// The default rate is declared, not measured; no export has been timed against a row count.
+const EXPORT = Object.freeze({ floorMs: 10000, rowsPerSecond: 5000 });
+function exportTimeoutMs (rows = 0, env = process.env) {
+  const stated = env.NS_EXPORT_ROWS_PER_SECOND;
+  const rate = stated === undefined ? EXPORT.rowsPerSecond : /^[1-9][0-9]*$/.test(stated) ? Number(stated) : NaN;
+  const timeout = EXPORT.floorMs + Math.ceil(rows / rate) * 1000;
+  // PostgreSQL's statement_timeout is a 32-bit count of milliseconds.
+  if (!Number.isSafeInteger(rows) || rows < 0 || !Number.isSafeInteger(timeout) || timeout > 2147483647) throw fail('COMPOSE_OPERATOR_EXPORT_BUDGET_INVALID');
+  return timeout;
+}
+
+async function capture (config, tenant, env = process.env, rows = 0) {
   operationPlacement(env);
   tenantFor(config, tenant);
   const lifecycle = lifecycleFor(config);
   const connection = await require('../../lib/storage/postgres-connection')({ connectionString: env.NS_OPERATOR_PG, max: 1,
-    connectionTimeoutMillis: 5000, statement_timeout: 10000, options: '-c search_path=pg_catalog' });
+    connectionTimeoutMillis: 5000, statement_timeout: exportTimeoutMs(rows, env), options: '-c search_path=pg_catalog' });
   try { return await exportTenant(lifecycle, connection, config, tenant, env.NS_SOURCE_COMMIT); }
   finally { await connection.end(); }
 }
@@ -199,16 +212,18 @@ function argumentsFor (args) {
   const options = {};
   while (args.length) {
     const name = args.shift(), value = args.shift();
-    if (!['--tenant', '--directory', '--digest', '--claim'].includes(name) || !value || Object.hasOwn(options, name)) throw fail('COMPOSE_OPERATOR_USAGE');
+    if (!['--tenant', '--directory', '--digest', '--claim', '--rows'].includes(name) || !value || Object.hasOwn(options, name)) throw fail('COMPOSE_OPERATOR_USAGE');
     options[name] = value;
   }
   const recovering = command === 'inspect' || command === 'resume';
   if (!UUID.test(options['--tenant'] || '') ||
+      (Object.hasOwn(options, '--rows') && (command !== 'export' || !/^(?:0|[1-9][0-9]{0,14})$/.test(options['--rows']))) ||
       (recovering ? options['--directory'] || options['--digest'] || (command === 'resume') !== Object.hasOwn(options, '--claim') || (command === 'resume' && !UUID.test(options['--claim']))
         : !path.isAbsolute(options['--directory'] || '') || options['--claim'] ||
           (command === 'restore' && !/^[a-f0-9]{64}$/.test(options['--digest'] || '')) ||
           (command === 'export' && options['--digest']))) throw fail('COMPOSE_OPERATOR_USAGE');
-  return { command, tenant: options['--tenant'], directory: options['--directory'], digest: options['--digest'], claimId: options['--claim'] };
+  return { command, tenant: options['--tenant'], directory: options['--directory'], digest: options['--digest'], claimId: options['--claim'],
+    ...(Object.hasOwn(options, '--rows') ? { rows: Number(options['--rows']) } : {}) };
 }
 
 async function main (args = process.argv.slice(2)) {
@@ -216,7 +231,7 @@ async function main (args = process.argv.slice(2)) {
   tenantFor(config, options.tenant);
   if (options.command === 'inspect' || options.command === 'resume') return await recover(config, options.command, options.tenant, options.claimId);
   if (options.command === 'export') {
-    const artifact = await capture(config, options.tenant);
+    const artifact = await capture(config, options.tenant, process.env, options.rows);
     await artifacts.saveTenantArtifact(artifact, { directory: options.directory });
     return { operation: 'export', tenant: options.tenant, digest: artifact.digest };
   }
@@ -232,4 +247,4 @@ if (require.main === module) main().then(result => process.stdout.write(JSON.str
     recovery: 'Inspect persisted operation state. Do not automatically replay or reopen the tenant.' }) + '\n');
   process.exitCode = 1;
 });
-module.exports = { targetLocks, selectionOptions, validateConfig, loadConfig, loadDemoConfig, lifecycleFor, tenantFor, capture, restore, recover, recoveryController, argumentsFor, main };
+module.exports = { targetLocks, selectionOptions, validateConfig, loadConfig, loadDemoConfig, lifecycleFor, tenantFor, capture, exportTimeoutMs, restore, recover, recoveryController, argumentsFor, main };

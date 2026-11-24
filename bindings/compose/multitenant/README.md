@@ -97,9 +97,18 @@ renders its read-only configuration from `nginx.compose.conf`, retaining Docker
 DNS re-resolution and the selected per-client-IP budgets. `check-compose.js`
 checks the template, private listener exposure and readiness dependencies.
 
-For large restored tables, set `NS_MIGRATION_STATEMENT_TIMEOUT_MS` for the bootstrap
-service to allow a catalogue migration to scan the table or build an index. An omitted
-setting uses the core migration default of 60,000 ms. Accepted values are 1–600,000 ms.
+For large restored tables, set `NS_MIGRATION_LARGEST_RELATION_BYTES` (heap bytes of the
+largest restored relation) for the bootstrap service so a catalogue migration can scan the
+table or build an index. The statement timeout is then max(60 s, ceil(bytes ÷
+`NS_MIGRATION_BUILD_BYTES_PER_SECOND` × 3)); the default rate, 220,000,000 bytes/s, is one
+measured build (2026-11-24: a partial index over a 13,110,624,256-byte heap in 59.613 s).
+`NS_MIGRATION_STATEMENT_TIMEOUT_MS` states the timeout directly and is refused below the
+derived value. With neither, the core migration default of 60,000 ms applies. The core
+migration runner accepts 1–600,000 ms, so a larger stated or derived value is refused.
+
+`NS_POSTGRES_SHM_SIZE` (default `1g`) sizes PostgreSQL's `/dev/shm`. `check-compose.js`
+requires at least 1 GiB, plus max(1, `max_parallel_maintenance_workers`) ×
+`maintenance_work_mem` when the PostgreSQL command names `maintenance_work_mem`.
 
 A failed bootstrap prints one JSON line on stderr: the stable `error` code, the
 underlying `detail` message and the top stack frames (`at`). Connection-string

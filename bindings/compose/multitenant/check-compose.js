@@ -70,10 +70,23 @@ function checkClinicalReserve (config) {
   return true;
 }
 // Parallel query and hash joins allocate dynamic shared memory in /dev/shm; the container default
-// (64 MB) refuses them ("could not resize shared memory segment"). Same size as the Kubernetes binding.
-const POSTGRES_SHM_BYTES = 1024 * 1024 * 1024;
+// (64 MB) refuses them ("could not resize shared memory segment"). The same relation as the
+// Kubernetes binding (connection-budget.libsonnet): 1 GiB, plus max(1, max_parallel_maintenance_workers)
+// x maintenance_work_mem when the PostgreSQL command names maintenance_work_mem (2 workers when the
+// count is not named, PostgreSQL's default).
+const POSTGRES_SHM_BASE_BYTES = 1024 * 1024 * 1024;
+function requiredSharedMemory (command = []) {
+  const setting = name => command.find(item => typeof item === 'string' && item.startsWith(name + '='))?.slice(name.length + 1);
+  const memory = setting('maintenance_work_mem');
+  if (memory === undefined) return POSTGRES_SHM_BASE_BYTES;
+  const parsed = /^([0-9]+)(kB|MB|GB|TB)?$/.exec(memory), workers = setting('max_parallel_maintenance_workers') ?? '2';
+  assert(parsed && /^[0-9]+$/.test(workers), 'PostgreSQL maintenance settings must be integers with an optional kB, MB, GB or TB unit');
+  const bytes = Number(parsed[1]) * { kB: 1024, MB: 1024 ** 2, GB: 1024 ** 3, TB: 1024 ** 4 }[parsed[2] || 'kB'];
+  return POSTGRES_SHM_BASE_BYTES + Math.max(1, Number(workers)) * bytes;
+}
 function checkSharedMemory (config) {
-  assert(Number(config.services.postgres.shm_size) === POSTGRES_SHM_BYTES, 'PostgreSQL must have a 1g /dev/shm');
+  const required = requiredSharedMemory(config.services.postgres.command);
+  assert(Number(config.services.postgres.shm_size) >= required, 'PostgreSQL /dev/shm must be at least ' + required + ' bytes');
   return true;
 }
 // The deployment's PREDICTIONS_MAX_SIZE reaches the api role (API replicas extend it), where
@@ -133,7 +146,12 @@ if (require.main === module) {
     assert.throws(() => check(uncapped), /api must receive PREDICTIONS_MAX_SIZE/, 'Prediction cap passthrough control must fail');
     const smallShm = structuredClone(config);
     delete smallShm.services.postgres.shm_size;
-    assert.throws(() => check(smallShm), /PostgreSQL must have a 1g \/dev\/shm/, 'Shared-memory control must fail');
+    assert.throws(() => check(smallShm), /PostgreSQL \/dev\/shm must be at least 1073741824 bytes/, 'Shared-memory control must fail');
+    const maintenance = structuredClone(config);
+    maintenance.services.postgres.command.push('-c', 'maintenance_work_mem=1GB', '-c', 'max_parallel_maintenance_workers=4');
+    assert.throws(() => check(maintenance), /PostgreSQL \/dev\/shm must be at least 5368709120 bytes/, 'Maintenance shared-memory control must fail');
+    maintenance.services.postgres.shm_size = '5368709120';
+    check(maintenance);
     const broken = structuredClone(config);
     broken.services.ui.volumes.push({type: 'bind', source: '/tmp/state/ops', target: '/state'});
     assert.throws(() => check(broken), /privileged directory/, 'Credential-exposure control must fail');

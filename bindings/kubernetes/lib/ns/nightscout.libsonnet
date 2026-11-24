@@ -69,7 +69,24 @@
     profile: 'standard',
     resourceAccounting: 'requests-v1',
     tenantCount: 2,
+    // Provision Job deadline. With migration.largestRelationBytes declared and no authored value here,
+    // the deadline is the larger of this default and the migration budget (below).
     provisionDeadlineSeconds: 900,
+    // Catalogue migration budget for a restored database. largestRelationBytes: heap bytes of the
+    // largest relation a migration statement may scan or index (null: nothing is derived and the
+    // render is unchanged). Then, unless migrationStatementTimeoutMs is authored,
+    //   statement timeout = max(60 s, ceil(largestRelationBytes / buildBytesPerSecond x safetyFactor))
+    // and the provision Job needs statement timeout x longStatements + otherStepsSeconds.
+    // buildBytesPerSecond is the one measured rate (2026-11-24, 10k-tenant restore: a partial index
+    // over a 13,110,624,256-byte heap in 59.613 s, 219.9 MB/s, on that run's PostgreSQL node); refit it
+    // for other storage. safetyFactor, longStatements and otherStepsSeconds are declared, not measured.
+    migration: {
+      largestRelationBytes: null,
+      buildBytesPerSecond: 220000000,
+      safetyFactor: 3,
+      longStatements: 1,
+      otherStepsSeconds: 300,
+    },
     imagePullSecrets: [],
     placement: {},
     placementByWorkload: {},
@@ -156,9 +173,35 @@
     local sizing = $.postgresSizing(c),
     local authoredStorage = std.objectHas(overrides, 'storage') && std.isObject(overrides.storage) && std.objectHas(overrides.storage, 'postgres'),
     local postgresClaim = if sizing.claim != null && !authoredStorage then sizing.claim else c.storage.postgres,
-    local migrationTimeout = std.get(c, 'migrationStatementTimeoutMs', null),
-    assert migrationTimeout == null || (std.isNumber(migrationTimeout) && migrationTimeout == std.floor(migrationTimeout) &&
-           migrationTimeout >= 1 && migrationTimeout <= 600000) : 'migrationStatementTimeoutMs must be an integer from 1 to 600000',
+    // Core's migration runner accepts 1..600000 ms per statement (lib/migrations/postgres-check.js,
+    // read at core 2643ca01b); a larger budget is refused here, at render, not in the provision Job.
+    local runnerMaxMs = 600000,
+    local m = { largestRelationBytes: null } + c.migration,
+    local positive(x) = std.isNumber(x) && x > 0,
+    local whole(x) = std.isNumber(x) && x == std.floor(x),
+    assert (m.largestRelationBytes == null || (whole(m.largestRelationBytes) && m.largestRelationBytes >= 0)) &&
+           positive(m.buildBytesPerSecond) && std.isNumber(m.safetyFactor) && m.safetyFactor >= 1 &&
+           whole(m.longStatements) && m.longStatements >= 1 && whole(m.otherStepsSeconds) && m.otherStepsSeconds >= 0 :
+           'migration needs largestRelationBytes null or a non-negative integer, a positive buildBytesPerSecond, safetyFactor >= 1, longStatements >= 1 and otherStepsSeconds >= 0',
+    local authoredTimeout = std.get(c, 'migrationStatementTimeoutMs', null),
+    local derivedTimeout = if m.largestRelationBytes == null then null
+                           else 1000 * std.max(60, std.ceil(m.largestRelationBytes / m.buildBytesPerSecond * m.safetyFactor)),
+    local migrationTimeout = if authoredTimeout != null then authoredTimeout else derivedTimeout,
+    assert authoredTimeout == null || (whole(authoredTimeout) && authoredTimeout >= 1) : 'migrationStatementTimeoutMs must be a positive integer',
+    assert migrationTimeout == null || migrationTimeout <= runnerMaxMs :
+           'the migration statement timeout ' + migrationTimeout + ' ms is above the ' + runnerMaxMs + ' ms the core migration runner accepts' +
+           (if authoredTimeout == null then ' (derived from migration.largestRelationBytes ' + m.largestRelationBytes + ' at ' + m.buildBytesPerSecond + ' bytes/s x ' + m.safetyFactor + ')' else ''),
+    assert authoredTimeout == null || derivedTimeout == null || authoredTimeout >= derivedTimeout :
+           'migrationStatementTimeoutMs ' + authoredTimeout + ' is below the ' + derivedTimeout + ' ms derived from migration.largestRelationBytes',
+    // The Job deadline covers every init container: the migration budget plus the other steps.
+    local provisionRequired = if migrationTimeout == null then null
+                              else std.ceil(migrationTimeout / 1000) * m.longStatements + m.otherStepsSeconds,
+    local authoredDeadline = std.objectHas(overrides, 'provisionDeadlineSeconds') && overrides.provisionDeadlineSeconds != null,
+    local provisionDeadline = if provisionRequired == null || authoredDeadline then c.provisionDeadlineSeconds
+                              else std.max(c.provisionDeadlineSeconds, provisionRequired),
+    assert provisionRequired == null || provisionDeadline >= provisionRequired :
+           'provisionDeadlineSeconds ' + provisionDeadline + ' is below the ' + provisionRequired + ' s the provision Job needs (migration statement timeout ' +
+           migrationTimeout + ' ms x ' + m.longStatements + ' + other steps ' + m.otherStepsSeconds + ' s)',
     assert std.isNumber(maxConnections) && maxConnections == std.floor(maxConnections) &&
            maxConnections > clinicalReserved + superuserReserved && maxConnections <= 10000 :
            'postgresMaxConnections must be an integer from 44 to 10000, leaving at least one ordinary connection',
@@ -644,7 +687,7 @@
         metadata: meta('provision', 'provision'),
         spec: {
           backoffLimit: 0,
-          activeDeadlineSeconds: c.provisionDeadlineSeconds,
+          activeDeadlineSeconds: provisionDeadline,
           template: {
             metadata: { labels: labels('provision') },
             spec: {
