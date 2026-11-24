@@ -89,3 +89,112 @@ test('stock long polling remains connected while its next response waits beyond 
     assert.equal(client.connected, true); assert.deepEqual(disconnected, []);
   } finally { client.disconnect(); agent.destroy(); await edge.close(); await new Promise(resolve => sockets.close(resolve)); }
 });
+// Upstream connections (lane E, 2026-11-24). On Kubernetes each route-map upstream is a Pod DNS name
+// (realtime-<i>.realtime-peers.<ns>.svc) and dns.lookup runs on libuv's 4-thread pool, walking the
+// ndots:5 search list. A per-request lookup queues under a priming burst until the connect timer
+// answers 503 while realtime is idle (lane L viewer-path diagnostic, kind c2-06). The slow resolver
+// below models that pool: four workers, a fixed latency per lookup, names under .svc only.
+function slowResolver({ workers = 4, latencyMs = 150, addresses }) {
+  const dns = require('node:dns');
+  const original = dns.lookup;
+  const queue = [];
+  let busy = 0;
+  const stats = { lookups: 0 };
+  const pump = () => {
+    while (busy < workers && queue.length) {
+      const [host, options, done] = queue.shift(); busy++;
+      setTimeout(() => {
+        busy--; pump();
+        const address = addresses.get(host);
+        if (!address) return done(Object.assign(new Error('getaddrinfo ENOTFOUND ' + host), { code: 'ENOTFOUND' }));
+        if (options?.all) done(null, [{ address, family: 4 }]); else done(null, address, 4);
+      }, latencyMs);
+    }
+  };
+  dns.lookup = function lookup(host, options, done) {
+    if (typeof options === 'function') { done = options; options = {}; }
+    if (!/\.svc\.?$/.test(host)) return original.call(dns, host, options, done);
+    stats.lookups++; queue.push([host, typeof options === 'number' ? { family: options } : options, done]); pump();
+  };
+  stats.restore = () => { dns.lookup = original; };
+  return stats;
+}
+function counted(handler) {
+  const server = http.createServer(handler);
+  server.connections = 0;
+  server.on('connection', () => { server.connections++; });
+  return server;
+}
+const fixed = consumerOrigin => ({ resolver: { resolveTenant: async () => 'tenant', close: async () => {} }, placement: { route: () => ({ consumerOrigin }) } });
+test('a priming burst through a slow resolver is answered by the owner, not 503, and resolves the destination once', { timeout: 20000 }, async () => {
+  const backend = counted((req, res) => res.end('ok'));
+  const port = new URL(await listen(backend)).port;
+  const name = 'realtime-0.realtime-peers.lanee.svc';
+  const resolver = slowResolver({ addresses: new Map([[name, '127.0.0.1']]) });
+  const edge = create({ ...fixed('http://' + name + ':' + port + '/'), timeoutMs: 8000, connectTimeoutMs: 1000 });
+  const origin = await listen(edge.server);
+  try {
+    // 120 lookups at 4 x 150 ms take 4.5 s: past the 1 s connect deadline when each request resolves.
+    const results = await Promise.all(Array.from({ length: 120 }, (_, i) => get(origin, 'v' + i + '.example.test')));
+    const statuses = results.reduce((m, r) => ({ ...m, [r.status]: (m[r.status] || 0) + 1 }), {});
+    assert.deepEqual(statuses, { 200: 120 });
+    assert.ok(resolver.lookups <= 2, 'destination lookups ' + resolver.lookups);
+  } finally { resolver.restore(); await edge.close(); backend.closeAllConnections(); await new Promise(resolve => backend.close(resolve)); }
+});
+test('sequential polling requests reuse kept-alive upstream connections, also when the client sends Connection: close', async () => {
+  const backend = counted((req, res) => res.end(req.headers.connection || ''));
+  const destination = await listen(backend);
+  const edge = create(fixed(destination));
+  const origin = await listen(edge.server);
+  try {
+    for (let i = 0; i < 20; i++) assert.equal((await get(origin, 'one.example.test')).status, 200);
+    assert.ok(backend.connections <= 2, 'upstream connections ' + backend.connections);
+  } finally { await edge.close(); backend.closeAllConnections(); await new Promise(resolve => backend.close(resolve)); }
+});
+test('a reused upstream connection is not cut by the connect deadline while a long poll waits', async () => {
+  const backend = counted((req, res) => setTimeout(() => res.end('late'), 250));
+  const destination = await listen(backend);
+  const edge = create({ ...fixed(destination), timeoutMs: 5000, connectTimeoutMs: 100 });
+  const origin = await listen(edge.server);
+  try {
+    for (let i = 0; i < 3; i++) assert.deepEqual(await get(origin, 'one.example.test'), { status: 200, body: 'late' });
+  } finally { await edge.close(); backend.closeAllConnections(); await new Promise(resolve => backend.close(resolve)); }
+});
+test('a failed connect re-resolves the destination (a restarted Pod has a new address)', { timeout: 10000 }, async () => {
+  const backend = counted((req, res) => res.end('ok'));
+  const port = new URL(await listen(backend)).port;
+  const name = 'realtime-1.realtime-peers.lanee.svc';
+  const addresses = new Map([[name, '127.0.0.2']]); // nothing listens there: connection refused
+  const resolver = slowResolver({ addresses, latencyMs: 5 });
+  const edge = create({ ...fixed('http://' + name + ':' + port + '/'), timeoutMs: 2000, connectTimeoutMs: 1000 });
+  const origin = await listen(edge.server);
+  try {
+    assert.equal((await get(origin, 'one.example.test')).status, 503);
+    addresses.set(name, '127.0.0.1');
+    assert.equal((await get(origin, 'one.example.test')).status, 200);
+    assert.equal((await get(origin, 'one.example.test')).status, 200);
+  } finally { resolver.restore(); await edge.close(); backend.closeAllConnections(); await new Promise(resolve => backend.close(resolve)); }
+});
+test('websocket upgrades through a named destination use the resolved address', async () => {
+  const backend = http.createServer();
+  const sockets = new Set();
+  backend.on('upgrade', (req, socket) => { sockets.add(socket); socket.write('HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n'); socket.on('data', chunk => socket.write(chunk)); });
+  const port = new URL(await listen(backend)).port;
+  const name = 'realtime-0.realtime-peers.lanee.svc';
+  const resolver = slowResolver({ addresses: new Map([[name, '127.0.0.1']]), latencyMs: 5 });
+  const edge = create(fixed('http://' + name + ':' + port + '/'));
+  const origin = new URL(await listen(edge.server));
+  const clients = [];
+  try {
+    for (let i = 0; i < 5; i++) {
+      const socket = net.connect(Number(origin.port), '127.0.0.1'); clients.push(socket);
+      await once(socket, 'connect');
+      let received = '';
+      const echoed = new Promise(resolve => socket.on('data', bytes => { received += bytes; if (received.includes('ping' + i)) resolve(); }));
+      socket.write('GET /socket.io/?EIO=4&transport=websocket HTTP/1.1\r\nHost: one.example.test\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\nping' + i);
+      await echoed;
+      assert.match(received, /^HTTP\/1.1 101/);
+    }
+    assert.ok(resolver.lookups <= 2, 'destination lookups ' + resolver.lookups);
+  } finally { resolver.restore(); for (const s of clients) s.destroy(); await edge.close(); for (const s of sockets) s.destroy(); await new Promise(resolve => backend.close(resolve)); }
+});
