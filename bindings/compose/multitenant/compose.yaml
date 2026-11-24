@@ -179,6 +179,9 @@ services:
       NS_API_REST_QUEUE: ${NS_API_REST_QUEUE:-}
       NS_API_REST_QUEUE_TIMEOUT_MS: ${NS_API_REST_QUEUE_TIMEOUT_MS:-}
       NS_API_REST_RETRY_AFTER_SECONDS: ${NS_API_REST_RETRY_AFTER_SECONDS:-}
+      # The single-site cap on each OpenAPS prediction curve an API v1 devicestatus stores, one value
+      # for every tenant (core lib/server/env.js rules: empty or invalid 288, 0 no cap).
+      PREDICTIONS_MAX_SIZE: ${PREDICTIONS_MAX_SIZE:-}
     command: [node, deploy/multitenant/entrypoint.js, api]
     restart: ${NS_COMPOSE_RESTART:-on-failure}
     depends_on:

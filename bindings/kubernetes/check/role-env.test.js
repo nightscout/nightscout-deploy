@@ -34,3 +34,14 @@ test('roleEnv refuses an unknown role', () => {
   assert.notEqual(r.status, 0);
   assert.match(r.error, /roleEnv names an unknown role/);
 });
+test('roleEnv.api carries the deployment PREDICTIONS_MAX_SIZE to every API pod and no other role', () => {
+  const base = render({ apiReplicas: 3 });
+  assert.equal(base.status, 0, base.error);
+  assert.ok(!container(base.value, 'api').env.some(x => x.name === 'PREDICTIONS_MAX_SIZE'), 'unset by default: core applies 288');
+  const r = render({ apiReplicas: 3, roleEnv: { api: [{ name: 'PREDICTIONS_MAX_SIZE', value: '48' }] } });
+  assert.equal(r.status, 0, r.error);
+  const api = r.value.components.api, workload = api.statefulset || api.deployment;
+  assert.equal(workload.spec.replicas, 3, 'one pod template for every API replica');
+  assert.deepEqual(container(r.value, 'api').env.filter(x => x.name === 'PREDICTIONS_MAX_SIZE'), [{ name: 'PREDICTIONS_MAX_SIZE', value: '48' }]);
+  for (const role of ['realtime', 'evaluator', 'tenant-admin']) assert.deepEqual(container(r.value, role).env, container(base.value, role).env, role + ' unchanged');
+});

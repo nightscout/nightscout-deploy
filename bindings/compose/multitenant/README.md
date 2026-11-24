@@ -291,6 +291,15 @@ This replaces the template's fixed 1,024-slot renderer input, which could bound
 viewer capacity before the per-IP policy. These are synthetic reference resource
 budgets; the capacity campaign must measure the resulting envelope.
 
+## Prediction curve cap
+
+`PREDICTIONS_MAX_SIZE` is the single-site setting: the most points kept in each OpenAPS
+prediction curve (`predBGs` IOB, COB, UAM, ZT) when a device status arrives through API v1.
+Set it in the shell or in `.env`. It reaches the `api` service and every API instance, and core gives
+every tenant that one value, with the single-site rules: unset, empty or invalid is `288`, `0`
+keeps whole curves. It is not a tenant setting. API v3 and socket writes keep whole curves, as on
+a single site. `check-compose.js` refuses a configuration where `api` does not receive it.
+
 ## Clinical isolation from REST saturation
 
 `clinical-isolation.js` keeps clinical delivery working when REST traffic exceeds

@@ -185,6 +185,11 @@ ceiling fails the `evaluator-statefulset` check; raise the model or the headroom
 tenants and K=8 the render plans 1,399 residents, a 5,887 MiB request and an 8,831 MiB heap ceiling
 per evaluator. The ceiling is not a container limit: an evaluator that grows towards it uses memory
 above its request.
+`PREDICTIONS_MAX_SIZE`, the single-site cap on each OpenAPS prediction curve an API v1 device
+status stores, is set with a `roleEnv.api` row (for example `{ "name": "PREDICTIONS_MAX_SIZE",
+"value": "48" }`). Every API replica gets it, and core gives every tenant that one value with the
+single-site rules (unset or invalid `288`, `0` keeps whole curves). It is not a tenant setting
+(`check/role-env.test.js`).
 `NS_EVALUATOR_RESIDENT_MAX` (`residentMax`) bounds the busiest slice, not the mean: tenant ids are
 unknown at render time and ownership is a hash, so a slice owns `Binomial(tenantCount, 1/K)` tenants.
 `residentMax = min(tenantCount, ceil(mean + z x sqrt(mean x (1 - 1/K))))` with `mean = tenantCount / K`
