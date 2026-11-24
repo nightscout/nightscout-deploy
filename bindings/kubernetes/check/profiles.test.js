@@ -419,3 +419,49 @@ test('fixture copies restore into a fresh namespace through statically bound sna
     }
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
+
+test('provision waits for late stores within the configured Job deadline', async () => {
+  const { EventEmitter } = require('node:events');
+  const { runInNewContext } = require('node:vm');
+  const deadlineSeconds = 600;
+  const rendered = render({ provisionDeadlineSeconds: deadlineSeconds });
+  assert.equal(rendered.status, 0, rendered.error);
+  const job = rendered.value.provision.job.spec;
+  assert.equal(job.activeDeadlineSeconds, deadlineSeconds);
+  assert.equal(job.backoffLimit, 0);
+  const wait = job.template.spec.initContainers.find(container => container.name === 'wait-stores');
+  const [executable, flag, script] = wait.command;
+  assert.deepEqual([executable, flag], ['node', '-e']);
+
+  // Refuse connections immediately until the indicated store becomes available.
+  const readyAt = { postgres: 100000, 'vault-bootstrap': 300000 };
+  let elapsed = 0;
+  const connected = new Set();
+  function connect({host}) {
+    assert.ok(Object.hasOwn(readyAt, host));
+    const socket = new EventEmitter();
+    socket.setTimeout = () => {};
+    socket.end = () => {};
+    queueMicrotask(() => {
+      if (elapsed >= readyAt[host]) {
+        connected.add(host);
+        socket.emit('connect');
+      } else {
+        socket.emit('error', new Error('connection refused'));
+      }
+    });
+    return socket;
+  }
+
+  await runInNewContext(script, {
+    require(name) { assert.equal(name, 'node:net'); return { connect }; },
+    setTimeout(resolve, delay) {
+      assert.ok(delay > 0);
+      elapsed += delay;
+      assert.ok(elapsed < deadlineSeconds * 1000);
+      queueMicrotask(resolve);
+    },
+    process: { exit(code) { assert.fail('wait exited ' + code + ' after ' + elapsed + ' ms'); } }
+  });
+  assert.deepEqual([...connected], ['postgres', 'vault-bootstrap']);
+});
