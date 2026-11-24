@@ -294,18 +294,16 @@ authority oracles.
 
 ### Restore a cold synthetic fixture
 
-Declare `migration.largestRelationBytes` (heap bytes of the largest restored relation) so an
-offline catalogue change has time to scan it or build an index on it. The render derives the
-bootstrap's migration statement timeout as max(60 s, ceil(bytes / `buildBytesPerSecond` ×
-`safetyFactor`)); the defaults are 220,000,000 bytes/s (measured once, 2026-11-24: a partial
-index over a 13,110,624,256-byte heap in 59.613 s) and 3. The provision Job's deadline covers all
-its init containers: it must hold that timeout × `longStatements` (1) + `otherStepsSeconds` (300).
-With no authored `provisionDeadlineSeconds` the render raises the 900 s default to that sum; an
-authored deadline below it is refused, and so is an authored `migrationStatementTimeoutMs` below
-the derived value. The core migration runner accepts at most 600,000 ms per statement, so a
-larger derived timeout is refused at render (about 44 GB at the default rate and factor).
-With nothing declared the render is unchanged: no timeout is passed (core default 60,000 ms) and
-the deadline is `provisionDeadlineSeconds`.
+Declare `migration.largestRelationBytes` (largest restored relation's heap bytes) to budget
+concurrent index builds. The binding sets the bootstrap index build timeout to max(60 s,
+ceil(bytes / `buildBytesPerSecond` × `safetyFactor`)). The defaults are 220,000,000 bytes/s
+(measured on 2026-11-24 for a 13,110,624,256-byte heap indexed in 59.613 s) and 3.
+`migrationIndexBuildTimeoutMs` can raise this budget up to 86,400,000 ms.
+Independent ordinary migration statements use `migrationStatementTimeoutMs` (1–600,000 ms).
+When omitted, the core defaults are 1,800,000 ms for index builds and 60,000 ms for ordinary
+statements. The provision Job reserves the larger declared timeout × `longStatements` (1)
+plus `otherStepsSeconds` (300). The binding raises the default 900 s deadline as needed and
+refuses an authored deadline below the reservation.
 
 `/dev/shm` for PostgreSQL is 1,024 MiB plus max(1, `max_parallel_maintenance_workers`) ×
 `maintenance_work_mem` when the effective settings name `maintenance_work_mem` (PostgreSQL's

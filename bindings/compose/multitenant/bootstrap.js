@@ -9,25 +9,25 @@
 const fs=require('node:fs'),path=require('node:path');
 const plan=require('./config');
 const fail=code=>Object.assign(new Error(code),{code});
-// Catalogue migration statement timeout. NS_MIGRATION_STATEMENT_TIMEOUT_MS states it; otherwise
-// NS_MIGRATION_LARGEST_RELATION_BYTES (heap bytes of the largest restored relation) derives it, the
-// same formula as the Kubernetes binding's `migration` input:
-//   max(60 s, ceil(bytes / NS_MIGRATION_BUILD_BYTES_PER_SECOND x 3))
-// The default rate is the one measured build (2026-11-24: a partial index over a 13,110,624,256-byte
-// heap in 59.613 s); the factor 3 is declared. Neither set: core's migration default (60 s).
-// Core's migration runner accepts at most 600000 ms (lib/migrations/postgres-check.js); a larger
-// value is refused here, before Vault or PostgreSQL is touched.
-const MIGRATION = Object.freeze({buildBytesPerSecond: 220000000, safetyFactor: 3, floorSeconds: 60, runnerMaxMs: 600000});
+// PostgreSQL gives ordinary catalogue statements and concurrent index builds separate timeout scopes.
+function optionalTimeout(value, maximum) {
+  if (value === undefined) return undefined;
+  if (!/^[1-9][0-9]*$/.test(value) || Number(value) > maximum) throw fail('BOOTSTRAP_MIGRATION_TIMEOUT_INVALID');
+  return Number(value);
+}
 function migrationTimeout(env=process.env) {
+  return optionalTimeout(env.NS_MIGRATION_STATEMENT_TIMEOUT_MS, 600000);
+}
+function indexBuildTimeout(env) {
+  const stated = optionalTimeout(env.NS_MIGRATION_INDEX_BUILD_TIMEOUT_MS, 86400000);
+  const bytes = env.NS_MIGRATION_LARGEST_RELATION_BYTES, rate = env.NS_MIGRATION_BUILD_BYTES_PER_SECOND;
   const integer = (value, pattern) => pattern.test(value) && Number.isSafeInteger(Number(value));
-  const stated = env.NS_MIGRATION_STATEMENT_TIMEOUT_MS, bytes = env.NS_MIGRATION_LARGEST_RELATION_BYTES, rate = env.NS_MIGRATION_BUILD_BYTES_PER_SECOND;
-  if (stated !== undefined && (!integer(stated, /^[1-9][0-9]*$/) || Number(stated) > MIGRATION.runnerMaxMs)) throw fail('BOOTSTRAP_MIGRATION_TIMEOUT_INVALID');
   if (rate !== undefined && !integer(rate, /^[1-9][0-9]*$/) || bytes !== undefined && !integer(bytes, /^(?:0|[1-9][0-9]*)$/)) throw fail('BOOTSTRAP_MIGRATION_BUDGET_INVALID');
-  if (bytes === undefined) return stated === undefined ? undefined : Number(stated);
-  const derived = 1000 * Math.max(MIGRATION.floorSeconds, Math.ceil(Number(bytes) / Number(rate ?? MIGRATION.buildBytesPerSecond) * MIGRATION.safetyFactor));
-  if (stated !== undefined && Number(stated) < derived) throw fail('BOOTSTRAP_MIGRATION_TIMEOUT_BELOW_BUDGET');
-  if (stated === undefined && derived > MIGRATION.runnerMaxMs) throw fail('BOOTSTRAP_MIGRATION_BUDGET_ABOVE_RUNNER_LIMIT');
-  return stated === undefined ? derived : Number(stated);
+  if (bytes === undefined) return stated;
+  const derived = 1000 * Math.max(60, Math.ceil(Number(bytes) / Number(rate ?? 220000000) * 3));
+  if (derived > 86400000) throw fail('BOOTSTRAP_MIGRATION_BUDGET_ABOVE_RUNNER_LIMIT');
+  if (stated !== undefined && stated < derived) throw fail('BOOTSTRAP_MIGRATION_TIMEOUT_BELOW_BUDGET');
+  return stated ?? derived;
 }
 function input(env=process.env) {
   if(env.NS_COMPOSE_BOOTSTRAP!=='1'||!/^\/[\w/.-]+$/.test(env.NS_BOOTSTRAP_OUTPUT||'')||! /^[a-f0-9]{40}$/.test(env.NS_SOURCE_COMMIT||''))throw fail('EXPLICIT_COMPOSE_BOOTSTRAP_REQUIRED');
@@ -49,7 +49,7 @@ function input(env=process.env) {
   const deployCommit=env.NS_DEPLOY_COMMIT||env.NS_SOURCE_COMMIT;
   if(!/^[a-f0-9]{40}$/.test(deployCommit))throw fail('BOOTSTRAP_DEPLOY_IDENTITY_INVALID');
   const migrationStatementTimeoutMs = migrationTimeout(env);
-  return {deployCommit,pg,vault,bootstrapVault,credentials:path.resolve(credentials),output:path.resolve(env.NS_BOOTSTRAP_OUTPUT),sourceCommit:env.NS_SOURCE_COMMIT,migrationStatementTimeoutMs};
+  return {deployCommit,pg,vault,bootstrapVault,credentials:path.resolve(credentials),output:path.resolve(env.NS_BOOTSTRAP_OUTPUT),sourceCommit:env.NS_SOURCE_COMMIT,migrationStatementTimeoutMs,indexBuildTimeoutMs:indexBuildTimeout(env)};
 }
 // Bootstrap custody files stay indented for the people who read them.
 function writePrivate(filename,value) {
@@ -114,7 +114,7 @@ async function bootstrap(options) {
       if(!(await admin.query('SELECT 1 FROM pg_roles WHERE rolname=$1',[l.roles.owner_settings])).rowCount){
         await admin.query(loginSQL(l.roles.owner_settings,seeded.postgres.owner_settings));
       }
-      await migrate(admin,pg,l,plan.catalogues(),false,options.migrationStatementTimeoutMs);
+      await migrate(admin,pg,l,plan.catalogues(),false,options);
       // vcpool identities: created here too, so a restored fixture can enable the role.
       await require('./vcpool').ensure({admin,l,credentials:options.credentials,request,rootToken:initialization.root_token});
     }finally{await admin.end();}
@@ -145,7 +145,7 @@ async function bootstrap(options) {
     // Clinical output producers/deliverers may use PostgreSQL's reserved_connections
     // slots; REST-serving roles may not (clinical-isolation.js).
     for(const sql of require('./clinical-isolation').grants(l))await admin.query(sql);
-    await migrate(admin,pg,l,allCatalogues,true,options.migrationStatementTimeoutMs);
+    await migrate(admin,pg,l,allCatalogues,true,options);
     const managementGrants=require('../../lib/management-sessions/authority').grants({namespaces:{registry:l.namespaces.registry,authorization:l.namespaces.authorization,access:l.namespaces.access,control:l.namespaces.control},issuer:l.roles.management_issuer,authorityOwner:l.managementAuthorityOwner});
     for(const sql of [...managementGrants.authorityOwner,...managementGrants.issuer])await admin.query(sql);
     const settings = require('../../lib/server/serve/deployment-settings').evaluator({NS_PG_PREFIX:l.prefix});
@@ -166,12 +166,12 @@ async function bootstrap(options) {
 }
 // Creates (fresh) or brings forward (existing) every catalogue schema, then applies the grants.
 // Objects a migration adds are handed to the catalogue owner; existing owners are left alone.
-async function migrate(admin,pg,l,catalogues,fresh,statementTimeoutMs){
+async function migrate(admin,pg,l,catalogues,fresh,{migrationStatementTimeoutMs:statementTimeoutMs,indexBuildTimeoutMs}){
   const q=plan.quote,{run}=require('../../lib/migrations/postgres');
   for(const [kind,catalogue]of Object.entries(catalogues)){
     const namespace=l.namespaces[kind];
     if(fresh)await admin.query('CREATE SCHEMA '+q(namespace));
-    await run('up',{direct:true,connectionString:pg.toString(),namespace,catalogue,statementTimeoutMs});
+    await run('up',{direct:true,connectionString:pg.toString(),namespace,catalogue,statementTimeoutMs,indexBuildTimeoutMs});
     // Readiness requires immutable catalogue owners without LOGIN/bypass.
     const tables=await admin.query('SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname=$1 AND tableowner=current_user',[namespace]);
     for(const row of tables.rows)await admin.query('ALTER TABLE '+q(namespace)+'.'+q(row.tablename)+' OWNER TO '+q(l.owner));

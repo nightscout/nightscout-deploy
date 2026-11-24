@@ -82,12 +82,16 @@
       "type": "integer",
       "minimum": 1,
       "maximum": 600000,
-      "description": "PostgreSQL catalogue migration statement timeout during bootstrap. Omit for the value derived from migration.largestRelationBytes, or without one for the application's migration default. The maximum is the core migration runner's own limit."
+      "description": "Ordinary PostgreSQL migration statement timeout during bootstrap. Defaults to the core runner setting (60000 ms)."
+    },
+    "migrationIndexBuildTimeoutMs": {
+      "type": "integer", "minimum": 1, "maximum": 86400000,
+      "description": "Concurrent index build timeout. Defaults to the size-derived budget when supplied, otherwise the core runner setting (1800000 ms)."
     },
     "migration": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Catalogue migration budget for a restored database: statement timeout = max(60 s, ceil(largestRelationBytes / buildBytesPerSecond x safetyFactor)); the provision Job needs that x longStatements + otherStepsSeconds.",
+      "description": "Catalogue migration budget for a restored database: index build timeout = max(60 s, ceil(largestRelationBytes / buildBytesPerSecond x safetyFactor)); the provision Job needs the larger declared timeout x longStatements + otherStepsSeconds.",
       "properties": {
         "largestRelationBytes": { "type": "integer", "minimum": 0, "description": "Heap bytes of the largest relation a migration statement may scan or index. Omit to derive nothing." },
         "buildBytesPerSecond": { "type": "number", "exclusiveMinimum": 0, "default": 220000000, "description": "Measured once: 13,110,624,256 heap bytes in 59.613 s (2026-11-24)." },

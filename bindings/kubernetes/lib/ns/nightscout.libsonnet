@@ -74,9 +74,9 @@
     provisionDeadlineSeconds: 900,
     // Catalogue migration budget for a restored database. largestRelationBytes: heap bytes of the
     // largest relation a migration statement may scan or index (null: nothing is derived and the
-    // render is unchanged). Then, unless migrationStatementTimeoutMs is authored,
-    //   statement timeout = max(60 s, ceil(largestRelationBytes / buildBytesPerSecond x safetyFactor))
-    // and the provision Job needs statement timeout x longStatements + otherStepsSeconds.
+    // render is unchanged). Then, unless migrationIndexBuildTimeoutMs is authored,
+    //   index build timeout = max(60 s, ceil(largestRelationBytes / buildBytesPerSecond x safetyFactor))
+    // and the provision Job needs the larger timeout x longStatements + otherStepsSeconds.
     // buildBytesPerSecond is the one measured rate (2026-11-24, 10k-tenant restore: a partial index
     // over a 13,110,624,256-byte heap in 59.613 s, 219.9 MB/s, on that run's PostgreSQL node); refit it
     // for other storage. safetyFactor, longStatements and otherStepsSeconds are declared, not measured.
@@ -173,9 +173,6 @@
     local sizing = $.postgresSizing(c),
     local authoredStorage = std.objectHas(overrides, 'storage') && std.isObject(overrides.storage) && std.objectHas(overrides.storage, 'postgres'),
     local postgresClaim = if sizing.claim != null && !authoredStorage then sizing.claim else c.storage.postgres,
-    // Core's migration runner accepts 1..600000 ms per statement (lib/migrations/postgres-check.js,
-    // read at core 2643ca01b); a larger budget is refused here, at render, not in the provision Job.
-    local runnerMaxMs = 600000,
     local m = { largestRelationBytes: null } + c.migration,
     local positive(x) = std.isNumber(x) && x > 0,
     local whole(x) = std.isNumber(x) && x == std.floor(x),
@@ -186,15 +183,16 @@
     local authoredTimeout = std.get(c, 'migrationStatementTimeoutMs', null),
     local derivedTimeout = if m.largestRelationBytes == null then null
                            else 1000 * std.max(60, std.ceil(m.largestRelationBytes / m.buildBytesPerSecond * m.safetyFactor)),
-    local migrationTimeout = if authoredTimeout != null then authoredTimeout else derivedTimeout,
-    assert authoredTimeout == null || (whole(authoredTimeout) && authoredTimeout >= 1) : 'migrationStatementTimeoutMs must be a positive integer',
-    assert migrationTimeout == null || migrationTimeout <= runnerMaxMs :
-           'the migration statement timeout ' + migrationTimeout + ' ms is above the ' + runnerMaxMs + ' ms the core migration runner accepts' +
-           (if authoredTimeout == null then ' (derived from migration.largestRelationBytes ' + m.largestRelationBytes + ' at ' + m.buildBytesPerSecond + ' bytes/s x ' + m.safetyFactor + ')' else ''),
-    assert authoredTimeout == null || derivedTimeout == null || authoredTimeout >= derivedTimeout :
-           'migrationStatementTimeoutMs ' + authoredTimeout + ' is below the ' + derivedTimeout + ' ms derived from migration.largestRelationBytes',
-    // The Job deadline covers every init container: the migration budget plus the other steps.
-    local provisionRequired = if migrationTimeout == null then null
+    assert authoredTimeout == null || (whole(authoredTimeout) && authoredTimeout >= 1 && authoredTimeout <= 600000) :
+           'migrationStatementTimeoutMs must be an integer from 1 to 600000',
+    local indexTimeout = std.get(c, 'migrationIndexBuildTimeoutMs', derivedTimeout),
+    assert indexTimeout == null || (whole(indexTimeout) && indexTimeout >= 1 && indexTimeout <= 86400000) :
+           'migrationIndexBuildTimeoutMs must be an integer from 1 to 86400000',
+    assert derivedTimeout == null || (indexTimeout != null && indexTimeout >= derivedTimeout) :
+           'migrationIndexBuildTimeoutMs is below the ' + derivedTimeout + ' ms derived from migration.largestRelationBytes',
+    local migrationTimeout = std.max(if indexTimeout == null then 0 else indexTimeout,
+                                     if authoredTimeout == null then 0 else authoredTimeout),
+    local provisionRequired = if migrationTimeout == 0 then null
                               else std.ceil(migrationTimeout / 1000) * m.longStatements + m.otherStepsSeconds,
     local authoredDeadline = std.objectHas(overrides, 'provisionDeadlineSeconds') && overrides.provisionDeadlineSeconds != null,
     local provisionDeadline = if provisionRequired == null || authoredDeadline then c.provisionDeadlineSeconds
@@ -737,8 +735,10 @@
                   { name: 'NS_COMPOSE_BOOTSTRAP', value: '1' },
                   { name: 'NS_BOOTSTRAP_VAULT_ADDR', value: 'https://vault-bootstrap:8200' },
                   { name: 'NS_INPUT_TRANSPORT', value: c.inputTransport },
-                ] + (if migrationTimeout == null then [] else [
-                  { name: 'NS_MIGRATION_STATEMENT_TIMEOUT_MS', value: std.toString(migrationTimeout) },
+                ] + (if authoredTimeout == null then [] else [
+                  { name: 'NS_MIGRATION_STATEMENT_TIMEOUT_MS', value: std.toString(authoredTimeout) },
+                ]) + (if indexTimeout == null then [] else [
+                  { name: 'NS_MIGRATION_INDEX_BUILD_TIMEOUT_MS', value: std.toString(indexTimeout) },
                 ]) + (if c.slices.evaluator > 1 then [
                   { name: 'NS_EVALUATOR_WORKERS', value: std.toString(c.slices.evaluator) },
                 ] else []) + [

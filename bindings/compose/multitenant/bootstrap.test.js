@@ -11,13 +11,14 @@ test('bootstrap requires explicit intent, dedicated database and HTTPS Vault',()
   }
   // A declared relation size derives the timeout: the measured build (13,110,624,256 bytes in
   // 59.613 s) gets three times its time, rounded up; the Kubernetes render gives the same 179000.
-  const sized=(bytes,more={})=>bootstrap.input({...env,NS_MIGRATION_LARGEST_RELATION_BYTES:bytes,...more}).migrationStatementTimeoutMs;
+  const sized=(bytes,more={})=>bootstrap.input({...env,NS_MIGRATION_LARGEST_RELATION_BYTES:bytes,...more}).indexBuildTimeoutMs;
   assert.equal(sized('13110624256'),179000);
   assert.equal(sized('1000'),60000);
   assert.equal(sized('1000000000',{NS_MIGRATION_BUILD_BYTES_PER_SECOND:'10000000'}),300000);
-  assert.equal(sized('13110624256',{NS_MIGRATION_STATEMENT_TIMEOUT_MS:'200000'}),200000);
-  assert.throws(()=>sized('13110624256',{NS_MIGRATION_STATEMENT_TIMEOUT_MS:'100000'}),/BOOTSTRAP_MIGRATION_TIMEOUT_BELOW_BUDGET/);
-  assert.throws(()=>sized('60000000000'),/BOOTSTRAP_MIGRATION_BUDGET_ABOVE_RUNNER_LIMIT/);
+  assert.equal(sized('13110624256',{NS_MIGRATION_INDEX_BUILD_TIMEOUT_MS:'200000'}),200000);
+  assert.throws(()=>sized('13110624256',{NS_MIGRATION_INDEX_BUILD_TIMEOUT_MS:'100000'}),/BOOTSTRAP_MIGRATION_TIMEOUT_BELOW_BUDGET/);
+  assert.equal(sized('60000000000'),819000);
+  assert.throws(()=>sized('9000000000000'),/BOOTSTRAP_MIGRATION_BUDGET_ABOVE_RUNNER_LIMIT/);
   for (const value of ['-1','1.5','lots','']) assert.throws(()=>sized(value),/BOOTSTRAP_MIGRATION_BUDGET_INVALID/);
   assert.throws(()=>sized('1000',{NS_MIGRATION_BUILD_BYTES_PER_SECOND:'0'}),/BOOTSTRAP_MIGRATION_BUDGET_INVALID/);
   assert.throws(()=>bootstrap.input({...env,NS_COMPOSE_BOOTSTRAP:'0'}),/EXPLICIT_COMPOSE/);
@@ -75,12 +76,12 @@ test('restored bootstrap passes the operator timeout to the catalogue migrator',
   const reachedMigration=new Error('synthetic catalogue boundary');
   t.mock.method(require('../../lib/migrations/postgres'),'run',async (action,options)=>{
     assert.equal(action,'up');
-    migrationTimeouts.push(options.statementTimeoutMs);
+    migrationTimeouts.push([options.statementTimeoutMs,options.indexBuildTimeoutMs]);
     throw reachedMigration;
   });
   for(const migrationStatementTimeoutMs of [undefined,300000]){
-    await assert.rejects(bootstrap.bootstrap({output,pg:'synthetic',vault:new URL('https://example.invalid'),migrationStatementTimeoutMs}),reachedMigration);
+    await assert.rejects(bootstrap.bootstrap({output,pg:'synthetic',vault:new URL('https://example.invalid'),migrationStatementTimeoutMs,indexBuildTimeoutMs:179000}),reachedMigration);
   }
-  assert.deepEqual(migrationTimeouts,[undefined,300000]);
+  assert.deepEqual(migrationTimeouts,[[undefined,179000],[300000,179000]]);
   assert.deepEqual(adminTimeouts,[10000,10000]);
 });

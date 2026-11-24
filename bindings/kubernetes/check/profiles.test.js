@@ -502,8 +502,8 @@ test('the migration timeout belongs only to the bootstrap init container', () =>
   for (const invalid of [0, 600001, 1.5]) assert.notEqual(render({[field]: invalid}).status, 0);
 });
 
-test('a declared relation size sets the migration timeout and the provision deadline holds it', () => {
-  const name = 'NS_MIGRATION_STATEMENT_TIMEOUT_MS';
+test('a declared relation size sets the concurrent index timeout and the provision deadline holds it', () => {
+  const name = 'NS_MIGRATION_INDEX_BUILD_TIMEOUT_MS';
   const job = r => { assert.equal(r.status, 0, r.error); return r.value.provision.job.spec; };
   const timeout = spec => spec.template.spec.initContainers.find(c => c.name === 'bootstrap').env.find(e => e.name === name)?.value;
   // Nothing declared: no timeout is passed and the deadline is the default.
@@ -524,10 +524,12 @@ test('a declared relation size sets the migration timeout and the provision dead
   assert.notEqual(short.status, 0);
   assert.match(short.error, /provisionDeadlineSeconds 845 is below the 846 s/);
   assert.equal(job(render({ migration: { largestRelationBytes: 4e10 }, provisionDeadlineSeconds: 846 })).activeDeadlineSeconds, 846);
-  const low = render({ migration: { largestRelationBytes: 13110624256 }, migrationStatementTimeoutMs: 100000 });
+  const low = render({ migration: { largestRelationBytes: 13110624256 }, migrationIndexBuildTimeoutMs: 100000 });
   assert.match(low.error, /is below the 179000 ms derived/);
-  const huge = render({ migration: { largestRelationBytes: 6e10 } });
-  assert.match(huge.error, /above the 600000 ms the core migration runner accepts/);
+  const large = job(render({ migration: { largestRelationBytes: 6e10 }, migrationStatementTimeoutMs: 5000 }));
+  assert.equal(timeout(large), '819000');
+  assert.equal(large.template.spec.initContainers.find(c => c.name === 'bootstrap').env.find(e => e.name === 'NS_MIGRATION_STATEMENT_TIMEOUT_MS').value, '5000');
+  assert.match(render({ migration: { largestRelationBytes: 9e12 } }).error, /integer from 1 to 86400000/);
   const tight = render({ migrationStatementTimeoutMs: 600000, provisionDeadlineSeconds: 899 });
   assert.match(tight.error, /provisionDeadlineSeconds 899 is below the 900 s/);
   const schema = JSON.parse(fs.readFileSync(path.join(root, 'inputs.schema.json')));

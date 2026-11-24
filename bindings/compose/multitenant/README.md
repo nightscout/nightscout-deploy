@@ -97,14 +97,13 @@ renders its read-only configuration from `nginx.compose.conf`, retaining Docker
 DNS re-resolution and the selected per-client-IP budgets. `check-compose.js`
 checks the template, private listener exposure and readiness dependencies.
 
-For large restored tables, set `NS_MIGRATION_LARGEST_RELATION_BYTES` (heap bytes of the
-largest restored relation) for the bootstrap service so a catalogue migration can scan the
-table or build an index. The statement timeout is then max(60 s, ceil(bytes ÷
-`NS_MIGRATION_BUILD_BYTES_PER_SECOND` × 3)); the default rate, 220,000,000 bytes/s, is one
-measured build (2026-11-24: a partial index over a 13,110,624,256-byte heap in 59.613 s).
-`NS_MIGRATION_STATEMENT_TIMEOUT_MS` states the timeout directly and is refused below the
-derived value. With neither, the core migration default of 60,000 ms applies. The core
-migration runner accepts 1–600,000 ms, so a larger stated or derived value is refused.
+For a restore, set `NS_MIGRATION_LARGEST_RELATION_BYTES` to the largest relation's heap
+size. Bootstrap gives concurrent index builds max(60 s, ceil(bytes ÷
+`NS_MIGRATION_BUILD_BYTES_PER_SECOND` × 3)). The default rate of 220,000,000 bytes/s
+comes from a measured 13,110,624,256-byte heap indexed in 59.613 s on 2026-11-24.
+`NS_MIGRATION_INDEX_BUILD_TIMEOUT_MS` can raise that budget up to 86,400,000 ms.
+Core defaults to 1,800,000 ms when both inputs are omitted. Ordinary migration statements
+use `NS_MIGRATION_STATEMENT_TIMEOUT_MS` (1–600,000 ms, default 60,000 ms).
 
 `NS_POSTGRES_SHM_SIZE` (default `1g`) sizes PostgreSQL's `/dev/shm`. `check-compose.js`
 requires at least 1 GiB, plus max(1, `max_parallel_maintenance_workers`) ×
