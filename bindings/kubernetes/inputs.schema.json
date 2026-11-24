@@ -75,7 +75,15 @@
     "provisionDeadlineSeconds": {
       "type": "integer",
       "minimum": 60,
-      "maximum": 3600
+      "maximum": 9223372036,
+      "description": "Total Job deadline in seconds. The Kubernetes Job controller converts these seconds to a signed 64-bit nanosecond duration."
+    },
+    "primerConcurrency": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 32,
+      "default": 4,
+      "description": "Maximum number of concurrent batch requests issued by the primer."
     },
     "images": {
       "type": "object",

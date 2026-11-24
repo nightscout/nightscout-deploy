@@ -465,3 +465,26 @@ test('provision waits for late stores within the configured Job deadline', async
   });
   assert.deepEqual([...connected], ['postgres', 'vault-bootstrap']);
 });
+
+test('the binding schema accepts the primer settings used by a long provisioning Job', () => {
+  const deadline = 8400;
+  const concurrency = 32;
+  const schema = JSON.parse(fs.readFileSync(path.join(root, 'inputs.schema.json'), 'utf8'));
+  const declaredDeadline = schema.properties.provisionDeadlineSeconds;
+  assert.equal(declaredDeadline.type, 'integer');
+  assert.ok(deadline >= declaredDeadline.minimum && deadline <= declaredDeadline.maximum,
+    'the schema must accept the provisioning deadline');
+  const maxJobSeconds = Number(((1n << 63n) - 1n) / 1000000000n);
+  assert.equal(declaredDeadline.maximum, maxJobSeconds);
+  assert.deepEqual(
+    [schema.properties.primerConcurrency?.minimum, schema.properties.primerConcurrency?.maximum],
+    [1, 32], 'schema matches the primer CLI range'
+  );
+  const r = render({ provisionDeadlineSeconds: deadline, primerConcurrency: concurrency });
+  assert.equal(r.status, 0, r.error);
+  assert.equal(r.value.provision.job.spec.activeDeadlineSeconds, deadline);
+  const primer = r.value.primer.job.spec;
+  assert.equal(primer.activeDeadlineSeconds, deadline);
+  const environment = primer.template.spec.containers[0].env;
+  assert.equal(environment.find(variable => variable.name === 'NS_PRIMER_CONCURRENCY').value, String(concurrency));
+});
