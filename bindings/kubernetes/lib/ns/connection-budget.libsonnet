@@ -4,7 +4,8 @@
 //   budget          = Σ over pods (pool max per role) + transient + superuser + clinical reserve
 //   max_connections = budget (never below the PostgreSQL 140/40 default), or an explicit
 //                     postgresMaxConnections that must hold the budget (an over-budget pool set refuses)
-//   postgres memory request = typical + perConnectionMiB × (max_connections − 140) + postgresShmMiB
+//   postgres memory request = typical + perConnectionMiB × (max_connections − 140) + /dev/shm
+//                     (/dev/shm = postgresShmMiB + maintenance_work_mem when the settings name it)
 //                     (the memory-backed /dev/shm volume is charged to the Pod)
 //   evaluator memory request = baseMiB + perResidentMiB × residentMax,
 //                     NS_EVALUATOR_RESIDENT_MAX = residentMax (requests only, no limit)
@@ -51,7 +52,12 @@
     // Read-derived: private memory of an idle backend; refit from a run.
     postgresPerConnectionMiB: 2,
     // Size of the memory-backed /dev/shm volume (dynamic shared memory for parallel query and hash
-    // joins). It is charged to the Pod's memory, so the request includes all of it.
+    // joins). It is charged to the Pod's memory, so the request includes all of it. When the effective
+    // PostgreSQL settings name maintenance_work_mem (every sizing tier does), the volume is this plus
+    // maintenance_work_mem: a parallel VACUUM allocates its dead-tuple segment (up to
+    // maintenance_work_mem) in /dev/shm beside parallel queries. Measured 2026-11-23 (lane L): the 10k
+    // tier's VACUUM (PARALLEL 4) failed on 1 GiB ("could not resize shared memory segment ... to
+    // 1073779488 bytes: No space left on device").
     postgresShmMiB: 1024,
     // Upper envelope of the measured evaluator resident-set peaks on the v2 client-model history
     // with the window levers on (plannable-scale discovery 2026-11-21/22, 17 evaluator Pods at
@@ -76,6 +82,18 @@
     assert std.isNumber(em.heapHeadroom) && em.heapHeadroom >= 1 && em.heapHeadroom <= 4 : 'evaluatorMemory.heapHeadroom must be a number from 1 to 4 (the V8 heap ceiling is never below the memory request)';
     local perConn = std.get(c, 'postgresPerConnectionMiB', d.postgresPerConnectionMiB);
     assert std.isNumber(perConn) && perConn >= 0 : 'postgresPerConnectionMiB must be non-negative';
+    // Effective maintenance_work_mem (tier settings, then explicit postgresSettings; nightscout.libsonnet
+    // postgresSizing), in MiB; PostgreSQL units kB/MB/GB/TB, a bare integer is kB.
+    local tierName = std.get(c, 'postgresSizing', null);
+    local tierSettings = if tierName == null then {} else std.get((import 'postgres-sizing.json').tiers, tierName, { settings: {} }).settings;
+    local mwm = std.get(tierSettings + std.get(c, 'postgresSettings', {}), 'maintenance_work_mem', null);
+    local units = { kB: 1 / 1024, MB: 1, GB: 1024, TB: 1024 * 1024 };
+    local mwmText = if mwm == null then null else std.toString(mwm);
+    local mwmUnit = if mwmText == null then null else std.foldl(function(found, u) if found == null && std.endsWith(mwmText, u) then u else found, std.objectFields(units), null);
+    local mwmDigits = if mwmText == null then null else if mwmUnit == null then mwmText else std.substr(mwmText, 0, std.length(mwmText) - std.length(mwmUnit));
+    assert mwmDigits == null || (std.length(mwmDigits) > 0 && std.length([x for x in std.stringChars(mwmDigits) if !std.member(std.stringChars('0123456789'), x)]) == 0) :
+      'maintenance_work_mem must be an integer with an optional PostgreSQL unit kB, MB, GB or TB (got ' + mwmText + ')';
+    local shmMiB = d.postgresShmMiB + (if mwmDigits == null then 0 else std.ceil(std.parseInt(mwmDigits) * units[if mwmUnit == null then 'kB' else mwmUnit]));
     local api = c.apiReplicas, kr = c.slices.realtime, ke = c.slices.evaluator;
     local vc = import 'vcpool.libsonnet';
     local perPod = {
@@ -116,8 +134,8 @@
       budget: budget,
       maxConnections: maxConnections,
       formula: 'sum(pods x pool max per role) + transientPerPod x pods + superuser + clinical reserve <= max_connections',
-      postgresShmMiB: d.postgresShmMiB,
-      postgresMemoryMiB: perConn * std.max(0, maxConnections - d.postgresDefault) + d.postgresShmMiB,
+      postgresShmMiB: shmMiB,
+      postgresMemoryMiB: perConn * std.max(0, maxConnections - d.postgresDefault) + shmMiB,
       postgresPerConnectionMiB: perConn,
       evaluator: {
         ownedPerSlice: owned,
