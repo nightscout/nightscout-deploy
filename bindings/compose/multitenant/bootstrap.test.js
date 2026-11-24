@@ -4,6 +4,11 @@ const plan=require('./config'),bootstrap=require('./bootstrap');
 test('bootstrap requires explicit intent, dedicated database and HTTPS Vault',()=>{
   const env={NS_COMPOSE_BOOTSTRAP:'1',NS_BOOTSTRAP_OUTPUT:'/tmp/state',NS_SOURCE_COMMIT:'a'.repeat(40),NS_BOOTSTRAP_POSTGRES_URL:'postgres://postgres:synthetic-only@postgres:5432/nightscout_compose_test',VAULT_ADDR:'https://vault:8200'};
   assert.equal(bootstrap.input(env).pg.hostname,'postgres');
+  assert.equal(bootstrap.input(env).migrationStatementTimeoutMs, undefined);
+  assert.equal(bootstrap.input({...env, NS_MIGRATION_STATEMENT_TIMEOUT_MS:'600000'}).migrationStatementTimeoutMs, 600000);
+  for (const value of ['0', '600001', '-1000', '5.5', 'unlimited']) {
+    assert.throws(() => bootstrap.input({...env, NS_MIGRATION_STATEMENT_TIMEOUT_MS:value}), /BOOTSTRAP_MIGRATION_TIMEOUT_INVALID/);
+  }
   assert.throws(()=>bootstrap.input({...env,NS_COMPOSE_BOOTSTRAP:'0'}),/EXPLICIT_COMPOSE/);
   assert.throws(()=>bootstrap.input({...env,NS_BOOTSTRAP_POSTGRES_URL:'postgres://postgres:synthetic-only@postgres:5432/real_database'}),/DEDICATED/);
   assert.throws(()=>bootstrap.input({...env,VAULT_ADDR:'http://vault:8200'}),/HTTPS/);
@@ -37,4 +42,34 @@ test('a restore must be writer-driven and is K-free',()=>{
   // pgstream and unmarked (legacy, pgstream) fixtures are refused.
   for(const complete of [{inputTransport:'pgstream'},{evaluatorWorkers:2},{}])
     assert.throws(()=>bootstrap.restoreCheck(complete),/BOOTSTRAP_INPUT_TRANSPORT_CHANGED_RECREATE_DEMO/);
+});
+
+test('restored bootstrap passes the operator timeout to the catalogue migrator',async t=>{
+  const output=fs.mkdtempSync(path.join(os.tmpdir(),'bootstrap-migration-'));
+  t.after(()=>fs.rmSync(output,{recursive:true,force:true}));
+  const directory=path.join(output,'bootstrap');
+  fs.mkdirSync(directory);
+  fs.writeFileSync(path.join(directory,'vault-init.json'),'{}');
+  fs.writeFileSync(path.join(directory,'complete.json'),JSON.stringify({inputTransport:'writer-driven'}));
+  t.mock.method(globalThis,'fetch',async url=>({
+    ok:true, status:200, json:async()=>url.endsWith('/sys/init')?{initialized:true}:{sealed:false}
+  }));
+  t.mock.method(require('./credentials'),'read',()=>({}));
+  const adminTimeouts=[];
+  const admin=require('pg').Client.prototype;
+  t.mock.method(admin,'connect',async function(){adminTimeouts.push(this.connectionParameters.statement_timeout);});
+  t.mock.method(admin,'query',async()=>({rowCount:1}));
+  t.mock.method(admin,'end',async()=>{});
+  const migrationTimeouts=[];
+  const reachedMigration=new Error('synthetic catalogue boundary');
+  t.mock.method(require('../../lib/migrations/postgres'),'run',async (action,options)=>{
+    assert.equal(action,'up');
+    migrationTimeouts.push(options.statementTimeoutMs);
+    throw reachedMigration;
+  });
+  for(const migrationStatementTimeoutMs of [undefined,300000]){
+    await assert.rejects(bootstrap.bootstrap({output,pg:'synthetic',vault:new URL('https://example.invalid'),migrationStatementTimeoutMs}),reachedMigration);
+  }
+  assert.deepEqual(migrationTimeouts,[undefined,300000]);
+  assert.deepEqual(adminTimeouts,[10000,10000]);
 });

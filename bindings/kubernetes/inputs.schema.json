@@ -78,6 +78,12 @@
       "maximum": 9223372036,
       "description": "Total Job deadline in seconds. The Kubernetes Job controller converts these seconds to a signed 64-bit nanosecond duration."
     },
+    "migrationStatementTimeoutMs": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 600000,
+      "description": "PostgreSQL catalogue migration statement timeout during bootstrap. Omit for the application's migration default."
+    },
     "primerConcurrency": {
       "type": "integer",
       "minimum": 1,

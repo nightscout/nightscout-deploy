@@ -97,6 +97,10 @@ renders its read-only configuration from `nginx.compose.conf`, retaining Docker
 DNS re-resolution and the selected per-client-IP budgets. `check-compose.js`
 checks the template, private listener exposure and readiness dependencies.
 
+For large restored tables, set `NS_MIGRATION_STATEMENT_TIMEOUT_MS` for the bootstrap
+service to allow a catalogue migration to scan the table or build an index. An omitted
+setting uses the core migration default of 60,000 ms. Accepted values are 1–600,000 ms.
+
 A failed bootstrap prints one JSON line on stderr: the stable `error` code, the
 underlying `detail` message and the top stack frames (`at`). Connection-string
 credentials, password clauses, Vault tokens, JWT-shaped strings and long hex

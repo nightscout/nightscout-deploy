@@ -294,6 +294,11 @@ authority oracles.
 
 ### Restore a cold synthetic fixture
 
+Set `migrationStatementTimeoutMs` when an offline catalogue change needs more time
+to build an index on a restored table. The bootstrap init container accepts 1–600,000 ms
+per migration statement. Omitting it selects the core migration default of 60,000 ms.
+The provision Job's `provisionDeadlineSeconds` covers all its init containers together.
+
 For a storage-backed run, keep the four PVCs used by PostgreSQL, Vault, the provision Job
 and the primer Job together with the matching `ns-config-*`, `ns-credentials-*`,
 `ns-postgres-password`, `ns-ca` and `ns-vault-tls` Secrets. The primer Job makes one bulk

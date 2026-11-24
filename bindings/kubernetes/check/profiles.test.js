@@ -488,3 +488,16 @@ test('the binding schema accepts the primer settings used by a long provisioning
   const environment = primer.template.spec.containers[0].env;
   assert.equal(environment.find(variable => variable.name === 'NS_PRIMER_CONCURRENCY').value, String(concurrency));
 });
+
+test('the migration timeout belongs only to the bootstrap init container', () => {
+  const field = 'migrationStatementTimeoutMs';
+  const name = 'NS_MIGRATION_STATEMENT_TIMEOUT_MS';
+  const schema = JSON.parse(fs.readFileSync(path.join(root, 'inputs.schema.json')));
+  assert.deepEqual([schema.properties[field]?.minimum, schema.properties[field]?.maximum], [1, 600000]);
+  const result = render({[field]: 300000});
+  assert.equal(result.status, 0, result.error);
+  const init = result.value.provision.job.spec.template.spec.initContainers;
+  assert.equal(init.find(c => c.name === 'bootstrap').env.find(e => e.name === name)?.value, '300000');
+  assert.equal(JSON.stringify(result.value).split(name).length - 1, 1);
+  for (const invalid of [0, 600001, 1.5]) assert.notEqual(render({[field]: invalid}).status, 0);
+});

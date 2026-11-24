@@ -156,6 +156,9 @@
     local sizing = $.postgresSizing(c),
     local authoredStorage = std.objectHas(overrides, 'storage') && std.isObject(overrides.storage) && std.objectHas(overrides.storage, 'postgres'),
     local postgresClaim = if sizing.claim != null && !authoredStorage then sizing.claim else c.storage.postgres,
+    local migrationTimeout = std.get(c, 'migrationStatementTimeoutMs', null),
+    assert migrationTimeout == null || (std.isNumber(migrationTimeout) && migrationTimeout == std.floor(migrationTimeout) &&
+           migrationTimeout >= 1 && migrationTimeout <= 600000) : 'migrationStatementTimeoutMs must be an integer from 1 to 600000',
     assert std.isNumber(maxConnections) && maxConnections == std.floor(maxConnections) &&
            maxConnections > clinicalReserved + superuserReserved && maxConnections <= 10000 :
            'postgresMaxConnections must be an integer from 44 to 10000, leaving at least one ordinary connection',
@@ -691,7 +694,9 @@
                   { name: 'NS_COMPOSE_BOOTSTRAP', value: '1' },
                   { name: 'NS_BOOTSTRAP_VAULT_ADDR', value: 'https://vault-bootstrap:8200' },
                   { name: 'NS_INPUT_TRANSPORT', value: c.inputTransport },
-                ] + (if c.slices.evaluator > 1 then [
+                ] + (if migrationTimeout == null then [] else [
+                  { name: 'NS_MIGRATION_STATEMENT_TIMEOUT_MS', value: std.toString(migrationTimeout) },
+                ]) + (if c.slices.evaluator > 1 then [
                   { name: 'NS_EVALUATOR_WORKERS', value: std.toString(c.slices.evaluator) },
                 ] else []) + [
                   { name: 'NS_API_REPLICAS', value: '1' },

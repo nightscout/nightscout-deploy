@@ -28,7 +28,13 @@ function input(env=process.env) {
   if(!/^\/[\w/.-]+$/.test(credentials))throw fail('BOOTSTRAP_CREDENTIALS_REQUIRED');
   const deployCommit=env.NS_DEPLOY_COMMIT||env.NS_SOURCE_COMMIT;
   if(!/^[a-f0-9]{40}$/.test(deployCommit))throw fail('BOOTSTRAP_DEPLOY_IDENTITY_INVALID');
-  return {deployCommit,pg,vault,bootstrapVault,credentials:path.resolve(credentials),output:path.resolve(env.NS_BOOTSTRAP_OUTPUT),sourceCommit:env.NS_SOURCE_COMMIT};
+  let migrationStatementTimeoutMs;
+  if (env.NS_MIGRATION_STATEMENT_TIMEOUT_MS !== undefined) {
+    const value = env.NS_MIGRATION_STATEMENT_TIMEOUT_MS;
+    migrationStatementTimeoutMs = Number(value);
+    if (!/^[1-9][0-9]*$/.test(value) || migrationStatementTimeoutMs > 600000) throw fail('BOOTSTRAP_MIGRATION_TIMEOUT_INVALID');
+  }
+  return {deployCommit,pg,vault,bootstrapVault,credentials:path.resolve(credentials),output:path.resolve(env.NS_BOOTSTRAP_OUTPUT),sourceCommit:env.NS_SOURCE_COMMIT,migrationStatementTimeoutMs};
 }
 // Bootstrap custody files stay indented for the people who read them.
 function writePrivate(filename,value) {
@@ -93,7 +99,7 @@ async function bootstrap(options) {
       if(!(await admin.query('SELECT 1 FROM pg_roles WHERE rolname=$1',[l.roles.owner_settings])).rowCount){
         await admin.query(loginSQL(l.roles.owner_settings,seeded.postgres.owner_settings));
       }
-      await migrate(admin,pg,l,plan.catalogues(),false);
+      await migrate(admin,pg,l,plan.catalogues(),false,options.migrationStatementTimeoutMs);
       // vcpool identities: created here too, so a restored fixture can enable the role.
       await require('./vcpool').ensure({admin,l,credentials:options.credentials,request,rootToken:initialization.root_token});
     }finally{await admin.end();}
@@ -124,7 +130,7 @@ async function bootstrap(options) {
     // Clinical output producers/deliverers may use PostgreSQL's reserved_connections
     // slots; REST-serving roles may not (clinical-isolation.js).
     for(const sql of require('./clinical-isolation').grants(l))await admin.query(sql);
-    await migrate(admin,pg,l,allCatalogues,true);
+    await migrate(admin,pg,l,allCatalogues,true,options.migrationStatementTimeoutMs);
     const managementGrants=require('../../lib/management-sessions/authority').grants({namespaces:{registry:l.namespaces.registry,authorization:l.namespaces.authorization,access:l.namespaces.access,control:l.namespaces.control},issuer:l.roles.management_issuer,authorityOwner:l.managementAuthorityOwner});
     for(const sql of [...managementGrants.authorityOwner,...managementGrants.issuer])await admin.query(sql);
     const settings = require('../../lib/server/serve/deployment-settings').evaluator({NS_PG_PREFIX:l.prefix});
@@ -145,12 +151,12 @@ async function bootstrap(options) {
 }
 // Creates (fresh) or brings forward (existing) every catalogue schema, then applies the grants.
 // Objects a migration adds are handed to the catalogue owner; existing owners are left alone.
-async function migrate(admin,pg,l,catalogues,fresh){
+async function migrate(admin,pg,l,catalogues,fresh,statementTimeoutMs){
   const q=plan.quote,{run}=require('../../lib/migrations/postgres');
   for(const [kind,catalogue]of Object.entries(catalogues)){
     const namespace=l.namespaces[kind];
     if(fresh)await admin.query('CREATE SCHEMA '+q(namespace));
-    await run('up',{direct:true,connectionString:pg.toString(),namespace,catalogue,statementTimeoutMs:10000});
+    await run('up',{direct:true,connectionString:pg.toString(),namespace,catalogue,statementTimeoutMs});
     // Readiness requires immutable catalogue owners without LOGIN/bypass.
     const tables=await admin.query('SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname=$1 AND tableowner=current_user',[namespace]);
     for(const row of tables.rows)await admin.query('ALTER TABLE '+q(namespace)+'.'+q(row.tablename)+' OWNER TO '+q(l.owner));
