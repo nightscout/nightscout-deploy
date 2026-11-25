@@ -9,7 +9,7 @@ COPY static/ ./static/
 COPY views/ ./views/
 COPY translations/ ./translations/
 COPY migrations/ ./migrations/
-COPY scripts/diagnose-data.js ./scripts/diagnose-data.js
+COPY scripts/ ./scripts/
 COPY server.js ./
 COPY .browserslistrc ./
 RUN npm ci --include=dev --omit=optional --force \

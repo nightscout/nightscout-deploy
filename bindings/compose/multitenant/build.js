@@ -8,7 +8,7 @@ const path = require('node:path');
 const os = require('node:os');
 const {execFileSync} = require('node:child_process');
 const ROOT = path.resolve(__dirname, '../..');
-const INPUTS = ['package.json', 'package-lock.json', '.babelrc', '.browserslistrc', '.dockerignore', 'bundle', 'webpack', 'bin', 'lib', 'static', 'views', 'translations', 'migrations', 'scripts/diagnose-data.js', 'deploy/multitenant', 'server.js'];
+const INPUTS = ['package.json', 'package-lock.json', '.babelrc', '.browserslistrc', '.dockerignore', 'bundle', 'webpack', 'bin', 'lib', 'static', 'views', 'translations', 'migrations', 'scripts/diagnose-data.js', 'scripts/seal-devicestatus.js', 'deploy/multitenant', 'server.js'];
 // Overlay mode: tools/compose-overlay.sh (nightscout-deploy) replaces core's reduced
 // deploy/multitenant with nightscout-deploy's Compose tree at a recorded commit and writes this
 // marker. Core's own copy of the path then differs from HEAD by design, so the source identity is

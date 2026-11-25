@@ -21,6 +21,7 @@
 !migrations/**
 !scripts/
 !scripts/diagnose-data.js
+!scripts/seal-devicestatus.js
 !server.js
 !deploy/
 !deploy/multitenant/
