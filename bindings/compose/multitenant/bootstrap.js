@@ -115,6 +115,7 @@ async function bootstrap(options) {
         await admin.query(loginSQL(l.roles.owner_settings,seeded.postgres.owner_settings));
       }
       await migrate(admin,pg,l,plan.catalogues(),false,options);
+      await require('./output-grants').retireRealtimeReceipt(admin,l);
       // vcpool identities: created here too, so a restored fixture can enable the role.
       await require('./vcpool').ensure({admin,l,credentials:options.credentials,request,rootToken:initialization.root_token});
     }finally{await admin.end();}

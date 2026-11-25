@@ -58,10 +58,10 @@ test('maintained capture and typed completed delivery replace the retired feed r
   }
   assert.equal(Object.hasOwn(realtime,'pageSize'),false);assert.equal(Object.hasOwn(realtime,'socketOrderDomains'),false);
   const typed=docs.admin.config.provisioning.checkpoints.find(row=>row.consumer===evaluator.consumer+'-completed');
-  const receipt=docs.admin.config.provisioning.checkpoints.find(row=>row.consumer===realtime.consumer);
+  const marker=docs.admin.config.provisioning.checkpoints.find(row=>row.consumer===realtime.consumer);
   assert.equal(typed.namespace,realtime.completedOutput.namespace);
-  assert.equal(receipt.namespace,realtime.postgres.namespaces.checkpoint);
-  assert.equal(receipt.digest,require('../../lib/pgstream/realtime-receipt').contractDigest(receipt.namespace,receipt.consumer));
+  assert.equal(marker.namespace,realtime.postgres.namespaces.checkpoint);
+  assert.equal(marker.digest,require('../../lib/pgstream/realtime-output').contractDigest(marker.namespace,marker.consumer));
 });
 
 test('realtime base grants retain narrow metadata reads and revoke raw clinical and immutable cursor privileges',()=>{
@@ -75,6 +75,21 @@ test('realtime base grants retain narrow metadata reads and revoke raw clinical 
   }
   assert(rows.includes('GRANT SELECT ON "'+layout.namespaces.rt_checkpoint+'"."tenant_consumer_checkpoint" TO '+role));
   assert(rows.includes('REVOKE UPDATE(checkpoint,projection,contract_digest) ON "'+layout.namespaces.rt_checkpoint+'"."tenant_consumer_checkpoint" FROM '+role));
+});
+
+test('bootstrap gives realtime read-only checkpoint access and retires the old update policy',async()=>{
+  const {layout,docs}=generated();
+  const output=require('./output-grants');
+  const statements=[];
+  const admin={query:async sql=>{statements.push(sql);}};
+  await output.outputGrants({layout,consumer:docs.configs.evaluator.consumer})(admin);
+  const realtime=statements.filter(sql=>sql.includes('"'+layout.roles.realtime+'"'));
+  assert(realtime.some(sql=>sql.startsWith('GRANT SELECT ON "'+layout.namespaces.eval_checkpoint+'"')));
+  assert(realtime.some(sql=>sql.startsWith('CREATE POLICY pgstream_realtime_output ')&&sql.includes(' FOR SELECT ')));
+  assert(realtime.some(sql=>sql.startsWith('CREATE POLICY pgstream_realtime_metadata ')&&sql.includes(' FOR SELECT ')));
+  assert(realtime.every(sql=>!(/\b(INSERT|UPDATE|DELETE|ALL)\b/.test(sql))));
+  await output.retireRealtimeReceipt(admin,layout);
+  assert.equal(statements.at(-1),'DROP POLICY IF EXISTS pgstream_realtime_delivery_update ON "'+layout.namespaces.rt_checkpoint+'".tenant_consumer_checkpoint');
 });
 
 test('maintained startup bounds and durable clinical pending bounds have no synthetic heartbeat',()=>{

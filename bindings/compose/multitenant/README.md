@@ -358,14 +358,16 @@ retain their prior operation path. Four is a synthetic measurement profile, not
 a portable throughput claim; record it alongside the pool sizes.
 
 The maintained evaluator owns input/control capture and durable evaluation work.
-Realtime consumes its typed completed output and durable delivery receipts. The
+Realtime reads its typed completed output and writes nothing to the database. The
 same committed registry/settings authority builds both roles' tenant identities.
-Realtime reads current presentation/control metadata on addressed work, and
-retains bounded startup, recovery and failed-delivery work. Warm tenants have no
-periodic discovery sweep. Fixed capture health checks are separate from actual
-clinical due instants and realtime delivery retries. The deployment provisions
-independent realtime receipt, evaluator clinical checkpoint and typed completed
-output rows; restore inventory includes their selected catalogue families.
+Realtime sends a watched tenant's frame whenever the evaluator's committed output
+revision is above the one it holds: on the evaluator's wake hint, and on a level
+pass every 5 s over the tenants that have a socket. A tenant nobody watches is not
+read. Fixed capture health checks are separate from actual clinical due instants.
+The deployment provisions independent realtime checkpoint, evaluator clinical
+checkpoint and typed completed output rows; restore inventory includes their
+selected catalogue families. An existing deployment follows the realtime receipt
+removal order in [PLATFORM-UPGRADE](PLATFORM-UPGRADE.md).
 
 The opted-in `shipping-sharding.integration.test.js` first proves every fixed API
 instance × synthetic seed tenant through a private, authorized status GET. A bare
